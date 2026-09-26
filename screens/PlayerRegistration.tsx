@@ -7,7 +7,7 @@ import { AuctionSetup, RegistrationConfig, FormField, PlayerRole } from '../type
 import { Upload, Calendar, CheckCircle, AlertTriangle, ArrowUpCircle, FileText, Home, ArrowLeft, Loader2, CreditCard, QrCode, ShieldCheck, AlignLeft, Sword, Shield, Trophy as TrophyIcon, Zap, Megaphone, Users, XCircle, X, Phone, MapPin, Clock, Trophy, Share2, ChevronRight, ChevronLeft, User, Info, ChevronDown, Award, Star, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuction } from '../hooks/useAuction';
-import { compressImage, uploadImageOrFallback, uploadBase64FieldsToStorage, ensurePayloadWithinLimit } from '../utils';
+import { compressImage, uploadImageOrFallback, uploadBase64FieldsToStorage, ensurePayloadWithinLimit, fastCompressImageToBlob } from '../utils';
 
 const TournamentFileInput = ({ label, value, onChange, required, theme, auctionId }: any) => {
     const fileRef = useRef<HTMLInputElement>(null);
@@ -636,7 +636,11 @@ const PlayerRegistration: React.FC = () => {
         if (!file) return;
         setIsUploadingPhoto(true);
         try {
-            // Automatically compresses any file size (1MB, 5MB, 10MB, 50MB+) to crystal-clear safe Data URL
+            // Immediate local preview so the user instantly sees their photo (0ms lag)
+            const localPreview = URL.createObjectURL(file);
+            setProfilePic(localPreview);
+
+            // Fast compress & upload to Firebase Storage in parallel
             const url = await uploadImageOrFallback(file, id || 'general', 'player_photo', 'PROFILE');
             if (url) {
                 setProfilePic(url);
@@ -655,7 +659,11 @@ const PlayerRegistration: React.FC = () => {
         if (!file) return;
         setIsUploadingPayment(true);
         try {
-            // Automatically compresses any file size to crystal-clear safe Data URL
+            // Immediate local preview
+            const localPreview = URL.createObjectURL(file);
+            setPaymentScreenshot(localPreview);
+
+            // Fast compress & upload to Firebase Storage
             const url = await uploadImageOrFallback(file, id || 'general', 'payment_proof', 'PAYMENT');
             if (url) {
                 setPaymentScreenshot(url);
