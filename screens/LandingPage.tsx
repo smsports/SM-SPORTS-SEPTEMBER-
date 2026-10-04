@@ -420,7 +420,7 @@ const LandingPage: React.FC = () => {
       <div className={`py-8 border-t text-center relative overflow-hidden group transition-colors ${isDark ? 'bg-accent/5 border-accent/10' : 'bg-gray-100 border-gray-200'}`}>
           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-accent/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000"></div>
           <p className={`text-[10px] font-black uppercase tracking-[0.6em] relative z-10 reveal-element ${isDark ? 'text-zinc-500' : 'text-gray-500'}`}>
-              Developed by <span className={`font-black border-b-2 pb-0.5 transition-colors ${isDark ? 'text-accent border-accent/30 group-hover:border-accent' : 'text-accent border-accent/10 group-hover:border-accent'}`}>Zabiulla Khan</span>
+              Developed by <span className={`font-black border-b-2 pb-0.5 transition-colors ${isDark ? 'text-accent border-accent/30 group-hover:border-accent' : 'text-accent border-accent/10 group-hover:border-accent'}`}>Syed Owaizuddin</span>
           </p>
       </div>
 
