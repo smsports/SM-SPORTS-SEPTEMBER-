@@ -52,7 +52,15 @@ export interface RegisteredPlayer {
     dob: string;
     profilePic: string;
     paymentScreenshot?: string;
+    razorpayOrderId?: string;
     razorpayPaymentId?: string;
+    razorpaySignature?: string;
+    paymentStatus?: 'FREE' | 'PENDING' | 'PENDING_PAYMENT' | 'PAID' | 'COMPLETED' | 'FAILED' | 'REFUNDED' | 'ADMIN_EXEMPT';
+    paymentMethod?: string;
+    amountPaid?: number;
+    amountExpected?: number;
+    finalFeePaid?: number;
+    paymentVerifiedAt?: number;
     status: 'PENDING' | 'APPROVED' | 'REJECTED';
     submittedAt: number;
     [key: string]: any; // For custom fields
@@ -369,6 +377,8 @@ export interface RegistrationConfig {
     includePayment: boolean; 
     paymentMethod?: 'MANUAL' | 'RAZORPAY';
     razorpayKey?: string;
+    razorpaySecret?: string;
+    razorpayWebhookSecret?: string;
     isPublic: boolean; 
     hideLandingPage?: boolean;
     fee: number;

@@ -1,10 +1,10 @@
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/firestore';
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { db, auth } from '../firebase';
 import { AuctionSetup, RegistrationConfig, FormField, PlayerRole } from '../types';
-import { Upload, Calendar, CheckCircle, AlertTriangle, ArrowUpCircle, FileText, Home, ArrowLeft, Loader2, CreditCard, QrCode, ShieldCheck, AlignLeft, Sword, Shield, Trophy as TrophyIcon, Zap, Megaphone, Users, XCircle, X, Phone, MapPin, Clock, Trophy, Share2, ChevronRight, ChevronLeft, User, Info, ChevronDown, Award, Star, Check } from 'lucide-react';
+import { Upload, Calendar, CheckCircle, AlertTriangle, ArrowUpCircle, FileText, Home, ArrowLeft, Loader2, CreditCard, QrCode, ShieldCheck, AlignLeft, Sword, Shield, Trophy as TrophyIcon, Zap, Megaphone, Users, XCircle, X, Phone, MapPin, Clock, Trophy, Share2, ChevronRight, ChevronLeft, User, Info, ChevronDown, Award, Star, Check, Plus, UserPlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuction } from '../hooks/useAuction';
 import { compressImage, uploadImageOrFallback, uploadBase64FieldsToStorage, ensurePayloadWithinLimit, fastCompressImageToBlob } from '../utils';
@@ -518,7 +518,12 @@ const TournamentDetailCard = ({ icon: Icon, title, value, description, theme, is
 const PlayerRegistration: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
-    const { state } = useAuction();
+    const [searchParams] = useSearchParams();
+    const auctionContext = useAuction() as any;
+    const state = auctionContext.state;
+    const userProfile = auctionContext.userProfile;
+
+    const isAdminParam = searchParams.get('admin') === 'true' || searchParams.get('mode') === 'admin';
     const [auction, setAuction] = useState<AuctionSetup | null>(null);
     const [config, setConfig] = useState<RegistrationConfig | null>(null);
     const [roles, setRoles] = useState<PlayerRole[]>([]);
@@ -542,6 +547,23 @@ const PlayerRegistration: React.FC = () => {
     const [playerID, setPlayerID] = useState('');
     const [waitlistSuccess, setWaitlistSuccess] = useState(false);
     const [showAdLocal, setShowAdLocal] = useState(true);
+
+    const isAuctionAdmin = Boolean(
+        isAdminParam || 
+        userProfile?.role === 'SUPER_ADMIN' || 
+        userProfile?.role === 'ADMIN' ||
+        (userProfile?.id && (auction as any)?.adminId && userProfile.id === (auction as any).adminId) ||
+        (auth.currentUser?.uid && (auction as any)?.adminId && auth.currentUser.uid === (auction as any).adminId)
+    );
+
+    const [isAdminMode, setIsAdminMode] = useState<boolean>(isAdminParam);
+    const [adminAddToPool, setAdminAddToPool] = useState<boolean>(true);
+
+    useEffect(() => {
+        if (isAdminParam) {
+            setIsAdminMode(true);
+        }
+    }, [isAdminParam]);
 
     const handleWaitlistSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -611,18 +633,24 @@ const PlayerRegistration: React.FC = () => {
     useEffect(() => {
         if (config?.isEnabled) {
             const isManuallyClosed = config?.registrationStatus === 'CLOSED';
-            if ((isFull || isManuallyClosed) && !isCaptain && !hasTeamCode && !validatedOrganiserCode) {
+            if ((isFull || isManuallyClosed) && !isCaptain && !hasTeamCode && !validatedOrganiserCode && !isAdminMode) {
                 setIsClosed(true);
             } else {
                 setIsClosed(false);
             }
         }
-    }, [isFull, isCaptain, hasTeamCode, config?.isEnabled, config?.registrationStatus, validatedOrganiserCode]);
+    }, [isFull, isCaptain, hasTeamCode, config?.isEnabled, config?.registrationStatus, validatedOrganiserCode, isAdminMode]);
 
     const [formData, setFormData] = useState<any>({
-        fullName: '', playerType: '', gender: '', mobile: '', dob: '', battleOath: false,
-        jerseyName: '', jerseyNumber: '', jerseySize: ''
+        fullName: '', playerType: '', gender: '', mobile: '', dob: '', battleOath: isAdminParam,
+        jerseyName: '', jerseyNumber: '', jerseySize: '', category: 'Standard', basePrice: ''
     });
+
+    useEffect(() => {
+        if (isAdminMode) {
+            setFormData((prev: any) => ({ ...prev, battleOath: true }));
+        }
+    }, [isAdminMode]);
     const [profilePic, setProfilePic] = useState<string>('');
     const [paymentScreenshot, setPaymentScreenshot] = useState<string>('');
     const [isUploadingPhoto, setIsUploadingPhoto] = useState<boolean>(false);
@@ -689,13 +717,21 @@ const PlayerRegistration: React.FC = () => {
     const isNavyGolden = config?.theme?.toUpperCase() === 'NAVY_GOLDEN';
     const isClassicNeon = config?.theme?.toUpperCase() === 'CLASSIC_NEON';
 
-    const discountAmount = isCouponApplied 
-        ? appliedDiscount 
-        : (validatedOrganiserCode ? (config?.fee || 0) : 0);
-    const finalFee = Math.max(0, (config?.fee || 0) - discountAmount);
+    const discountAmount = isAdminMode
+        ? (config?.fee || 0)
+        : (isCouponApplied 
+            ? appliedDiscount 
+            : (validatedOrganiserCode ? (config?.fee || 0) : 0));
+    const finalFee = isAdminMode ? 0 : Math.max(0, (config?.fee || 0) - discountAmount);
 
     useEffect(() => {
         if (config) {
+            if (isAdminMode) {
+                setShowPoster(false);
+                setShowBattleEntrance(false);
+                setBattleStarted(true);
+                return;
+            }
             // Priority 1: Poster takes precedence if provided
             if (config.welcomePosterUrl) {
                 setShowPoster(true);
@@ -721,7 +757,7 @@ const PlayerRegistration: React.FC = () => {
                 setBattleStarted(true);
             }
         }
-    }, [config, isClassicNeon, isAdvaya, isNavyGolden]);
+    }, [config, isClassicNeon, isAdvaya, isNavyGolden, isAdminMode]);
 
     useEffect(() => {
         const script = document.createElement('script');
@@ -733,11 +769,11 @@ const PlayerRegistration: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (config?.welcomePopup?.isEnabled && !loading && !error) {
+        if (!isAdminMode && config?.welcomePopup?.isEnabled && !loading && !error) {
             setShowWelcomePopup(true);
             setWelcomeTimer(config.welcomePopup.autoCloseTimer);
         }
-    }, [config, loading, error]);
+    }, [config, loading, error, isAdminMode]);
 
     useEffect(() => {
         let timer: any;
@@ -855,6 +891,29 @@ const PlayerRegistration: React.FC = () => {
             unsubRoles();
             unsubPromo();
         };
+    }, [id]);
+
+    // Check if returning user had a pending UPI registration that succeeded via webhook
+    useEffect(() => {
+        if (!id) return;
+        const pendingRegId = localStorage.getItem(`pending_reg_${id}`);
+        if (!pendingRegId) return;
+
+        const unsubPendingCheck = db.collection('auctions').doc(id).collection('registrations').doc(pendingRegId).onSnapshot(snap => {
+            if (snap.exists) {
+                const data = snap.data();
+                if (data?.paymentStatus === 'PAID' || data?.status === 'APPROVED') {
+                    console.log("[Auto-Recovered] Pending payment verified via webhook!");
+                    setPlayerID(data?.playerID || pendingRegId);
+                    setSuccess(true);
+                    localStorage.removeItem(`pending_reg_${id}`);
+                }
+            }
+        }, err => {
+            console.warn("Could not check pending registration:", err);
+        });
+
+        return () => unsubPendingCheck();
     }, [id]);
 
     const validateCaptainCode = async (code: string) => {
@@ -1089,7 +1148,7 @@ const PlayerRegistration: React.FC = () => {
         try {
             const generatedID = `WAR-${Math.floor(1000 + Math.random() * 9000)}`;
             setPlayerID(generatedID);
-            const isAutoApprove = !!config?.autoApprove;
+            const isAutoApprove = isAdminMode ? adminAddToPool : !!config?.autoApprove;
             const submissionData = {
                 ...formData, 
                 profilePic: profilePic || '',
@@ -1098,14 +1157,16 @@ const PlayerRegistration: React.FC = () => {
                 isCaptain: !!isCaptain,
                 captainCode: isCaptain ? captainCode.toUpperCase() : '',
                 teamCode: hasTeamCode ? teamCode.toUpperCase() : '',
-                registeredViaCode: (isCaptain && !!validatedCode) || (hasTeamCode && !!validatedTeamCode) || !!validatedOrganiserCode,
-                organiserCode: validatedOrganiserCode ? validatedOrganiserCode.code.toUpperCase() : '',
-                paymentScreenshot: config?.paymentMethod === 'MANUAL' && finalFee > 0 ? (paymentScreenshot || '') : '',
-                paymentScreenshotUrl: config?.paymentMethod === 'MANUAL' && finalFee > 0 ? (paymentScreenshot || '') : '',
-                razorpayPaymentId: finalFee > 0 ? (razorpayId || '') : 'Bypassed (Promo Applied)',
-                discountApplied: discountAmount || 0,
-                finalFeePaid: finalFee || 0,
-                promoCodeUsed: couponCode || (validatedOrganiserCode ? validatedOrganiserCode.code : ''),
+                registeredViaCode: (isCaptain && !!validatedCode) || (hasTeamCode && !!validatedTeamCode) || !!validatedOrganiserCode || isAdminMode,
+                organiserCode: validatedOrganiserCode ? validatedOrganiserCode.code.toUpperCase() : (isAdminMode ? 'ADMIN_MANUAL' : ''),
+                paymentScreenshot: !isAdminMode && config?.paymentMethod === 'MANUAL' && finalFee > 0 ? (paymentScreenshot || '') : '',
+                paymentScreenshotUrl: !isAdminMode && config?.paymentMethod === 'MANUAL' && finalFee > 0 ? (paymentScreenshot || '') : '',
+                razorpayPaymentId: isAdminMode ? 'Bypassed (Admin Manual Entry)' : (finalFee > 0 ? (razorpayId || '') : 'Bypassed (Promo Applied)'),
+                discountApplied: isAdminMode ? (config?.fee || 0) : (discountAmount || 0),
+                finalFeePaid: isAdminMode ? 0 : (finalFee || 0),
+                paymentStatus: isAdminMode ? 'ADMIN_EXEMPT' : (finalFee === 0 ? 'FREE' : 'COMPLETED'),
+                registeredByAdmin: !!isAdminMode,
+                promoCodeUsed: couponCode || (validatedOrganiserCode ? validatedOrganiserCode.code : (isAdminMode ? 'ADMIN_MANUAL_ENTRY' : '')),
                 submittedAt: Date.now(), 
                 status: isAutoApprove ? 'APPROVED' : 'PENDING'
             };
@@ -1134,15 +1195,24 @@ const PlayerRegistration: React.FC = () => {
 
             if (isAutoApprove) {
                 try {
-                    const newPlayer = {
+                    const newPlayer: any = {
                         name: formData.fullName,
-                        photoUrl: cleanSubmissionData.profilePic || profilePic,
-                        category: 'Standard',
-                        role: formData.playerType,
-                        basePrice: auction?.basePrice || 0,
+                        photoUrl: cleanSubmissionData.profilePic || profilePic || '',
+                        category: formData.category || 'Standard',
+                        role: formData.playerType || 'All Rounder',
+                        basePrice: Number(formData.basePrice) || auction?.basePrice || 0,
                         nationality: 'India',
-                        speciality: formData.playerType,
-                        stats: { matches: 0, runs: 0, wickets: 0 }
+                        mobile: formData.mobile || '',
+                        gender: formData.gender || '',
+                        dob: formData.dob || '',
+                        jerseyName: formData.jerseyName || '',
+                        jerseyNumber: formData.jerseyNumber || '',
+                        jerseySize: formData.jerseySize || '',
+                        speciality: formData.playerType || 'All Rounder',
+                        stats: { matches: 0, runs: 0, wickets: 0 },
+                        registeredByAdmin: !!isAdminMode,
+                        registrationId: regRef.id,
+                        customFields: formData
                     };
                     await db.collection('auctions').doc(id).collection('players').add(newPlayer);
                 } catch (playerAddErr) {
@@ -1241,26 +1311,139 @@ const PlayerRegistration: React.FC = () => {
         finally { setSubmitting(false); }
     };
 
-    const handleRazorpayModal = () => {
-        if (!isRazorpayLoaded) { alert("Payment system not ready."); setSubmitting(false); return; }
-        const options = {
-            key: config?.razorpayKey || "", 
-            amount: finalFee * 100, 
-            currency: "INR",
-            name: auction?.title || "Tournament Registration",
-            description: `Player Enrollment Fee`,
-            image: config?.logoUrl || '',
-            handler: (res: any) => submitToFirebase(res.razorpay_payment_id),
-            prefill: { 
-                name: formData.fullName, 
-                contact: formData.mobile,
-                email: ''
-            },
-            theme: { color: (isClassicNeon || isNavyGolden) ? "#A6FF00" : "#fbbf24" },
-            modal: { ondismiss: () => setSubmitting(false) }
-        };
-        const rzp = new (window as any).Razorpay(options);
-        rzp.open();
+    const initiateRazorpayPayment = async () => {
+        if (!id) return;
+        if (!isRazorpayLoaded) { 
+            alert("Payment gateway script is loading, please try again in a moment."); 
+            setSubmitting(false); 
+            return; 
+        }
+
+        try {
+            setSubmitting(true);
+            const generatedID = `WAR-${Math.floor(1000 + Math.random() * 9000)}`;
+            setPlayerID(generatedID);
+
+            // 1. Prepare submission data and upload base64 images to Storage
+            const submissionData = {
+                ...formData, 
+                profilePic: profilePic || '',
+                photoUrl: profilePic || '',
+                playerID: generatedID,
+                isCaptain: !!isCaptain,
+                captainCode: isCaptain ? captainCode.toUpperCase() : '',
+                teamCode: hasTeamCode ? teamCode.toUpperCase() : '',
+                registeredViaCode: (isCaptain && !!validatedCode) || (hasTeamCode && !!validatedTeamCode) || !!validatedOrganiserCode,
+                organiserCode: validatedOrganiserCode ? validatedOrganiserCode.code.toUpperCase() : '',
+                paymentScreenshot: '',
+                paymentScreenshotUrl: '',
+                discountApplied: discountAmount || 0,
+                finalFeePaid: finalFee || 0,
+                paymentStatus: 'PENDING_PAYMENT',
+                registeredByAdmin: false,
+                promoCodeUsed: couponCode || (validatedOrganiserCode ? validatedOrganiserCode.code : ''),
+                submittedAt: Date.now(), 
+                status: 'PENDING'
+            };
+
+            let cleanSubmissionData = JSON.parse(JSON.stringify(submissionData));
+            cleanSubmissionData = await uploadBase64FieldsToStorage(cleanSubmissionData, id, 'reg');
+            if (cleanSubmissionData.profilePic) cleanSubmissionData.photoUrl = cleanSubmissionData.profilePic;
+            cleanSubmissionData = await ensurePayloadWithinLimit(cleanSubmissionData, 600000);
+
+            // 2. Call backend to create Razorpay Order & Pre-Payment Registration doc
+            const res = await fetch('/api/create-razorpay-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    auctionId: id,
+                    registrationData: cleanSubmissionData
+                })
+            });
+
+            const orderData = await res.json();
+            if (!res.ok || !orderData.orderId) {
+                throw new Error(orderData.error || 'Failed to initialize payment order');
+            }
+
+            const { orderId, amount, currency, keyId, registrationId } = orderData;
+
+            // Save pending registration id to localStorage so re-entering the page recovers state
+            localStorage.setItem(`pending_reg_${id}`, registrationId);
+
+            // 3. Setup real-time listener on the Firestore registration doc!
+            // When Razorpay webhook receives payment from UPI / GPay / PhonePe independently,
+            // this listener triggers immediately and shows verification screen automatically.
+            db.collection('auctions').doc(id).collection('registrations').doc(registrationId).onSnapshot(docSnap => {
+                if (docSnap.exists) {
+                    const data = docSnap.data();
+                    if (data?.paymentStatus === 'PAID' || data?.status === 'APPROVED') {
+                        console.log("[Razorpay Sync] Registration updated to PAID via Webhook/Backend!");
+                        localStorage.removeItem(`pending_reg_${id}`);
+                        setSuccess(true);
+                        setSubmitting(false);
+                    }
+                }
+            }, err => {
+                console.warn("[Razorpay Sync] Firestore listener warning:", err);
+            });
+
+            // 4. Open Razorpay Checkout modal
+            const options = {
+                key: keyId || config?.razorpayKey || "",
+                order_id: orderId,
+                amount: amount,
+                currency: currency || "INR",
+                name: auction?.title || "Tournament Registration",
+                description: `Player Enrollment Fee`,
+                image: config?.logoUrl || '',
+                prefill: { 
+                    name: formData.fullName, 
+                    contact: formData.mobile,
+                    email: ''
+                },
+                theme: { color: (isClassicNeon || isNavyGolden) ? "#A6FF00" : "#fbbf24" },
+                handler: async (response: any) => {
+                    // Fast-path client verification
+                    try {
+                        await fetch('/api/verify-payment', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                auctionId: id,
+                                registrationId,
+                                razorpayOrderId: response.razorpay_order_id,
+                                razorpayPaymentId: response.razorpay_payment_id,
+                                razorpaySignature: response.razorpay_signature
+                            })
+                        });
+                    } catch (clientVerifyErr) {
+                        console.warn("Client verification warning (webhook will also verify):", clientVerifyErr);
+                    }
+                    localStorage.removeItem(`pending_reg_${id}`);
+                    setSuccess(true);
+                    setSubmitting(false);
+                },
+                modal: { 
+                    ondismiss: () => {
+                        console.log("Razorpay Checkout dismissed or app switched.");
+                        setSubmitting(false);
+                    } 
+                }
+            };
+
+            const rzp = new (window as any).Razorpay(options);
+            rzp.on('payment.failed', function (resp: any) {
+                console.warn("Payment failed callback:", resp.error);
+                alert(`Payment could not be completed: ${resp.error?.description || 'Transaction cancelled or failed.'}`);
+                setSubmitting(false);
+            });
+            rzp.open();
+        } catch (e: any) {
+            console.error("Razorpay initiation error:", e);
+            alert(`Payment setup failed: ${e.message || 'Please try again or contact tournament organizer.'}`);
+            setSubmitting(false);
+        }
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -1330,14 +1513,14 @@ const PlayerRegistration: React.FC = () => {
         }
 
         // Payment
-        if (config?.includePayment && finalFee > 0) {
+        if (config?.includePayment && finalFee > 0 && !isAdminMode) {
             if (config.paymentMethod === 'MANUAL' && !paymentScreenshot) {
                 missingFields.push("Payment Proof/Screenshot");
             }
         }
 
         // Tournament Terms
-        if (!formData.battleOath) {
+        if (!formData.battleOath && !isAdminMode) {
             missingFields.push("Tournament Terms Acceptance");
         }
 
@@ -1348,8 +1531,8 @@ const PlayerRegistration: React.FC = () => {
         setSubmitting(true);
         
         // Handle Razorpay if enabled
-        if (config?.includePayment && config.paymentMethod === 'RAZORPAY' && finalFee > 0) {
-            handleRazorpayModal();
+        if (config?.includePayment && config.paymentMethod === 'RAZORPAY' && finalFee > 0 && !isAdminMode) {
+            initiateRazorpayPayment();
             return;
         }
 
@@ -1359,7 +1542,7 @@ const PlayerRegistration: React.FC = () => {
     if (loading) return <div className={`min-h-screen flex items-center justify-center ${isClassicNeon ? 'bg-[#070B0A]' : 'bg-slate-900'} text-white`}><Loader2 className={`animate-spin w-10 h-10 ${isClassicNeon ? 'text-[#A6FF00]' : 'text-amber-500'}`}/></div>;
     if (error) return <div className="min-h-screen flex items-center justify-center p-4 bg-slate-900"><div className="bg-white p-8 rounded-[2rem] shadow-2xl text-center max-w-md border-4 border-red-500/20"><h2 className="text-2xl font-black mb-2 text-red-600 uppercase tracking-tighter">Access Denied</h2><p className="font-bold text-gray-500 uppercase text-xs tracking-widest">{error}</p></div></div>;
 
-    if (isClosed) {
+    if (isClosed && !isAdminMode) {
         return (
             <div className={`min-h-screen flex items-center justify-center p-4 ${isClassicNeon ? 'bg-[#070B0A]' : isAdvaya ? 'bg-[#0a0a0a]' : 'bg-slate-900'}`}>
                 <div className={`${isClassicNeon ? 'bg-[#0F1413] border-[#A6FF00]/30 text-white' : isAdvaya ? 'bg-[#151515] border-amber-500/30 text-amber-50' : 'bg-white text-gray-800'} p-10 rounded-[2.5rem] shadow-2xl text-center max-w-md border-4 animate-fade-in`}>
@@ -1489,6 +1672,18 @@ const PlayerRegistration: React.FC = () => {
         );
     }
 
+    const handleResetForAnotherPlayer = () => {
+        setFormData({
+            fullName: '', playerType: '', gender: '', mobile: '', dob: '', battleOath: true,
+            jerseyName: '', jerseyNumber: '', jerseySize: '', category: 'Standard', basePrice: ''
+        });
+        setProfilePic('');
+        setPaymentScreenshot('');
+        setSuccess(false);
+        setCurrentStep(0);
+        setPlayerID('');
+    };
+
     if (success) {
         return (
             <div className={`min-h-screen flex items-center justify-center p-4 ${isClassicNeon ? 'bg-[#070B0A]' : isAdvaya ? 'bg-[#0a0a0a]' : 'bg-gray-50'}`}>
@@ -1585,33 +1780,74 @@ const PlayerRegistration: React.FC = () => {
                             </div>
                         )}
 
-                        <div className="flex items-center justify-center gap-4 pt-4">
-                            <button 
-                                onClick={() => {
-                                    let baseUrl = window.location.origin;
-                                    if (baseUrl.includes('-dev-')) {
-                                        baseUrl = baseUrl.replace('-dev-', '-pre-');
-                                    }
-                                    const regUrl = `${baseUrl}/#/auction/${id}/register`;
-                                    const text = `I just registered for ${auction?.title}! My Player ID is ${playerID}. Check it out here: ${regUrl}`;
-                                    if (navigator.share) {
-                                        navigator.share({ title: auction?.title, text, url: regUrl });
-                                    } else {
-                                        navigator.clipboard.writeText(text);
-                                        alert("Registration details copied to clipboard!");
-                                    }
-                                }}
-                                className={`p-4 rounded-2xl transition-all active:scale-90 ${isAdvaya ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' : 'bg-blue-50 text-blue-600 border border-blue-100'}`}
-                            >
-                                <Share2 className="w-5 h-5" />
-                            </button>
-                            <button 
-                                onClick={() => navigate('/')}
-                                className={`flex-1 py-5 rounded-2xl font-black uppercase tracking-widest transition-all active:scale-95 ${isAdvaya ? 'bg-amber-600 hover:bg-amber-500 text-black' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
-                            >
-                                OK
-                            </button>
-                        </div>
+                        {isAdminMode ? (
+                            <div className="space-y-4 pt-4">
+                                <div className={`p-4 rounded-2xl border text-center ${isClassicNeon ? 'bg-[#A6FF00]/10 border-[#A6FF00]/30 text-[#A6FF00]' : isAdvaya ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                                    <div className="flex items-center justify-center gap-2 mb-1">
+                                        <ShieldCheck className="w-5 h-5" />
+                                        <span className="text-xs font-black uppercase tracking-wider">Manual Entry Confirmed</span>
+                                    </div>
+                                    <p className="text-[10px] font-bold uppercase tracking-widest opacity-80">
+                                        {adminAddToPool ? "Added to Player Pool & Registrations with all details. Payment was waived." : "Saved to Registration queue without payment."}
+                                    </p>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                                    <button 
+                                        onClick={handleResetForAnotherPlayer}
+                                        className={`py-4 px-6 rounded-2xl font-black uppercase tracking-wider text-xs transition-all active:scale-95 flex items-center justify-center gap-2 ${
+                                            isClassicNeon 
+                                            ? 'bg-[#A6FF00] text-black shadow-[0_0_20px_rgba(166,255,0,0.3)]' 
+                                            : isAdvaya 
+                                            ? 'bg-amber-600 hover:bg-amber-500 text-black' 
+                                            : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20'
+                                        }`}
+                                    >
+                                        <Plus className="w-4 h-4" /> Add Another Player
+                                    </button>
+                                    <button 
+                                        onClick={() => navigate(`/auction/${id}`)}
+                                        className={`py-4 px-6 rounded-2xl font-black uppercase tracking-wider text-xs border transition-all active:scale-95 flex items-center justify-center gap-2 ${
+                                            isClassicNeon 
+                                            ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' 
+                                            : isAdvaya 
+                                            ? 'bg-black/60 border-amber-500/30 text-amber-200 hover:bg-black' 
+                                            : 'bg-gray-100 border-gray-200 text-gray-700 hover:bg-gray-200'
+                                        }`}
+                                    >
+                                        <ArrowLeft className="w-4 h-4" /> Auction Management
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex items-center justify-center gap-4 pt-4">
+                                <button 
+                                    onClick={() => {
+                                        let baseUrl = window.location.origin;
+                                        if (baseUrl.includes('-dev-')) {
+                                            baseUrl = baseUrl.replace('-dev-', '-pre-');
+                                        }
+                                        const regUrl = `${baseUrl}/#/auction/${id}/register`;
+                                        const text = `I just registered for ${auction?.title}! My Player ID is ${playerID}. Check it out here: ${regUrl}`;
+                                        if (navigator.share) {
+                                            navigator.share({ title: auction?.title, text, url: regUrl });
+                                        } else {
+                                            navigator.clipboard.writeText(text);
+                                            alert("Registration details copied to clipboard!");
+                                        }
+                                    }}
+                                    className={`p-4 rounded-2xl transition-all active:scale-90 ${isAdvaya ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' : 'bg-blue-50 text-blue-600 border border-blue-100'}`}
+                                >
+                                    <Share2 className="w-5 h-5" />
+                                </button>
+                                <button 
+                                    onClick={() => navigate('/')}
+                                    className={`flex-1 py-5 rounded-2xl font-black uppercase tracking-widest transition-all active:scale-95 ${isAdvaya ? 'bg-amber-600 hover:bg-amber-500 text-black' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+                                >
+                                    OK
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </motion.div>
             </div>
@@ -1619,13 +1855,13 @@ const PlayerRegistration: React.FC = () => {
     }
 
     const steps = [
-        { id: 'details', label: isClassicNeon ? 'OVERVIEW' : isAdvaya ? 'Info' : 'Information' },
+        ...(!isAdminMode ? [{ id: 'details', label: isClassicNeon ? 'OVERVIEW' : isAdvaya ? 'Info' : 'Information' }] : []),
         { id: 'personal', label: isClassicNeon ? 'PROFILE' : isAdvaya ? 'Contact' : 'Details' },
         { id: 'role', label: isClassicNeon ? 'ROLE' : isAdvaya ? 'Role' : 'Position' },
         ...(config?.customFields && config.customFields.length > 0 ? [{ id: 'custom', label: isClassicNeon ? 'DETAILS' : isAdvaya ? 'Profile' : 'Skills' }] : []),
         ...(config?.jerseyDetailsEnabled ? [{ id: 'jersey', label: isClassicNeon ? 'KIT' : 'Jersey' }] : []),
-        ...(config?.includePayment && config.paymentMethod === 'MANUAL' ? [{ id: 'payment', label: isClassicNeon ? 'PAYMENT' : isAdvaya ? 'Fee' : 'Payment' }] : []),
-        { id: 'rules', label: isClassicNeon ? 'TERMS' : isAdvaya ? 'Rules' : 'Rules' }
+        ...(config?.includePayment && config.paymentMethod === 'MANUAL' && !isAdminMode ? [{ id: 'payment', label: isClassicNeon ? 'PAYMENT' : isAdvaya ? 'Fee' : 'Payment' }] : []),
+        { id: 'rules', label: isClassicNeon ? 'TERMS' : isAdvaya ? 'Rules' : (isAdminMode ? 'Review & Save' : 'Rules') }
     ];
 
     const currentStepId = steps[currentStep]?.id;
@@ -1636,6 +1872,85 @@ const PlayerRegistration: React.FC = () => {
 
     const prevStep = () => {
         if (currentStep > 0) setCurrentStep(prev => prev - 1);
+    };
+
+    const renderAdminBanner = () => {
+        if (!isAdminMode) {
+            if (isAuctionAdmin) {
+                return (
+                    <div className="max-w-4xl mx-auto mb-6 p-4 rounded-2xl bg-amber-500/10 border-2 border-amber-500/30 text-amber-200 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div className="flex items-center gap-3 text-left">
+                            <div className="p-2.5 bg-amber-500/20 rounded-xl text-amber-400">
+                                <Info className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <p className="text-xs font-black uppercase tracking-wider text-amber-300">Tournament Organizer Detected</p>
+                                <p className="text-[10px] font-bold text-amber-200/70 uppercase tracking-widest mt-0.5">
+                                    Want to add players manually without paying registration fees?
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsAdminMode(true);
+                                setFormData((prev: any) => ({ ...prev, battleOath: true }));
+                            }}
+                            className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-amber-500 hover:bg-amber-400 text-black transition-all flex items-center gap-2 shadow-lg shadow-amber-500/20 whitespace-nowrap active:scale-95"
+                        >
+                            <ShieldCheck className="w-4 h-4" /> Switch to Admin Mode (No Payment)
+                        </button>
+                    </div>
+                );
+            }
+            return null;
+        }
+
+        return (
+            <div className="max-w-4xl mx-auto mb-8 p-5 rounded-3xl bg-gradient-to-r from-blue-900/95 via-indigo-950/95 to-blue-900/95 border-2 border-blue-400/50 text-white shadow-2xl backdrop-blur-xl animate-fade-in relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative z-10">
+                    <div className="flex items-start sm:items-center gap-3.5 text-left">
+                        <div className="p-3 bg-blue-500/20 rounded-2xl border border-blue-400/30 text-blue-300 shadow-inner">
+                            <ShieldCheck className="w-6 h-6 text-blue-400" />
+                        </div>
+                        <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs font-black uppercase tracking-wider text-blue-300">ADMIN MANUAL REGISTRATION MODE</span>
+                                <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                    PAYMENT EXEMPT (₹0.00)
+                                </span>
+                            </div>
+                            <p className="text-[10px] font-bold text-slate-300 uppercase tracking-wider mt-1 leading-normal">
+                                Full access to all registration form details, custom fields & file uploads. Payment proofs and gateways are bypassed.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end pt-2 md:pt-0 border-t md:border-t-0 border-white/10">
+                        <label className="flex items-center gap-2 cursor-pointer select-none bg-black/40 px-3 py-2 rounded-xl border border-white/10 hover:border-blue-400/40 transition-all">
+                            <input
+                                type="checkbox"
+                                checked={adminAddToPool}
+                                onChange={(e) => setAdminAddToPool(e.target.checked)}
+                                className="w-4 h-4 rounded text-blue-600 focus:ring-0 accent-blue-500 cursor-pointer"
+                            />
+                            <span className="text-[9px] font-black uppercase tracking-wider text-slate-200">
+                                Auto-Approve to Pool
+                            </span>
+                        </label>
+
+                        <button
+                            type="button"
+                            onClick={() => navigate(`/auction/${id}`)}
+                            className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider bg-white/10 hover:bg-white/20 border border-white/20 text-white transition-all active:scale-95 flex items-center gap-1.5"
+                        >
+                            <ArrowLeft className="w-3.5 h-3.5" /> Back to Manage
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
     };
 
     if (isAdvaya || isNavyGolden || isClassicNeon) {
@@ -1920,6 +2235,7 @@ const PlayerRegistration: React.FC = () => {
                 )}
 
                 <div className={`${isClassicNeon ? 'max-w-7xl' : 'max-w-4xl'} mx-auto relative z-10`}>
+                    {renderAdminBanner()}
                     {/* Header & Progress */}
                     <div className="text-center mb-8 md:mb-12">
                         <motion.div
@@ -1928,10 +2244,12 @@ const PlayerRegistration: React.FC = () => {
                             className="flex items-center justify-center gap-4 mb-6"
                         >
                             <button 
-                                onClick={() => navigate('/')}
-                                className={`p-3 rounded-2xl bg-white/5 border border-white/10 ${isClassicNeon || isNavyGolden ? 'text-[#A6FF00] hover:border-[#A6FF00]/50' : 'text-amber-500'} hover:bg-white/10 transition-all active:scale-90`}
+                                onClick={() => isAdminMode ? navigate(`/auction/${id}`) : navigate('/')}
+                                className={`p-3 rounded-2xl bg-white/5 border border-white/10 ${isClassicNeon || isNavyGolden ? 'text-[#A6FF00] hover:border-[#A6FF00]/50' : 'text-amber-500'} hover:bg-white/10 transition-all active:scale-90 flex items-center gap-2`}
+                                title={isAdminMode ? "Back to Auction Management" : "Back to Home"}
                             >
                                 <ArrowLeft className="w-5 h-5" />
+                                {isAdminMode && <span className="text-[10px] font-black uppercase tracking-wider hidden sm:inline">Manage</span>}
                             </button>
                             <div className={`flex-1 h-[1px] bg-gradient-to-r from-transparent ${isClassicNeon || isNavyGolden ? 'via-[#A6FF00]/20' : 'via-amber-500/20'} to-transparent`} />
                             <h2 className={`text-xl md:text-3xl font-black ${isClassicNeon || isNavyGolden ? 'text-[#A6FF00] italic' : 'text-amber-500'} uppercase tracking-tighter`}>{auction?.title}</h2>
@@ -2827,10 +3145,10 @@ const PlayerRegistration: React.FC = () => {
                                 </button>
                         ) : (
                             <button 
-                                disabled={!formData.battleOath || submitting}
+                                disabled={(!formData.battleOath && !isAdminMode) || submitting}
                                 onClick={handleSubmit}
                                 className={`px-16 py-6 rounded-full font-black uppercase tracking-widest transition-all active:scale-95 flex items-center gap-4 ${
-                                    !formData.battleOath || submitting 
+                                    (!formData.battleOath && !isAdminMode) || submitting 
                                         ? 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-50 shadow-none' 
                                         : isClassicNeon 
                                             ? 'bg-[#A6FF00] text-black shadow-[#A6FF00]/40' 
@@ -2839,8 +3157,8 @@ const PlayerRegistration: React.FC = () => {
                             >
                                 {submitting ? <Loader2 className="animate-spin w-6 h-6" /> : (
                                     <>
-                                        {isClassicNeon ? <Zap className="w-6 h-6" /> : isAdvaya ? <Sword className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />} 
-                                        {isClassicNeon ? 'REGISTER NOW' : isAdvaya ? 'REGISTER NOW' : 'FINISH REGISTRATION'}
+                                        {isAdminMode ? <ShieldCheck className="w-6 h-6" /> : isClassicNeon ? <Zap className="w-6 h-6" /> : isAdvaya ? <Sword className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />} 
+                                        {isAdminMode ? 'SAVE & REGISTER PLAYER (ADMIN)' : isClassicNeon ? 'REGISTER NOW' : isAdvaya ? 'REGISTER NOW' : 'FINISH REGISTRATION'}
                                     </>
                                 )}
                             </button>
@@ -2856,7 +3174,7 @@ const PlayerRegistration: React.FC = () => {
             {/* Back Button */}
             <div className="max-w-2xl mx-auto mb-6 flex items-center justify-between relative z-[110]">
                 <button 
-                    onClick={() => navigate('/')}
+                    onClick={() => isAdminMode ? navigate(`/auction/${id}`) : navigate('/')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 ${
                         isAdvaya 
                         ? 'bg-amber-600/10 border border-amber-600/30 text-amber-500 hover:bg-amber-600/20' 
@@ -2864,9 +3182,11 @@ const PlayerRegistration: React.FC = () => {
                     }`}
                 >
                     <ArrowLeft className="w-4 h-4" />
-                    Back to Home
+                    {isAdminMode ? 'Back to Auction Management' : 'Back to Home'}
                 </button>
             </div>
+
+            {renderAdminBanner()}
 
             <AnimatePresence>
                 {isAdvaya && showBattleEntrance && !battleStarted && (
@@ -3263,7 +3583,16 @@ const PlayerRegistration: React.FC = () => {
                                     transition={{ delay: 0.6 }}
                                     className="md:col-span-2"
                                 >
-                                    {finalFee === 0 ? (
+                                    {isAdminMode ? (
+                                        <div className={`p-12 text-center border-2 border-dashed rounded-[3rem] ${isNavyGolden ? 'bg-[#001f3f]/40 border-blue-500/30 text-blue-400' : isAdvaya ? 'bg-black/40 border-blue-500/30 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                                            <div className="w-20 h-20 bg-blue-500/10 rounded-[2rem] flex items-center justify-center mx-auto mb-6 border border-blue-500/20">
+                                                <ShieldCheck className="w-10 h-10 text-blue-500" />
+                                            </div>
+                                            <h4 className="text-2xl font-black uppercase tracking-tight mb-2">ADMIN MANUAL ENTRY — NO PAYMENT REQUIRED</h4>
+                                            <p className="text-xs font-bold uppercase tracking-widest opacity-80">As tournament administrator, player registration fees & payment proofs are waived.</p>
+                                            <p className="text-[10px] font-medium uppercase tracking-widest opacity-60 mt-2">You can submit this player directly into the system.</p>
+                                        </div>
+                                    ) : finalFee === 0 ? (
                                         <div className={`p-12 text-center border-2 border-dashed rounded-[3rem] ${isNavyGolden ? 'bg-[#001f3f]/40 border-green-500/20 text-green-400' : isAdvaya ? 'bg-black/40 border-green-500/20 text-green-400' : 'bg-green-50 border-green-100 text-green-700'}`}>
                                             <div className="w-20 h-20 bg-green-500/10 rounded-[2rem] flex items-center justify-center mx-auto mb-6 border border-green-500/20">
                                                 <ShieldCheck className="w-10 h-10" />
@@ -3394,8 +3723,10 @@ const PlayerRegistration: React.FC = () => {
                         </motion.div>
                     </div>
 
-                                <button disabled={!formData.battleOath || submitting} type="submit" className={`w-full font-black py-5 rounded-[1.5rem] shadow-2xl transition-all flex items-center justify-center gap-4 group active:scale-95 uppercase text-sm tracking-widest ${isClassicNeon ? 'bg-[#A6FF00] hover:shadow-[0_0_20px_rgba(166,255,0,0.4)] text-black' : isAdvaya ? 'bg-amber-600 hover:bg-amber-500 text-black shadow-amber-900/20' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-900/20'} ${!formData.battleOath ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                        {submitting ? <Loader2 className="animate-spin" /> : (config?.includePayment && config.paymentMethod === 'RAZORPAY' && finalFee > 0 ? <><CreditCard className="w-6 h-6"/> {isClassicNeon || !isAdvaya ? 'Pay' : 'Authorize'} ₹{finalFee}</> : 'REGISTER NOW')}
+                    <button disabled={(!formData.battleOath && !isAdminMode) || submitting} type="submit" className={`w-full font-black py-5 rounded-[1.5rem] shadow-2xl transition-all flex items-center justify-center gap-4 group active:scale-95 uppercase text-sm tracking-widest ${isClassicNeon ? 'bg-[#A6FF00] hover:shadow-[0_0_20px_rgba(166,255,0,0.4)] text-black' : isAdvaya ? 'bg-amber-600 hover:bg-amber-500 text-black shadow-amber-900/20' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-900/20'} ${(!formData.battleOath && !isAdminMode) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                        {submitting ? <Loader2 className="animate-spin" /> : isAdminMode ? (
+                            <><ShieldCheck className="w-6 h-6" /> SAVE & REGISTER PLAYER (ADMIN)</>
+                        ) : (config?.includePayment && config.paymentMethod === 'RAZORPAY' && finalFee > 0 ? <><CreditCard className="w-6 h-6"/> {isClassicNeon || !isAdvaya ? 'Pay' : 'Authorize'} ₹{finalFee}</> : 'REGISTER NOW')}
                     </button>
                     
                     <p className={`text-[9px] font-bold text-center uppercase tracking-widest leading-relaxed ${isClassicNeon ? 'text-white/40' : isAdvaya ? 'text-amber-900' : 'text-gray-400'}`}>

@@ -149,6 +149,67 @@ const AuctionManage: React.FC = () => {
     const [copySuccess, setCopySuccess] = useState(false);
     const [isAuctionSelectorOpen, setIsAuctionSelectorOpen] = useState(false);
     const [isTabSelectorOpen, setIsTabSelectorOpen] = useState(false);
+    const [showRazorpaySecret, setShowRazorpaySecret] = useState(false);
+    const [showWebhookSecret, setShowWebhookSecret] = useState(false);
+    const [reconcilingId, setReconcilingId] = useState<string | null>(null);
+    const [isBulkReconciling, setIsBulkReconciling] = useState(false);
+    const [webhookCopied, setWebhookCopied] = useState(false);
+
+    const handleReconcilePayment = async (regId: string, orderId?: string, paymentId?: string) => {
+        if (!id) return;
+        setReconcilingId(regId);
+        try {
+            const res = await fetch('/api/reconcile-payment', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    auctionId: id,
+                    registrationId: regId,
+                    razorpayOrderId: orderId,
+                    razorpayPaymentId: paymentId
+                })
+            });
+            const data = await res.json();
+            if (data.reconciled) {
+                showNotification(`Payment verified on Razorpay! Registration updated to PAID.`, "success");
+            } else {
+                showNotification(data.message || "No captured payment found on Razorpay for this order.", "error");
+            }
+        } catch (err: any) {
+            showNotification(`Reconciliation error: ${err.message}`, "error");
+        } finally {
+            setReconcilingId(null);
+        }
+    };
+
+    const handleBulkReconcile = async () => {
+        if (!id) return;
+        setIsBulkReconciling(true);
+        try {
+            const res = await fetch('/api/reconcile-payment', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ auctionId: id })
+            });
+            const data = await res.json();
+            if (data.reconciledCount > 0) {
+                showNotification(`Successfully reconciled ${data.reconciledCount} of ${data.totalChecked} pending payments!`, "success");
+            } else {
+                showNotification(`Checked ${data.totalChecked || 0} pending payments. All are up to date.`, "success");
+            }
+        } catch (err: any) {
+            showNotification(`Bulk reconciliation error: ${err.message}`, "error");
+        } finally {
+            setIsBulkReconciling(false);
+        }
+    };
+
+    const copyWebhookUrl = () => {
+        const url = `${window.location.origin}/api/razorpay-webhook`;
+        navigator.clipboard.writeText(url);
+        setWebhookCopied(true);
+        setTimeout(() => setWebhookCopied(false), 3000);
+    };
 
     const showNotification = (message: string, type: 'error' | 'success' = 'error') => {
         setNotification({ message, type });
@@ -2217,9 +2278,17 @@ const AuctionManage: React.FC = () => {
                                 </label>
                                 <button 
                                     onClick={() => { setModalType('PLAYER'); setEditItem({ name: '', category: 'Standard', role: 'All Rounder', basePrice: settingsForm.basePrice, nationality: 'India' }); setShowModal(true); }} 
-                                    className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 border shadow-sm transition-all ${isDark ? 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 border shadow-sm transition-all ${isDark ? 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                                    title="Quick add with basic fields"
                                 >
-                                    <Plus className="w-4 h-4"/> Add Player
+                                    <Plus className="w-4 h-4"/> Quick Add
+                                </button>
+                                <button 
+                                    onClick={() => navigate(`/auction/${id}/register?mode=admin`)} 
+                                    className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-md shadow-blue-500/20 transition-all hover:scale-105 active:scale-95"
+                                    title="Open full registration form with all custom fields, jersey info & documents (payment bypassed for admin)"
+                                >
+                                    <UserPlus className="w-4 h-4"/> Full Registration Form
                                 </button>
                             </div>
                         </div>
@@ -2274,7 +2343,7 @@ const AuctionManage: React.FC = () => {
                                                                     showNotification("Failed to update: " + err.message, "error");
                                                                 }
                                                             }}
-                                                            options={['Standard', ...categories.map(c => c.name)]}
+                                                            options={Array.from(new Set(['Standard', ...(categories || []).map(c => c.name).filter(Boolean)]))}
                                                             isDark={isDark}
                                                             size="xs"
                                                             buttonClassName={(p.category || 'Standard') === 'Standard'
@@ -2567,19 +2636,131 @@ const AuctionManage: React.FC = () => {
                                             </div>
 
                                             {regConfig.paymentMethod === 'RAZORPAY' && (
-                                                <div className="bg-indigo-600 p-6 rounded-2xl shadow-xl animate-fade-in">
-                                                    <div className="flex items-center gap-3 mb-4">
-                                                        <Key className="w-5 h-5 text-indigo-200" />
-                                                        <span className="text-[10px] font-black text-white uppercase tracking-widest">Razorpay Key ID</span>
+                                                <div className="space-y-4 animate-fade-in">
+                                                    {/* API Credentials */}
+                                                    <div className="bg-gradient-to-br from-indigo-900 to-indigo-950 p-6 rounded-2xl shadow-xl border border-indigo-500/20 space-y-4">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-2.5">
+                                                                <div className="bg-indigo-500/20 p-2 rounded-xl text-indigo-300">
+                                                                    <Key className="w-4 h-4" />
+                                                                </div>
+                                                                <div>
+                                                                    <span className="text-[11px] font-black text-white uppercase tracking-wider block">Razorpay API Credentials</span>
+                                                                    <span className="text-[9px] font-bold text-indigo-300/70 uppercase tracking-widest">Client &amp; Server Order Generation</span>
+                                                                </div>
+                                                            </div>
+                                                            <span className="bg-indigo-500/30 text-indigo-200 text-[8px] font-black uppercase px-2.5 py-1 rounded-full border border-indigo-400/30">
+                                                                Production Ready
+                                                            </span>
+                                                        </div>
+
+                                                        <div>
+                                                            <label className="block text-[9px] font-black text-indigo-200 uppercase tracking-widest mb-1.5">
+                                                                Key ID
+                                                            </label>
+                                                            <input 
+                                                                type="text" 
+                                                                className="w-full bg-black/40 border border-indigo-400/30 rounded-xl px-4 py-2.5 text-xs font-mono font-bold text-white placeholder:text-white/30 outline-none focus:border-indigo-400 transition-all" 
+                                                                value={regConfig.razorpayKey || ''} 
+                                                                onChange={e => setRegConfig({...regConfig, razorpayKey: e.target.value})} 
+                                                                placeholder="rzp_live_xxxxxxxxxxxx or rzp_test_xxxxxxxxxxxx" 
+                                                            />
+                                                        </div>
+
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-1.5">
+                                                                <label className="text-[9px] font-black text-indigo-200 uppercase tracking-widest">
+                                                                    Key Secret (Kept Secure on Server)
+                                                                </label>
+                                                                <button 
+                                                                    type="button" 
+                                                                    onClick={() => setShowRazorpaySecret(!showRazorpaySecret)}
+                                                                    className="text-[9px] font-bold text-indigo-300 hover:text-white uppercase tracking-wider flex items-center gap-1"
+                                                                >
+                                                                    {showRazorpaySecret ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                                                    {showRazorpaySecret ? 'Hide' : 'Show'}
+                                                                </button>
+                                                            </div>
+                                                            <input 
+                                                                type={showRazorpaySecret ? "text" : "password"} 
+                                                                className="w-full bg-black/40 border border-indigo-400/30 rounded-xl px-4 py-2.5 text-xs font-mono font-bold text-white placeholder:text-white/30 outline-none focus:border-indigo-400 transition-all" 
+                                                                value={regConfig.razorpaySecret || ''} 
+                                                                onChange={e => setRegConfig({...regConfig, razorpaySecret: e.target.value})} 
+                                                                placeholder="••••••••••••••••••••••••" 
+                                                            />
+                                                        </div>
                                                     </div>
-                                                    <input 
-                                                        type="text" 
-                                                        className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-xs font-bold text-white placeholder:text-white/40 outline-none focus:bg-white/20 transition-all" 
-                                                        value={regConfig.razorpayKey || ''} 
-                                                        onChange={e => setRegConfig({...regConfig, razorpayKey: e.target.value})} 
-                                                        placeholder="rzp_live_xxxxxxxxxxxx" 
-                                                    />
-                                                    <p className="text-[8px] text-indigo-200 font-bold uppercase mt-3 tracking-widest leading-relaxed text-center">Fetch this from your Razorpay Dashboard &gt; Settings &gt; API Keys</p>
+
+                                                    {/* Webhook Configuration for UPI & Background App Closures */}
+                                                    <div className="bg-gradient-to-br from-emerald-950/80 to-slate-900 p-6 rounded-2xl shadow-xl border border-emerald-500/30 space-y-4">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-2.5">
+                                                                <div className="bg-emerald-500/20 p-2 rounded-xl text-emerald-400">
+                                                                    <Zap className="w-4 h-4" />
+                                                                </div>
+                                                                <div>
+                                                                    <span className="text-[11px] font-black text-emerald-300 uppercase tracking-wider block">Automatic Webhook Sync</span>
+                                                                    <span className="text-[9px] font-bold text-emerald-400/60 uppercase tracking-widest">Syncs even when players close UPI app or browser</span>
+                                                                </div>
+                                                            </div>
+                                                            <span className="bg-emerald-500/20 text-emerald-300 text-[8px] font-black uppercase px-2.5 py-1 rounded-full border border-emerald-400/30">
+                                                                Zero Dropouts
+                                                            </span>
+                                                        </div>
+
+                                                        <div>
+                                                            <label className="block text-[9px] font-black text-emerald-300/80 uppercase tracking-widest mb-1.5">
+                                                                Your Webhook URL (Copy into Razorpay Dashboard)
+                                                            </label>
+                                                            <div className="flex items-center gap-2">
+                                                                <input 
+                                                                    readOnly 
+                                                                    className="flex-1 bg-black/50 border border-emerald-500/30 rounded-xl px-4 py-2.5 text-xs font-mono font-bold text-emerald-200 outline-none select-all"
+                                                                    value={`${window.location.origin}/api/razorpay-webhook`}
+                                                                />
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={copyWebhookUrl}
+                                                                    className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md active:scale-95 ${
+                                                                        webhookCopied ? 'bg-emerald-500 text-black' : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                                                    }`}
+                                                                >
+                                                                    {webhookCopied ? <CheckIcon className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                                                                    {webhookCopied ? 'Copied' : 'Copy'}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-1.5">
+                                                                <label className="text-[9px] font-black text-emerald-300/80 uppercase tracking-widest">
+                                                                    Webhook Secret (for HMAC SHA-256 verification)
+                                                                </label>
+                                                                <button 
+                                                                    type="button" 
+                                                                    onClick={() => setShowWebhookSecret(!showWebhookSecret)}
+                                                                    className="text-[9px] font-bold text-emerald-400 hover:text-white uppercase tracking-wider flex items-center gap-1"
+                                                                >
+                                                                    {showWebhookSecret ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                                                    {showWebhookSecret ? 'Hide' : 'Show'}
+                                                                </button>
+                                                            </div>
+                                                            <input 
+                                                                type={showWebhookSecret ? "text" : "password"} 
+                                                                className="w-full bg-black/40 border border-emerald-500/30 rounded-xl px-4 py-2.5 text-xs font-mono font-bold text-emerald-100 placeholder:text-white/30 outline-none focus:border-emerald-400 transition-all" 
+                                                                value={regConfig.razorpayWebhookSecret || ''} 
+                                                                onChange={e => setRegConfig({...regConfig, razorpayWebhookSecret: e.target.value})} 
+                                                                placeholder="Enter Webhook Secret set in Razorpay" 
+                                                            />
+                                                        </div>
+
+                                                        <div className="bg-black/30 rounded-xl p-3 border border-emerald-500/20 text-[9px] text-emerald-300/80 space-y-1">
+                                                            <p className="font-bold uppercase tracking-wider text-emerald-400">Setup Steps in Razorpay Dashboard:</p>
+                                                            <p>1. Go to <b>Settings &gt; Webhooks &gt; Add New Webhook</b>.</p>
+                                                            <p>2. Paste the Webhook URL above, and enter your secret.</p>
+                                                            <p>3. Select active events: <b>payment.captured</b>, <b>order.paid</b>, and <b>payment.failed</b>.</p>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             )}
 
@@ -3374,8 +3555,26 @@ const AuctionManage: React.FC = () => {
                             </label>
                         </div>
 
-                        <div className="flex justify-between items-center mb-4 px-2">
+                        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4 px-2">
                              <h2 className="text-xl font-black text-gray-800 uppercase tracking-tighter">Registration Queue ({filteredRegistrations.length})</h2>
+                             <div className="flex flex-wrap items-center gap-2">
+                                 <button 
+                                     onClick={handleBulkReconcile}
+                                     disabled={isBulkReconciling}
+                                     className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 shadow-md shadow-emerald-500/20 transition-all hover:scale-105 active:scale-95 w-fit"
+                                     title="Check Razorpay for any completed UPI payments that closed before returning to the website"
+                                 >
+                                     <RefreshCw className={`w-4 h-4 ${isBulkReconciling ? 'animate-spin' : ''}`} />
+                                     {isBulkReconciling ? 'Reconciling...' : 'Reconcile Razorpay Payments'}
+                                 </button>
+                                 <button 
+                                     onClick={() => navigate(`/auction/${id}/register?mode=admin`)}
+                                     className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 shadow-md shadow-blue-500/20 transition-all hover:scale-105 active:scale-95 w-fit"
+                                     title="Open full registration form to add player manually with all details and without payment"
+                                 >
+                                     <UserPlus className="w-4 h-4" /> Add Player (No Payment)
+                                 </button>
+                             </div>
                         </div>
                         {filteredRegistrations.length === 0 ? (
                             <div className="p-32 text-center text-gray-400 bg-white rounded-[3rem] border-2 border-dashed border-gray-200 flex flex-col items-center">
@@ -3440,7 +3639,42 @@ const AuctionManage: React.FC = () => {
                                                 <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{roleToDisplay} • {reg.mobile}</p>
                                             </div>
                                         </div>
-                                        <div className="flex items-center gap-3">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            {/* Payment Status Badges */}
+                                            {reg.paymentStatus === 'PAID' && (
+                                                <div className="px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center gap-1">
+                                                    <Check className="w-3 h-3" /> Paid ₹{reg.amountPaid || reg.finalFeePaid || reg.amountExpected || 0}
+                                                </div>
+                                            )}
+                                            {reg.paymentStatus === 'PENDING_PAYMENT' && (
+                                                <div className="px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 border border-amber-200 flex items-center gap-1">
+                                                    <Clock className="w-3 h-3" /> Payment Pending
+                                                </div>
+                                            )}
+                                            {reg.paymentStatus === 'FAILED' && (
+                                                <div className="px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-red-50 text-red-600 border border-red-200 flex items-center gap-1">
+                                                    <XCircle className="w-3 h-3" /> Payment Failed
+                                                </div>
+                                            )}
+                                            {(reg.paymentStatus === 'FREE' || reg.paymentStatus === 'ADMIN_EXEMPT') && (
+                                                <div className="px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-blue-50 text-blue-600 border border-blue-200 flex items-center gap-1">
+                                                    Free
+                                                </div>
+                                            )}
+
+                                            {/* Individual Reconcile Button if pending payment or has Razorpay Order */}
+                                            {reg.paymentStatus !== 'PAID' && (reg.paymentStatus === 'PENDING_PAYMENT' || reg.razorpayOrderId) && (
+                                                <button
+                                                    onClick={() => handleReconcilePayment(reg.id, reg.razorpayOrderId, reg.razorpayPaymentId)}
+                                                    disabled={reconcilingId === reg.id}
+                                                    className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-300 rounded-xl transition-all flex items-center gap-1 text-[9px] font-black uppercase tracking-wider"
+                                                    title="Verify status directly from Razorpay"
+                                                >
+                                                    <RefreshCw className={`w-3 h-3 ${reconcilingId === reg.id ? 'animate-spin' : ''}`} />
+                                                    <span>{reconcilingId === reg.id ? 'Checking...' : 'Reconcile'}</span>
+                                                </button>
+                                            )}
+
                                             <div className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border-2 ${reg.status === 'PENDING' ? 'bg-yellow-50 text-yellow-600 border-yellow-200' : reg.status === 'APPROVED' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-red-50 text-red-600 border-red-200'}`}>{reg.status}</div>
                                             <button 
                                                 onClick={() => {
@@ -3504,6 +3738,36 @@ const AuctionManage: React.FC = () => {
                                                         </div>
                                                     ))}
                                                 </div>
+
+                                                {/* Payment Details Section */}
+                                                {(reg.razorpayOrderId || reg.razorpayPaymentId || reg.paymentStatus) && (
+                                                    <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 mt-4 mb-4">
+                                                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                                                            <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                                                            Payment &amp; Transaction Details
+                                                        </p>
+                                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                                                            <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                                                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Payment Status</p>
+                                                                <p className="font-bold text-slate-800 uppercase">{reg.paymentStatus || 'PENDING'}</p>
+                                                            </div>
+                                                            <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                                                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Razorpay Order ID</p>
+                                                                <p className="font-mono font-bold text-slate-800 truncate" title={reg.razorpayOrderId || 'N/A'}>{reg.razorpayOrderId || 'N/A'}</p>
+                                                            </div>
+                                                            <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                                                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Razorpay Payment ID</p>
+                                                                <p className="font-mono font-bold text-slate-800 truncate" title={reg.razorpayPaymentId || 'Pending'}>{reg.razorpayPaymentId || 'Pending'}</p>
+                                                            </div>
+                                                        </div>
+                                                        {reg.paymentVerifiedAt && (
+                                                            <p className="text-[8px] font-bold text-emerald-600 uppercase tracking-wider mt-2.5">
+                                                                Verified on {new Date(reg.paymentVerifiedAt).toLocaleString()}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                )}
+
                                                 {reg.paymentScreenshot && (
                                                     <div className="mt-6">
                                                         <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-3">Payment Proof Document</p>
@@ -4548,6 +4812,23 @@ const AuctionManage: React.FC = () => {
                             <button onClick={closeModal} className="relative z-10 hover:rotate-90 transition-transform"><X className="w-6 h-6"/></button>
                         </div>
                         <form onSubmit={handleCrudSave} className="p-8 space-y-6">
+                            {modalType === 'PLAYER' && !editItem?.id && (
+                                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3 flex items-center justify-between gap-2 shadow-sm">
+                                    <div className="flex items-center gap-2">
+                                        <Info className="w-4 h-4 text-blue-600 shrink-0" />
+                                        <p className="text-[9px] font-bold text-blue-800 uppercase tracking-wider leading-snug">
+                                            Need custom fields, jersey info, or files?
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => { closeModal(); navigate(`/auction/${id}/register?mode=admin`); }}
+                                        className="text-[9px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-all shrink-0 whitespace-nowrap"
+                                    >
+                                        Full Form
+                                    </button>
+                                </div>
+                            )}
                             <div>
                                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Identity Name</label>
                                 <input required className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-gray-700 focus:bg-white focus:border-blue-400 outline-none transition-all" value={editItem?.name || ''} onChange={e => setEditItem({...editItem, name: e.target.value})} />
@@ -4671,7 +4952,7 @@ const AuctionManage: React.FC = () => {
                                             <InPlaceDropdown
                                                 value={editItem?.category || 'Standard'}
                                                 onChange={val => setEditItem({...editItem, category: val})}
-                                                options={['Standard', ...categories.map(c => c.name)]}
+                                                options={Array.from(new Set(['Standard', ...(categories || []).map(c => c.name).filter(Boolean)]))}
                                                 fullWidth
                                                 isDark={false}
                                                 size="md"
@@ -4829,9 +5110,9 @@ const AuctionManage: React.FC = () => {
                                                     <label className="block text-[10px] font-black text-gray-400 uppercase mb-2">Category</label>
                                                     {isEditingReg ? (
                                                         <div className="flex flex-wrap gap-2">
-                                                            {['Standard', ...categories.map(c => c.name)].map(cat => (
+                                                            {Array.from(new Set(['Standard', ...(categories || []).map(c => c.name).filter(Boolean)])).map((cat, idx) => (
                                                                 <button
-                                                                    key={cat}
+                                                                    key={`cat-btn-${cat}-${idx}`}
                                                                     type="button"
                                                                     onClick={() => setSelectedReg({...selectedReg, category: cat})}
                                                                     className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${selectedReg.category === cat || (!selectedReg.category && cat === 'Standard') ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-600/20' : 'bg-gray-50 border-gray-100 text-gray-400 hover:border-blue-200'}`}

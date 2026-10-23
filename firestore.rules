@@ -81,6 +81,12 @@ service cloud.firestore {
              (!('submittedAt' in data) || data.submittedAt is number);
     }
 
+    function isValidPublicRegistration(data) {
+      return isValidRegistration(data) &&
+             (!('paymentStatus' in data) || (data.paymentStatus != 'PAID' && data.paymentStatus != 'ADMIN_EXEMPT')) &&
+             (!('status' in data) || data.status != 'APPROVED');
+    }
+
     // ===============================================================
     // RULES
     // ===============================================================
@@ -185,10 +191,10 @@ service cloud.firestore {
         allow write: if isAdmin(auctionId);
       }
 
-      match /registrations/{regId} {
+        match /registrations/{regId} {
         // Auction registrations are public for the progress bar and headcount
         allow read: if true;
-        allow create: if isValidRegistration(incoming());
+        allow create: if isAdmin(auctionId) || isValidPublicRegistration(incoming());
         allow update, delete: if isAdmin(auctionId);
 
         match /documents/{docId} {
@@ -270,6 +276,11 @@ service cloud.firestore {
           get(/databases/$(database)/documents/supportTickets/$(ticketId)).data.userId == request.auth.uid
         );
       }
+    }
+
+    // Webhook Events (Internal Admin SDK Only)
+    match /webhookEvents/{eventId} {
+      allow read, write: if false;
     }
   }
 }
