@@ -234,36 +234,126 @@ app.post(webhookPaths, async (req, res) => {
 });
 
 // 3. Reconcile Payment
-app.post('/reconcile-payment', async (req, res) => {
+app.post(['/reconcile-payment', '/api/reconcile-payment'], async (req, res) => {
     try {
-        const { auctionId, registrationId } = req.body;
-        if (!auctionId || !registrationId) return res.status(400).json({ error: 'Missing parameters' });
+        const { auctionId, registrationId, razorpayOrderId, razorpayPaymentId } = req.body;
+        if (!auctionId) return res.status(400).json({ error: 'Missing auctionId parameter' });
 
-        const regRef = db.collection('auctions').doc(auctionId).collection('registrations').doc(registrationId);
-        const regSnap = await regRef.get();
-        if (!regSnap.exists) return res.status(404).json({ error: 'Registration not found' });
-
-        const regData = regSnap.data();
         const { client } = await getRazorpayClient(auctionId);
 
-        let captured = null;
-        if (regData.razorpayOrderId) {
-            const list = await client.orders.fetchPayments(regData.razorpayOrderId);
-            captured = (list?.items || []).find(p => p.status === 'captured');
+        // Case A: Specific registration or order reconciliation
+        if (registrationId || razorpayOrderId || razorpayPaymentId) {
+            let orderIdToFetch = razorpayOrderId;
+            let paymentIdToFetch = razorpayPaymentId;
+            let regDoc = null;
+            let targetRegId = registrationId;
+
+            if (registrationId) {
+                const doc = await db.collection('auctions').doc(auctionId).collection('registrations').doc(registrationId).get();
+                if (doc.exists) {
+                    regDoc = doc;
+                    const d = doc.data() || {};
+                    if (!orderIdToFetch && d.razorpayOrderId) orderIdToFetch = d.razorpayOrderId;
+                    if (!paymentIdToFetch && d.razorpayPaymentId) paymentIdToFetch = d.razorpayPaymentId;
+                }
+            }
+
+            if (!targetRegId && orderIdToFetch) {
+                const matchSnap = await db.collection('auctions').doc(auctionId).collection('registrations')
+                    .where('razorpayOrderId', '==', orderIdToFetch)
+                    .limit(1)
+                    .get();
+                if (!matchSnap.empty) {
+                    regDoc = matchSnap.docs[0];
+                    targetRegId = regDoc.id;
+                }
+            }
+
+            let captured = null;
+            if (paymentIdToFetch) {
+                try {
+                    const p = await client.payments.fetch(paymentIdToFetch);
+                    if (p.status === 'captured') captured = p;
+                } catch (e) {
+                    console.warn('[Reconcile Payment Fetch Error]:', e.message);
+                }
+            }
+
+            if (!captured && orderIdToFetch) {
+                try {
+                    const list = await client.orders.fetchPayments(orderIdToFetch);
+                    captured = (list?.items || []).find(p => p.status === 'captured') || null;
+                } catch (e) {
+                    console.warn('[Reconcile Order Payments Error]:', e.message);
+                }
+            }
+
+            if (captured && targetRegId) {
+                const regRef = db.collection('auctions').doc(auctionId).collection('registrations').doc(targetRegId);
+                const regData = (regDoc && regDoc.data()) || {};
+                await regRef.update({
+                    paymentStatus: 'PAID',
+                    status: 'APPROVED',
+                    razorpayPaymentId: captured.id,
+                    amountPaid: Number(captured.amount) / 100,
+                    finalFeePaid: Number(captured.amount) / 100,
+                    paymentVerifiedAt: Date.now()
+                });
+
+                // Auto-approve player into pool if not already added
+                const playersCol = db.collection('auctions').doc(auctionId).collection('players');
+                const existing = await playersCol.where('name', '==', regData.fullName).get();
+                if (existing.empty && regData.fullName) {
+                    await playersCol.add({
+                        name: regData.fullName,
+                        photoUrl: regData.profilePic || '',
+                        category: regData.category || 'Standard',
+                        role: regData.playerType || 'All Rounder',
+                        basePrice: Number(regData.basePrice) || 0,
+                        nationality: 'India',
+                        mobile: regData.mobile || '',
+                        stats: { matches: 0, runs: 0, wickets: 0 },
+                        registrationId: targetRegId
+                    });
+                }
+
+                return res.json({ reconciled: true, paymentId: captured.id, registrationId: targetRegId });
+            }
+
+            return res.json({ reconciled: false, message: 'No captured payment found in Razorpay for this registration/order.' });
         }
 
-        if (captured) {
-            await regRef.update({
-                paymentStatus: 'PAID',
-                razorpayPaymentId: captured.id,
-                amountPaid: captured.amount / 100,
-                paymentVerifiedAt: Date.now()
-            });
-            return res.json({ reconciled: true, paymentId: captured.id });
+        // Case B: Bulk reconcile for all pending registrations in this auction
+        const pendingSnap = await db.collection('auctions').doc(auctionId).collection('registrations')
+            .where('paymentStatus', '==', 'PENDING_PAYMENT')
+            .get();
+
+        let reconciledCount = 0;
+        for (const doc of pendingSnap.docs) {
+            const data = doc.data();
+            if (!data.razorpayOrderId) continue;
+            try {
+                const list = await client.orders.fetchPayments(data.razorpayOrderId);
+                const captured = (list?.items || []).find(p => p.status === 'captured');
+                if (captured) {
+                    await doc.ref.update({
+                        paymentStatus: 'PAID',
+                        status: 'APPROVED',
+                        razorpayPaymentId: captured.id,
+                        amountPaid: Number(captured.amount) / 100,
+                        finalFeePaid: Number(captured.amount) / 100,
+                        paymentVerifiedAt: Date.now()
+                    });
+                    reconciledCount++;
+                }
+            } catch (err) {
+                console.warn(`[Bulk Reconcile Error for ${doc.id}]:`, err.message);
+            }
         }
 
-        return res.json({ reconciled: false, message: 'No captured payment found in Razorpay' });
+        return res.json({ reconciledCount, totalChecked: pendingSnap.size });
     } catch (err) {
+        console.error('[Reconcile Error]:', err);
         return res.status(500).json({ error: err.message });
     }
 });

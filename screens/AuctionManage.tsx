@@ -169,14 +169,48 @@ const AuctionManage: React.FC = () => {
                     razorpayPaymentId: paymentId
                 })
             });
-            const data = await res.json();
+
+            const contentType = res.headers.get('content-type') || '';
+            let data: any = null;
+            if (contentType.includes('application/json')) {
+                data = await res.json();
+            } else {
+                throw new Error("Backend function endpoint not responding with JSON. Deploy Cloud Functions with 'firebase deploy --only functions', or verify player manually below.");
+            }
+
             if (data.reconciled) {
                 showNotification(`Payment verified on Razorpay! Registration updated to PAID.`, "success");
             } else {
                 showNotification(data.message || "No captured payment found on Razorpay for this order.", "error");
             }
         } catch (err: any) {
-            showNotification(`Reconciliation error: ${err.message}`, "error");
+            console.warn("Reconciliation error:", err.message);
+            const targetReg = registrations.find(r => r.id === regId);
+            setConfirmAction({
+                title: "Mark as Paid & Approve Manually?",
+                message: `Server automated check reported: ${err.message}. If you have received this player's fee in your Razorpay/UPI account, click Confirm to immediately mark their status as PAID and add them to the Player Pool.`,
+                onConfirm: async () => {
+                    try {
+                        const fee = targetReg?.finalFeePaid || targetReg?.amountExpected || regConfig.fee || 0;
+                        await db.collection('auctions').doc(id).collection('registrations').doc(regId).update({
+                            paymentStatus: 'PAID',
+                            status: 'APPROVED',
+                            amountPaid: fee,
+                            finalFeePaid: fee,
+                            paymentVerifiedAt: Date.now(),
+                            verifiedManuallyByAdmin: true
+                        });
+                        if (targetReg) {
+                            await handleApproveAndAdd({ ...targetReg, paymentStatus: 'PAID', status: 'APPROVED' });
+                        }
+                        showNotification("Player successfully marked as PAID and approved to Player Pool!", "success");
+                    } catch (e: any) {
+                        showNotification("Manual update failed: " + e.message, "error");
+                    }
+                    setConfirmAction(null);
+                }
+            });
+            showNotification(err.message, "error");
         } finally {
             setReconcilingId(null);
         }
@@ -191,7 +225,13 @@ const AuctionManage: React.FC = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ auctionId: id })
             });
-            const data = await res.json();
+            const contentType = res.headers.get('content-type') || '';
+            let data: any = null;
+            if (contentType.includes('application/json')) {
+                data = await res.json();
+            } else {
+                throw new Error("Cloud Function endpoint returned HTML/404. Ensure backend functions are deployed using 'firebase deploy --only functions'.");
+            }
             if (data.reconciledCount > 0) {
                 showNotification(`Successfully reconciled ${data.reconciledCount} of ${data.totalChecked} pending payments!`, "success");
             } else {
@@ -1009,7 +1049,7 @@ const AuctionManage: React.FC = () => {
     const generatePDF = async (onlySelected: boolean = false) => {
         // Use players pool as primary source to reflect edited roles/categories
         // Otherwise fallback to approved registrations if players pool is empty (initial state)
-        let activePlayers = players.length > 0 
+        let activePlayers: any[] = players.length > 0 
             ? players.map(p => {
                 const reg = registrations.find(r => r.fullName === p.name);
                 return {
@@ -1482,7 +1522,7 @@ const AuctionManage: React.FC = () => {
     const exportRegistrationsToCSV = (onlySelected: boolean = false) => {
         // Use players pool as primary source to reflect edited roles/categories
         // Otherwise fallback to approved registrations if players pool is empty
-        let activePlayers = players.length > 0 
+        let activePlayers: any[] = players.length > 0 
             ? players.map(p => {
                 const reg = registrations.find(r => r.fullName === p.name);
                 return {
@@ -2133,18 +2173,36 @@ const AuctionManage: React.FC = () => {
                         <div className="space-y-6 animate-fade-in">
                         {/* Export Hub Section - Moved from Requests to Players for Source of Truth Edits */}
                         <div className={`${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-gray-100 shadow-sm'} p-8 rounded-[3rem] border space-y-8`}>
-                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                                 <div>
-                                    <h2 className={`text-2xl font-black uppercase tracking-tighter ${isDark ? 'text-white' : 'text-gray-800'}`}>Export Hub</h2>
-                                    <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Download your finalized player data</p>
+                                    <div className="flex items-center gap-3">
+                                        <h2 className={`text-2xl font-black uppercase tracking-tighter ${isDark ? 'text-white' : 'text-gray-800'}`}>Export Hub</h2>
+                                        {selectedPlayerIds.length > 0 && (
+                                            <span className="bg-blue-600/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                                                <CheckSquare className="w-3 h-3" /> {selectedPlayerIds.length} Selected
+                                            </span>
+                                        )}
+                                    </div>
+                                    <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>
+                                        Download finalized player cards & registry {selectedPlayerIds.length > 0 ? `(${selectedPlayerIds.length} players selected for targeted PDF extraction)` : `(${players.length} players in pool)`}
+                                    </p>
                                 </div>
-                                <div className="flex items-center gap-3">
+                                <div className="flex flex-wrap items-center gap-2.5">
                                     <button 
-                                        onClick={exportRegistrationsToCSV} 
-                                        className={`${isDark ? 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700' : 'bg-gray-50 border-gray-100 text-gray-600 hover:bg-gray-100'} px-6 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all active:scale-95`}
+                                        onClick={() => exportRegistrationsToCSV(false)} 
+                                        className={`${isDark ? 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700' : 'bg-gray-50 border-gray-100 text-gray-600 hover:bg-gray-100'} px-5 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all active:scale-95`}
                                     >
-                                        <Download className="w-4 h-4"/> Export CSV
+                                        <Download className="w-4 h-4"/> CSV (All)
                                     </button>
+                                    {selectedPlayerIds.length > 0 && (
+                                        <button 
+                                            onClick={() => exportRegistrationsToCSV(true)} 
+                                            className="bg-zinc-800 hover:bg-zinc-700 text-blue-400 border border-blue-500/30 px-5 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all active:scale-95"
+                                            title="Export selected players to CSV"
+                                        >
+                                            <Download className="w-4 h-4"/> CSV ({selectedPlayerIds.length})
+                                        </button>
+                                    )}
                                     {isGeneratingPDF && (
                                         <button 
                                             onClick={() => isPdfCancelled.current = true}
@@ -2153,14 +2211,36 @@ const AuctionManage: React.FC = () => {
                                             <X className="w-4 h-4"/> Cancel
                                         </button>
                                     )}
-                                    <button 
-                                        onClick={generatePDF}
-                                        disabled={isGeneratingPDF}
-                                        className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 active:scale-95 disabled:opacity-50"
-                                    >
-                                        {isGeneratingPDF ? <Loader2 className="w-4 h-4 animate-spin"/> : <FileDown className="w-4 h-4"/>}
-                                        {isGeneratingPDF ? `Generating ${pdfProgress}%` : 'Generate PDF Registry'}
-                                    </button>
+                                    {selectedPlayerIds.length > 0 ? (
+                                        <div className="flex items-center gap-2">
+                                            <button 
+                                                onClick={() => generatePDF(true)}
+                                                disabled={isGeneratingPDF}
+                                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all shadow-lg shadow-emerald-600/20 active:scale-95 disabled:opacity-50"
+                                                title={`Export PDF containing only the ${selectedPlayerIds.length} selected players`}
+                                            >
+                                                {isGeneratingPDF ? <Loader2 className="w-4 h-4 animate-spin"/> : <FileDown className="w-4 h-4"/>}
+                                                {isGeneratingPDF ? `Generating ${pdfProgress}%` : `Extract PDF (${selectedPlayerIds.length} Selected)`}
+                                            </button>
+                                            <button 
+                                                onClick={() => generatePDF(false)}
+                                                disabled={isGeneratingPDF}
+                                                className="bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                                                title="Export PDF for all players in the pool"
+                                            >
+                                                <FileDown className="w-4 h-4"/> All ({players.length})
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button 
+                                            onClick={() => generatePDF(false)}
+                                            disabled={isGeneratingPDF}
+                                            className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 active:scale-95 disabled:opacity-50"
+                                        >
+                                            {isGeneratingPDF ? <Loader2 className="w-4 h-4 animate-spin"/> : <FileDown className="w-4 h-4"/>}
+                                            {isGeneratingPDF ? `Generating ${pdfProgress}%` : 'Generate PDF Registry'}
+                                        </button>
+                                    )}
                                 </div>
                             </div>
 
@@ -2323,7 +2403,7 @@ const AuctionManage: React.FC = () => {
                                 </div>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                                <button onClick={exportPlayersToCSV} className={`border px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 transition-all shadow-sm ${isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                                <button onClick={() => exportPlayersToCSV(false)} className={`border px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 transition-all shadow-sm ${isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                                     <Download className="w-4 h-4"/> Export CSV
                                 </button>
                                 <label className={`border px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer transition-all flex items-center gap-2 shadow-sm ${isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
@@ -2346,12 +2426,89 @@ const AuctionManage: React.FC = () => {
                                 </button>
                             </div>
                         </div>
+
+                        {/* Selected Players Action Banner */}
+                        {selectedPlayerIds.length > 0 && (
+                            <div className={`p-4 rounded-2xl border flex flex-wrap items-center justify-between gap-3 animate-fade-in mb-4 ${
+                                isDark ? 'bg-blue-950/40 border-blue-800 text-blue-200' : 'bg-blue-50 border-blue-200 text-blue-900'
+                            }`}>
+                                <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black text-xs shadow-md shadow-blue-600/30">
+                                        {selectedPlayerIds.length}
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-black uppercase tracking-tight">
+                                            {selectedPlayerIds.length} of {players.length} Players Selected
+                                        </p>
+                                        <p className="text-[10px] opacity-75">
+                                            Generate custom player cards or list PDF for only these selected players
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => generatePDF(true)}
+                                        disabled={isGeneratingPDF}
+                                        className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-2 shadow-md shadow-emerald-600/20 active:scale-95 disabled:opacity-50"
+                                    >
+                                        {isGeneratingPDF ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <FileDown className="w-3.5 h-3.5" />}
+                                        Extract PDF ({selectedPlayerIds.length})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => exportPlayersToCSV(true)}
+                                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 transition-all ${
+                                            isDark ? 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:bg-zinc-800' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-100'
+                                        }`}
+                                    >
+                                        <Download className="w-3.5 h-3.5" />
+                                        CSV ({selectedPlayerIds.length})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleSelectAllPlayers}
+                                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider hover:underline ${
+                                            isDark ? 'text-zinc-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
+                                        }`}
+                                    >
+                                        Select All ({players.length})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleClearPlayerSelection}
+                                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider text-red-500 hover:underline flex items-center gap-1`}
+                                    >
+                                        <X className="w-3 h-3" /> Clear
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         <div className={`rounded-[2rem] border shadow-sm overflow-hidden ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-gray-200'}`}>
                             <div className="overflow-x-auto custom-scrollbar">
                                 <table className="w-full text-left">
                                     <thead className={`border-b ${isDark ? 'bg-zinc-950/50 border-zinc-800' : 'bg-gray-50 border-gray-100'}`}>
                                         <tr>
-                                            <th className={`px-6 py-4 text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Identity</th>
+                                            <th className="px-4 py-4 w-12 text-center">
+                                                <button 
+                                                    type="button"
+                                                    onClick={handleSelectAllVisiblePlayers}
+                                                    className="p-1 rounded-md hover:bg-zinc-800/60 dark:hover:bg-zinc-700/60 transition-colors inline-flex items-center justify-center cursor-pointer"
+                                                    title={filteredPlayers.length > 0 && filteredPlayers.every(p => selectedPlayerIds.includes(String(p.id))) ? "Deselect all visible players" : "Select all visible players"}
+                                                >
+                                                    {filteredPlayers.length > 0 && filteredPlayers.every(p => selectedPlayerIds.includes(String(p.id))) ? (
+                                                        <CheckSquare className="w-4 h-4 text-blue-500 dark:text-accent" />
+                                                    ) : filteredPlayers.some(p => selectedPlayerIds.includes(String(p.id))) ? (
+                                                        <div className="w-4 h-4 rounded border-2 border-blue-500 dark:border-accent flex items-center justify-center">
+                                                            <div className="w-2 h-2 bg-blue-500 dark:bg-accent rounded-xs" />
+                                                        </div>
+                                                    ) : (
+                                                        <Square className={`w-4 h-4 ${isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-300 hover:text-gray-500'}`} />
+                                                    )}
+                                                </button>
+                                            </th>
+                                            <th className={`px-4 py-4 text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Identity</th>
                                             <th className={`px-6 py-4 text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Set/Category</th>
                                             <th className={`px-6 py-4 text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Role</th>
                                             <th className={`px-6 py-4 text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Value (₹)</th>
@@ -2361,9 +2518,25 @@ const AuctionManage: React.FC = () => {
                                     </thead>
                                     <tbody className={`divide-y ${isDark ? 'divide-zinc-800' : 'divide-gray-100'}`}>
                                         {filteredPlayers.length > 0 ? (
-                                            filteredPlayers.map(p => (
-                                                <tr key={p.id} className={`transition-colors group ${isDark ? 'hover:bg-zinc-800/50' : 'hover:bg-gray-50'}`}>
-                                                    <td className="px-6 py-4">
+                                            filteredPlayers.map(p => {
+                                                const isSelected = selectedPlayerIds.includes(String(p.id));
+                                                return (
+                                                    <tr key={p.id} className={`transition-colors group ${isSelected ? (isDark ? 'bg-blue-950/20 hover:bg-blue-950/30' : 'bg-blue-50/70 hover:bg-blue-50') : (isDark ? 'hover:bg-zinc-800/50' : 'hover:bg-gray-50')}`}>
+                                                        <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => toggleSelectPlayer(String(p.id))}
+                                                                className="p-1 rounded-md hover:bg-zinc-800/60 dark:hover:bg-zinc-700/60 transition-colors inline-flex items-center justify-center cursor-pointer"
+                                                                title={isSelected ? "Deselect player" : "Select player for PDF export"}
+                                                            >
+                                                                {isSelected ? (
+                                                                    <CheckSquare className="w-4 h-4 text-blue-500 dark:text-accent" />
+                                                                ) : (
+                                                                    <Square className={`w-4 h-4 ${isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-300 hover:text-gray-500'}`} />
+                                                                )}
+                                                            </button>
+                                                        </td>
+                                                        <td className="px-4 py-4">
                                                         <div className="flex items-center gap-3">
                                                             <div 
                                                                 className={`w-10 h-10 rounded-xl overflow-hidden shadow-sm cursor-pointer transition-all border ${isDark ? 'bg-zinc-950 border-zinc-800 hover:border-accent' : 'bg-gray-100 border-gray-200 hover:border-blue-400'}`}
@@ -2475,10 +2648,11 @@ const AuctionManage: React.FC = () => {
                                                         </div>
                                                     </td>
                                                 </tr>
-                                            ))
+                                            );
+                                        })
                                         ) : (
                                             <tr>
-                                                <td colSpan={6} className="px-6 py-12 text-center">
+                                                <td colSpan={7} className="px-6 py-12 text-center">
                                                     <div className="flex flex-col items-center gap-2 opacity-40">
                                                         <Search className="w-10 h-10 mb-2" />
                                                         <p className="text-[11px] font-black uppercase tracking-widest">No players found matching your search</p>
@@ -3716,17 +3890,48 @@ const AuctionManage: React.FC = () => {
                                                 </div>
                                             )}
 
-                                            {/* Individual Reconcile Button if pending payment or has Razorpay Order */}
-                                            {reg.paymentStatus !== 'PAID' && (reg.paymentStatus === 'PENDING_PAYMENT' || reg.razorpayOrderId) && (
-                                                <button
-                                                    onClick={() => handleReconcilePayment(reg.id, reg.razorpayOrderId, reg.razorpayPaymentId)}
-                                                    disabled={reconcilingId === reg.id}
-                                                    className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-300 rounded-xl transition-all flex items-center gap-1 text-[9px] font-black uppercase tracking-wider"
-                                                    title="Verify status directly from Razorpay"
-                                                >
-                                                    <RefreshCw className={`w-3 h-3 ${reconcilingId === reg.id ? 'animate-spin' : ''}`} />
-                                                    <span>{reconcilingId === reg.id ? 'Checking...' : 'Reconcile'}</span>
-                                                </button>
+                                            {/* Individual Reconcile & Quick Mark Paid Buttons */}
+                                            {reg.paymentStatus !== 'PAID' && (
+                                                <div className="flex items-center gap-1.5">
+                                                    <button
+                                                        onClick={() => handleReconcilePayment(reg.id, reg.razorpayOrderId, reg.razorpayPaymentId)}
+                                                        disabled={reconcilingId === reg.id}
+                                                        className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-300 rounded-xl transition-all flex items-center gap-1 text-[9px] font-black uppercase tracking-wider"
+                                                        title="Check Razorpay for payment capture"
+                                                    >
+                                                        <RefreshCw className={`w-3 h-3 ${reconcilingId === reg.id ? 'animate-spin' : ''}`} />
+                                                        <span>{reconcilingId === reg.id ? 'Checking...' : 'Reconcile'}</span>
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            const fee = reg.finalFeePaid || reg.amountExpected || regConfig.fee || 0;
+                                                            setConfirmAction({
+                                                                title: "Mark Payment as Paid?",
+                                                                message: `Confirm that payment of ₹${fee} has been received for ${reg.fullName}? This will update their payment status to PAID and allow you to approve them.`,
+                                                                onConfirm: async () => {
+                                                                    try {
+                                                                        await db.collection('auctions').doc(id!).collection('registrations').doc(reg.id).update({
+                                                                            paymentStatus: 'PAID',
+                                                                            amountPaid: fee,
+                                                                            finalFeePaid: fee,
+                                                                            paymentVerifiedAt: Date.now(),
+                                                                            verifiedManuallyByAdmin: true
+                                                                        });
+                                                                        showNotification(`Payment for ${reg.fullName} marked as PAID!`, "success");
+                                                                    } catch (err: any) {
+                                                                        showNotification("Update failed: " + err.message, "error");
+                                                                    }
+                                                                    setConfirmAction(null);
+                                                                }
+                                                            });
+                                                        }}
+                                                        className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl transition-all flex items-center gap-1 text-[9px] font-black uppercase tracking-wider"
+                                                        title="Directly mark payment as received"
+                                                    >
+                                                        <Check className="w-3 h-3" />
+                                                        <span>Mark Paid</span>
+                                                    </button>
+                                                </div>
                                             )}
 
                                             <div className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border-2 ${reg.status === 'PENDING' ? 'bg-yellow-50 text-yellow-600 border-yellow-200' : reg.status === 'APPROVED' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-red-50 text-red-600 border-red-200'}`}>{reg.status}</div>

@@ -551,7 +551,7 @@ app.post('/api/verify-payment', async (req: Request, res: Response) => {
  * Resolves Requirement 8: Inspects existing payments that succeeded on Razorpay but were not synchronized
  * to Firestore registrations due to browser/app closures.
  */
-app.post('/api/reconcile-payment', async (req: Request, res: Response) => {
+app.post(['/api/reconcile-payment', '/reconcile-payment'], async (req: Request, res: Response) => {
     try {
         const { auctionId, registrationId, razorpayOrderId, razorpayPaymentId } = req.body;
 
