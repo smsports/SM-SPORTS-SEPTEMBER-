@@ -814,6 +814,33 @@ const AuctionManage: React.FC = () => {
 
     const [playerSearchQuery, setPlayerSearchQuery] = useState('');
     const [assignSearch, setAssignSearch] = useState('');
+    const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+
+    const toggleSelectPlayer = (playerId: string) => {
+        setSelectedPlayerIds(prev => 
+            prev.includes(playerId) 
+                ? prev.filter(id => id !== playerId)
+                : [...prev, playerId]
+        );
+    };
+
+    const handleSelectAllVisiblePlayers = () => {
+        const visibleIds = filteredPlayers.map(p => String(p.id));
+        const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedPlayerIds.includes(id));
+        if (allVisibleSelected) {
+            setSelectedPlayerIds(prev => prev.filter(id => !visibleIds.includes(id)));
+        } else {
+            setSelectedPlayerIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+        }
+    };
+
+    const handleSelectAllPlayers = () => {
+        setSelectedPlayerIds(players.map(p => String(p.id)));
+    };
+
+    const handleClearPlayerSelection = () => {
+        setSelectedPlayerIds([]);
+    };
 
     const filteredPlayers = players
         .filter(p => 
@@ -979,10 +1006,10 @@ const AuctionManage: React.FC = () => {
         reader.readAsBinaryString(file);
     };
 
-    const generatePDF = async () => {
+    const generatePDF = async (onlySelected: boolean = false) => {
         // Use players pool as primary source to reflect edited roles/categories
         // Otherwise fallback to approved registrations if players pool is empty (initial state)
-        const activePlayers = players.length > 0 
+        let activePlayers = players.length > 0 
             ? players.map(p => {
                 const reg = registrations.find(r => r.fullName === p.name);
                 return {
@@ -999,8 +1026,16 @@ const AuctionManage: React.FC = () => {
             }) 
             : registrations.filter(r => r.status === 'APPROVED');
 
+        if (onlySelected) {
+            if (selectedPlayerIds.length === 0) {
+                showNotification("No players selected. Please select players using the checkboxes in the table.", "error");
+                return;
+            }
+            activePlayers = activePlayers.filter(p => selectedPlayerIds.includes(String(p.id)));
+        }
+
         if (activePlayers.length === 0) {
-            showNotification("No approved players to export.");
+            showNotification(onlySelected ? "No selected players to export." : "No approved players to export.");
             return;
         }
         setIsGeneratingPDF(true);
@@ -1384,8 +1419,11 @@ const AuctionManage: React.FC = () => {
                 doc.addImage(imgData, 'JPEG', 0, 0, 210, 297);
             }
 
-            doc.save(`${auction?.title || 'Tournament'}_Registry.pdf`);
-            showNotification("PDF generated successfully", "success");
+            const filename = onlySelected 
+                ? `${auction?.title || 'Tournament'}_Selected_${activePlayers.length}_Players.pdf`
+                : `${auction?.title || 'Tournament'}_Registry.pdf`;
+            doc.save(filename);
+            showNotification(onlySelected ? `PDF with ${activePlayers.length} selected players generated successfully!` : "PDF generated successfully", "success");
         } catch (error: any) {
             if (error.message === "PDF_CANCELLED") {
                 showNotification("PDF Export Cancelled", "success");
@@ -1400,13 +1438,21 @@ const AuctionManage: React.FC = () => {
         }
     };
 
-    const exportPlayersToCSV = () => {
-        if (players.length === 0) {
-            showNotification("No players to export.");
+    const exportPlayersToCSV = (onlySelected: boolean = false) => {
+        let pool = players;
+        if (onlySelected) {
+            if (selectedPlayerIds.length === 0) {
+                showNotification("No players selected.", "error");
+                return;
+            }
+            pool = players.filter(p => selectedPlayerIds.includes(String(p.id)));
+        }
+        if (pool.length === 0) {
+            showNotification(onlySelected ? "No selected players to export." : "No players to export.");
             return;
         }
         const headers = ["ID", "Name", "Category", "Role", "Base Price", "Nationality", "Status", "Sold To", "Sold Price", "Jersey Name", "Jersey Number", "Jersey Size"];
-        const rows = players.map(p => {
+        const rows = pool.map(p => {
             const reg = registrations.find(r => r.fullName === p.name);
             return [
                 p.id, 
@@ -1429,14 +1475,14 @@ const AuctionManage: React.FC = () => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.setAttribute("href", url);
-        link.setAttribute("download", `PLAYERS_${auction?.title?.replace(/\s+/g, '_')}.csv`);
+        link.setAttribute("download", `${onlySelected ? 'SELECTED_' : ''}PLAYERS_${auction?.title?.replace(/\s+/g, '_')}.csv`);
         link.click();
     };
 
-    const exportRegistrationsToCSV = () => {
+    const exportRegistrationsToCSV = (onlySelected: boolean = false) => {
         // Use players pool as primary source to reflect edited roles/categories
         // Otherwise fallback to approved registrations if players pool is empty
-        const activePlayers = players.length > 0 
+        let activePlayers = players.length > 0 
             ? players.map(p => {
                 const reg = registrations.find(r => r.fullName === p.name);
                 return {
@@ -1452,8 +1498,16 @@ const AuctionManage: React.FC = () => {
             }) 
             : registrations.filter(r => r.status === 'APPROVED');
 
+        if (onlySelected) {
+            if (selectedPlayerIds.length === 0) {
+                showNotification("No players selected.", "error");
+                return;
+            }
+            activePlayers = activePlayers.filter(p => selectedPlayerIds.includes(String(p.id)));
+        }
+
         if (activePlayers.length === 0) {
-            showNotification("No approved players to export.");
+            showNotification(onlySelected ? "No selected players to export." : "No approved players to export.");
             return;
         }
         
@@ -1497,7 +1551,7 @@ const AuctionManage: React.FC = () => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.setAttribute("href", url);
-        link.setAttribute("download", `REGISTRATIONS_${auction?.title?.replace(/\s+/g, '_')}.csv`);
+        link.setAttribute("download", `${onlySelected ? 'SELECTED_' : ''}REGISTRATIONS_${auction?.title?.replace(/\s+/g, '_')}.csv`);
         link.click();
     };
 
