@@ -281,10 +281,10 @@ const TournamentInput = ({ label, value, onChange, type = "text", required = fal
     const isClassicNeon = theme?.toUpperCase() === 'CLASSIC_NEON';
     
     const baseClasses = isClassicNeon
-        ? "w-full bg-[#050807] border-2 border-white/10 rounded-2xl px-6 py-4 pt-10 font-bold text-white outline-none transition-all focus:border-[#A6FF00] focus:shadow-[0_0_20px_rgba(166,255,0,0.3)] peer cursor-pointer"
+        ? "w-full bg-[#050807] border-2 border-white/10 rounded-2xl px-6 py-4 pt-10 font-bold text-white outline-none transition-all focus:border-[#A6FF00] focus:shadow-[0_0_20px_rgba(166,255,0,0.3)] peer cursor-text"
         : isNavyGolden 
-        ? "w-full bg-[#070B0A] border-2 border-[#A6FF00]/20 rounded-2xl px-6 py-4 pt-10 font-bold text-white outline-none transition-all focus:border-[#A6FF00] focus:shadow-[0_0_15px_rgba(166,255,0,0.2)] peer cursor-pointer"
-        : "w-full bg-black/40 border-2 border-amber-900/30 rounded-2xl px-6 py-4 pt-10 font-bold text-amber-100 outline-none transition-all focus:border-amber-500 focus:shadow-[0_0_15px_rgba(251,191,36,0.2)] peer cursor-pointer";
+        ? "w-full bg-[#070B0A] border-2 border-[#A6FF00]/20 rounded-2xl px-6 py-4 pt-10 font-bold text-white outline-none transition-all focus:border-[#A6FF00] focus:shadow-[0_0_15px_rgba(166,255,0,0.2)] peer cursor-text"
+        : "w-full bg-black/40 border-2 border-amber-900/30 rounded-2xl px-6 py-4 pt-10 font-bold text-amber-100 outline-none transition-all focus:border-amber-500 focus:shadow-[0_0_15px_rgba(251,191,36,0.2)] peer cursor-text";
 
     const labelClasses = isClassicNeon
         ? "absolute left-6 top-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/40 transition-all peer-focus:text-[#A6FF00] pointer-events-none select-none max-w-[calc(100%-3rem)] truncate z-10"
@@ -534,7 +534,7 @@ const PlayerRegistration: React.FC = () => {
     const [submitting, setSubmitting] = useState(false);
     const [isRazorpayLoaded, setIsRazorpayLoaded] = useState(false);
     const [showBattleEntrance, setShowBattleEntrance] = useState(false);
-    const [battleStarted, setBattleStarted] = useState(false);
+    const [battleStarted, setBattleStarted] = useState(isAdminParam);
     const [showWelcomePopup, setShowWelcomePopup] = useState(false);
     const [welcomeTimer, setWelcomeTimer] = useState(0);
     const [hasSeenWelcome, setHasSeenWelcome] = useState(false);
@@ -562,6 +562,7 @@ const PlayerRegistration: React.FC = () => {
     useEffect(() => {
         if (isAdminParam) {
             setIsAdminMode(true);
+            setBattleStarted(true);
         }
     }, [isAdminParam]);
 
@@ -2042,7 +2043,7 @@ const PlayerRegistration: React.FC = () => {
     };
 
     if (isAdvaya || isNavyGolden || isClassicNeon) {
-        if (!battleStarted && !config?.hideLandingPage && !isClassicNeon) {
+        if (!battleStarted && !config?.hideLandingPage && !isClassicNeon && !isAdminMode) {
             return (
                 <div className={`min-h-screen ${isClassicNeon ? 'bg-[#070B0A]' : isNavyGolden ? 'bg-[#000a1a]' : 'bg-[#0a0a0a]'} ${isClassicNeon ? 'text-white' : 'text-amber-50'} font-sans overflow-hidden relative particle-bg`}>
                     {/* Glowing Borders */}
@@ -2421,7 +2422,7 @@ const PlayerRegistration: React.FC = () => {
                                             animate={{ x: 0, opacity: 1 }}
                                             exit={{ x: -20, opacity: 0 }}
                                             transition={{ duration: 0.4, ease: "easeOut" }}
-                                            className={`min-h-[400px] ${(isFull && !isCaptain && !hasTeamCode) ? 'opacity-50 pointer-events-none' : ''}`}
+                                            className={`min-h-[400px] ${(isFull && !isCaptain && !hasTeamCode && !isAdminMode && !validatedOrganiserCode) ? 'opacity-50 pointer-events-none' : ''}`}
                                         >
                                             {/* Welcome Banner - Replaces the Popup */}
                                             {config?.welcomePopup?.isEnabled && !hasSeenWelcome && currentStepId === 'details' && (

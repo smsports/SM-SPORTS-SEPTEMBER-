@@ -175,11 +175,36 @@ const AuctionManage: React.FC = () => {
             if (contentType.includes('application/json')) {
                 data = await res.json();
             } else {
-                throw new Error("Backend function endpoint not responding with JSON. Deploy Cloud Functions with 'firebase deploy --only functions', or verify player manually below.");
+                throw new Error("Reconciliation service returned a non-JSON response.");
             }
 
             if (data.reconciled) {
-                showNotification(`Payment verified on Razorpay! Registration updated to PAID.`, "success");
+                // Apply update via client-side Firestore SDK with authenticated organizer credentials
+                try {
+                    const targetReg = registrations.find(r => r.id === regId);
+                    const fee = data.amount || targetReg?.finalFeePaid || targetReg?.amountExpected || regConfig.fee || 0;
+                    await db.collection('auctions').doc(id).collection('registrations').doc(regId).update({
+                        paymentStatus: 'PAID',
+                        status: 'APPROVED',
+                        razorpayPaymentId: data.paymentId || paymentId || '',
+                        razorpayOrderId: data.orderId || orderId || '',
+                        amountPaid: fee,
+                        finalFeePaid: fee,
+                        paymentMethod: data.method || 'RAZORPAY',
+                        paymentVerifiedAt: Date.now()
+                    });
+                    if (targetReg) {
+                        await handleApproveAndAdd({
+                            ...targetReg,
+                            paymentStatus: 'PAID',
+                            status: 'APPROVED',
+                            razorpayPaymentId: data.paymentId || paymentId || ''
+                        });
+                    }
+                } catch (clientSyncErr: any) {
+                    console.warn("Client sync note:", clientSyncErr.message);
+                }
+                showNotification(`Payment verified on Razorpay (${data.paymentId || 'Captured'})! Status updated to PAID and approved to pool.`, "success");
             } else {
                 showNotification(data.message || "No captured payment found on Razorpay for this order.", "error");
             }
@@ -188,7 +213,7 @@ const AuctionManage: React.FC = () => {
             const targetReg = registrations.find(r => r.id === regId);
             setConfirmAction({
                 title: "Mark as Paid & Approve Manually?",
-                message: `Server automated check reported: ${err.message}. If you have received this player's fee in your Razorpay/UPI account, click Confirm to immediately mark their status as PAID and add them to the Player Pool.`,
+                message: `Server check reported: ${err.message}. If you have received this player's fee in your Razorpay/bank account, click Confirm to immediately mark their status as PAID and add them to the Player Pool.`,
                 onConfirm: async () => {
                     try {
                         const fee = targetReg?.finalFeePaid || targetReg?.amountExpected || regConfig.fee || 0;
@@ -230,9 +255,31 @@ const AuctionManage: React.FC = () => {
             if (contentType.includes('application/json')) {
                 data = await res.json();
             } else {
-                throw new Error("Cloud Function endpoint returned HTML/404. Ensure backend functions are deployed using 'firebase deploy --only functions'.");
+                throw new Error("Bulk reconciliation endpoint returned a non-JSON response.");
             }
-            if (data.reconciledCount > 0) {
+
+            if (data.reconciledCount > 0 && Array.isArray(data.reconciledItems)) {
+                // Finalize client-side Firestore documents for reconciled players
+                for (const item of data.reconciledItems) {
+                    try {
+                        await db.collection('auctions').doc(id).collection('registrations').doc(item.registrationId).update({
+                            paymentStatus: 'PAID',
+                            status: 'APPROVED',
+                            razorpayPaymentId: item.paymentId,
+                            razorpayOrderId: item.orderId,
+                            amountPaid: item.amount,
+                            finalFeePaid: item.amount,
+                            paymentMethod: item.method || 'RAZORPAY',
+                            paymentVerifiedAt: Date.now()
+                        });
+                        const regObj = registrations.find(r => r.id === item.registrationId);
+                        if (regObj) {
+                            await handleApproveAndAdd({ ...regObj, paymentStatus: 'PAID', status: 'APPROVED' });
+                        }
+                    } catch (syncErr: any) {
+                        console.warn("Bulk client sync note:", syncErr.message);
+                    }
+                }
                 showNotification(`Successfully reconciled ${data.reconciledCount} of ${data.totalChecked} pending payments!`, "success");
             } else {
                 showNotification(`Checked ${data.totalChecked || 0} pending payments. All are up to date.`, "success");

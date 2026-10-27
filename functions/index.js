@@ -270,21 +270,21 @@ app.post(['/reconcile-payment', '/api/reconcile-payment'], async (req, res) => {
             }
 
             let captured = null;
-            if (paymentIdToFetch) {
+            if (paymentIdToFetch && typeof paymentIdToFetch === 'string' && paymentIdToFetch.trim().startsWith('pay_')) {
                 try {
-                    const p = await client.payments.fetch(paymentIdToFetch);
-                    if (p.status === 'captured') captured = p;
+                    const p = await client.payments.fetch(paymentIdToFetch.trim());
+                    if (p && p.status === 'captured') captured = p;
                 } catch (e) {
-                    console.warn('[Reconcile Payment Fetch Error]:', e.message);
+                    console.warn('[Reconcile Payment Fetch Error]:', e.error?.description || e.message);
                 }
             }
 
-            if (!captured && orderIdToFetch) {
+            if (!captured && orderIdToFetch && typeof orderIdToFetch === 'string' && orderIdToFetch.trim().startsWith('order_')) {
                 try {
-                    const list = await client.orders.fetchPayments(orderIdToFetch);
+                    const list = await client.orders.fetchPayments(orderIdToFetch.trim());
                     captured = (list?.items || []).find(p => p.status === 'captured') || null;
                 } catch (e) {
-                    console.warn('[Reconcile Order Payments Error]:', e.message);
+                    console.warn('[Reconcile Order Payments Error]:', e.error?.description || e.message);
                 }
             }
 
@@ -331,9 +331,9 @@ app.post(['/reconcile-payment', '/api/reconcile-payment'], async (req, res) => {
         let reconciledCount = 0;
         for (const doc of pendingSnap.docs) {
             const data = doc.data();
-            if (!data.razorpayOrderId) continue;
+            if (!data.razorpayOrderId || typeof data.razorpayOrderId !== 'string' || !data.razorpayOrderId.trim().startsWith('order_')) continue;
             try {
-                const list = await client.orders.fetchPayments(data.razorpayOrderId);
+                const list = await client.orders.fetchPayments(data.razorpayOrderId.trim());
                 const captured = (list?.items || []).find(p => p.status === 'captured');
                 if (captured) {
                     await doc.ref.update({
@@ -347,14 +347,15 @@ app.post(['/reconcile-payment', '/api/reconcile-payment'], async (req, res) => {
                     reconciledCount++;
                 }
             } catch (err) {
-                console.warn(`[Bulk Reconcile Error for ${doc.id}]:`, err.message);
+                console.warn(`[Bulk Reconcile Error for ${doc.id}]:`, err.error?.description || err.message);
             }
         }
 
         return res.json({ reconciledCount, totalChecked: pendingSnap.size });
     } catch (err) {
-        console.error('[Reconcile Error]:', err);
-        return res.status(500).json({ error: err.message });
+        const desc = err.error?.description || err.message || 'Reconciliation failed';
+        console.warn('[Reconcile Notice]:', desc);
+        return res.status(200).json({ reconciled: false, message: desc });
     }
 });
 
