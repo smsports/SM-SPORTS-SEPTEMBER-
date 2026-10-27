@@ -160,6 +160,34 @@ export interface AdminViewOverride {
 
 export type BiddingStatus = 'ON' | 'PAUSED' | 'HIDDEN';
 
+export interface SpinWheelItem {
+  id: string;
+  name: string;
+  type: 'TEAM' | 'PLAYER';
+  logoUrl?: string;
+  category?: string;
+  role?: string;
+  basePrice?: number;
+  color?: string;
+  shortName?: string;
+}
+
+export interface SpinWheelState {
+  isActive: boolean; // Whether wheel broadcast overlay is active
+  showOnProjector: boolean; // Broadcast to projector screen
+  showOnOBS: boolean; // Broadcast to OBS stream overlay
+  mode: 'TEAMS' | 'PLAYERS';
+  items: SpinWheelItem[];
+  isSpinning: boolean;
+  targetIndex?: number;
+  targetRotation?: number; // Total degrees to rotate
+  spinDuration?: number; // Duration of spin in ms (default ~5000ms)
+  spinStartTime?: number; // Timestamp when spin started
+  winner?: SpinWheelItem | null;
+  showWinnerPopup?: boolean;
+  updatedAt?: number;
+}
+
 export interface AuctionState {
   players: Player[];
   teams: Team[];
@@ -206,6 +234,7 @@ export interface AuctionState {
   globalJerseyOverlayUrl?: string; // Global transparent overlay image
   defaultRetentionDays?: number; // Global default retention/deletion period in days
   createdAt?: number; // Date when the auction was created
+  spinWheelState?: SpinWheelState | null; // Dedicated spinning wheel state for projector and OBS overlay
 }
 
 export enum UserRole {
@@ -608,4 +637,5 @@ export interface AuctionContextType {
   activeAuctionId: string | null;
   nextBid: number;
   repairAuctionDocument: () => Promise<boolean>;
+  updateSpinWheelState: (wheelState: SpinWheelState | null) => Promise<void>;
 }

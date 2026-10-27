@@ -1,6 +1,6 @@
 
 import React, { createContext, useState, useEffect, useContext, useMemo } from 'react';
-import { AuctionContextType, AuctionState, UserProfile, Team, Player, RegisteredPlayer, AuctionStatus, BiddingStatus, AdminViewOverride, BidIncrementSlab, UserRole, SponsorConfig, AuctionLog, TradeRecord } from '../types';
+import { AuctionContextType, AuctionState, UserProfile, Team, Player, RegisteredPlayer, AuctionStatus, BiddingStatus, AdminViewOverride, BidIncrementSlab, UserRole, SponsorConfig, AuctionLog, TradeRecord, SpinWheelState } from '../types';
 import { db, auth } from '../firebase';
 import firebase from 'firebase/compat/app';
 import { calculateMaxBid, getEffectiveBasePrice, safeSaveAuctionDocument } from '../utils';
@@ -41,7 +41,8 @@ const initialState: AuctionState = {
     basePrice: 0,
     globalJerseyUrl: '',
     globalJerseyOverlayUrl: '',
-    defaultRetentionDays: 30
+    defaultRetentionDays: 30,
+    spinWheelState: null
 };
 
 export const AuctionContext = createContext<AuctionContextType | null>(null);
@@ -337,7 +338,7 @@ useEffect(() => {
                         'totalTeams', 'dateTBD', 'unlimitedPurse', 'autoReserveFunds', 'isPaid',
                         'planId', 'autoDeleteAt', 'isLifetime', 'hideScoringSection', 'createdBy',
                         'sponsorConfig', 'projectorLayout', 'obsLayout', 'adminViewOverride',
-                        'biddingStatus', 'playerSelectionMode', 'auctionLogoUrl'
+                        'biddingStatus', 'playerSelectionMode', 'auctionLogoUrl', 'spinWheelState'
                     ];
 
                     safeFields.forEach(field => {
@@ -663,6 +664,11 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
         await db.collection('auctions').doc(activeAuctionId).update({ adminViewOverride: view });
     };
 
+    const updateSpinWheelState = async (wheelState: SpinWheelState | null) => {
+        if (!activeAuctionId) return;
+        await db.collection('auctions').doc(activeAuctionId).update({ spinWheelState: wheelState });
+    };
+
     const initiateTrade = async (trade: Omit<TradeRecord, 'processedAt' | 'processedBy'>) => {
         if (!activeAuctionId) return;
         const tradeId = db.collection('auctions').doc(activeAuctionId).collection('trades').doc().id;
@@ -840,7 +846,7 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
 
     return (
         <AuctionContext.Provider value={{
-            state: activeState, userProfile, setUserProfile, placeBid, sellPlayer, passPlayer, correctPlayerSale, initiateTrade, processTrade, startAuction, undoPlayerSelection, endAuction, resetAuction, resetCurrentPlayer, resetUnsoldPlayers, updateBiddingStatus, updateSponsorConfig, toggleSelectionMode, updateTheme, setAdminView, logout, error, joinAuction, activeAuctionId, nextBid, repairAuctionDocument
+            state: activeState, userProfile, setUserProfile, placeBid, sellPlayer, passPlayer, correctPlayerSale, initiateTrade, processTrade, startAuction, undoPlayerSelection, endAuction, resetAuction, resetCurrentPlayer, resetUnsoldPlayers, updateBiddingStatus, updateSponsorConfig, toggleSelectionMode, updateTheme, setAdminView, logout, error, joinAuction, activeAuctionId, nextBid, repairAuctionDocument, updateSpinWheelState
         }}>
             {children}
         </AuctionContext.Provider>

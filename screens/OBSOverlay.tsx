@@ -6,6 +6,7 @@ import { User, Gavel, DollarSign, Trophy, CheckCircle2, XCircle } from 'lucide-r
 import { getEffectiveBasePrice } from '../utils';
 import { Player, Team, AuctionStatus, AuctionState } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import { SpinWheelBroadcastOverlay } from '../components/SpinWheelBroadcastOverlay';
 
 interface OverlayState {
     player: Player | null;
@@ -1262,6 +1263,7 @@ const OBSOverlay: React.FC = () => {
                 </motion.div>
             )}
         </AnimatePresence>
+        <SpinWheelBroadcastOverlay target="OBS" />
     </>
   );
 };

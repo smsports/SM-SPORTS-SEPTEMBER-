@@ -3,6 +3,7 @@ import { useAuction } from '../hooks/useAuction';
 import { useTheme } from '../contexts/ThemeContext';
 import { AuctionStatus, Team, Player, ProjectorLayout, OBSLayout, UserRole } from '../types';
 import TeamStatusCard from '../components/TeamStatusCard';
+import { SpinningWheelModal } from './SpinningWheelModal';
 import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign, Cast, Lock, Unlock, Monitor, ChevronDown, Shuffle, Search, User, Palette, Trophy, Gavel, Wallet, Eye, EyeOff, Clock, Zap, Undo2, RefreshCw, LayoutList, ShieldAlert, CreditCard, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { calculateMaxBid, getEffectiveBasePrice } from '../utils';
@@ -14,6 +15,7 @@ const LiveAdminPanel: React.FC = () => {
   const { teams, players, biddingStatus, playerSelectionMode, categories, maxPlayersPerTeam } = state;
   const navigate = useNavigate();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showWheelModal, setShowWheelModal] = useState(false);
 
   // Move isRoundActive to component scope to ensure it's accessible by all inner functions
   const isRoundActive = state.status === AuctionStatus.InProgress && state.currentPlayerId;
@@ -718,6 +720,23 @@ const LiveAdminPanel: React.FC = () => {
                 <Monitor className="w-4 h-4" />
               </button>
 
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowWheelModal(true); }}
+                className={`px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm active:scale-95 ${
+                  state.spinWheelState?.isActive
+                    ? 'bg-amber-500 text-black border-amber-400 shadow-amber-500/30 animate-pulse'
+                    : (isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500 hover:text-black' : 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-500 hover:text-black')
+                }`}
+                title="Spinning Wheel (Random Teams / Players Draw)"
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                <span>Spin Wheel</span>
+                {state.spinWheelState?.isActive && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                )}
+              </button>
+
               {/* Bidding Status Segmented Buttons listed directly */}
               <div className={`flex rounded-xl p-1 ml-2 border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
                 <button
@@ -1009,6 +1028,8 @@ const LiveAdminPanel: React.FC = () => {
           <TeamStatusCard key={team.id} team={team} />
         ))}
       </div>
+
+      <SpinningWheelModal isOpen={showWheelModal} onClose={() => setShowWheelModal(false)} />
     </div>
   );
 };

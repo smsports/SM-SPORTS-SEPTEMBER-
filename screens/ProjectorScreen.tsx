@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Team, Player, AuctionStatus, ProjectorLayout } from '../types';
 import { getEffectiveBasePrice } from '../utils';
 import confetti from 'canvas-confetti';
+import { SpinWheelBroadcastOverlay } from '../components/SpinWheelBroadcastOverlay';
 
 interface DisplayState {
     player: Player | null;
@@ -1526,6 +1527,7 @@ const ProjectorScreen: React.FC = () => {
           )}
           </div>
           <Marquee show={state.sponsorConfig?.showTickerOnProjector ?? state.sponsorConfig?.showHighlights ?? false} content={marqueeContent} layout={state.projectorLayout} />
+          <SpinWheelBroadcastOverlay target="PROJECTOR" />
       </div>
   );
 };

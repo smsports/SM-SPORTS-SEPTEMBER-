@@ -7,8 +7,9 @@ import AdminPostAuctionView from '../components/AdminPostAuctionView';
 import { useAuction } from '../hooks/useAuction';
 import { AuctionStatus, UserRole } from '../types';
 import { useNavigate, useParams } from 'react-router-dom';
-import { AlertCircle, Wallet, Users, LogOut, Trophy, Home, ShieldAlert, ArrowRightLeft, Clock, CreditCard, CheckCircle } from 'lucide-react';
+import { AlertCircle, Wallet, Users, LogOut, Trophy, Home, ShieldAlert, ArrowRightLeft, Clock, CreditCard, CheckCircle, Shuffle } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { SpinningWheelModal } from '../components/SpinningWheelModal';
 
 import { useTheme } from '../contexts/ThemeContext';
 import ThemeToggle from '../components/ThemeToggle';
@@ -56,6 +57,7 @@ const Dashboard: React.FC = () => {
   const isTeamOwner = userProfile?.role === UserRole.TEAM_OWNER;
   const myTeam = isTeamOwner ? state.teams.find(t => String(t.id) === String(userProfile?.teamId)) : null;
   const [view, setView] = React.useState<'AUCTION' | 'TRADE'>('AUCTION');
+  const [showWheelModal, setShowWheelModal] = React.useState(false);
 
   // If there is a critical error (like auction not found), show a clean error state
   if (error) {
@@ -223,7 +225,7 @@ const Dashboard: React.FC = () => {
 
         {/* Navigation Tabs for Admins */}
         {isAdmin && state.status !== AuctionStatus.Finished && (
-            <div className="flex items-center gap-2 mb-6 bg-slate-900/50 p-1.5 rounded-2xl border border-white/5 w-fit">
+            <div className="flex flex-wrap items-center gap-2 mb-6 bg-slate-900/50 p-1.5 rounded-2xl border border-white/5 w-fit">
                 <button 
                     onClick={() => setView('AUCTION')}
                     className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${view === 'AUCTION' ? 'bg-accent text-primary' : 'text-slate-500 hover:text-slate-300'}`}
@@ -235,6 +237,20 @@ const Dashboard: React.FC = () => {
                     className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${view === 'TRADE' ? 'bg-amber-600 text-black' : 'text-slate-500 hover:text-slate-300'}`}
                 >
                     <ArrowRightLeft className="w-4 h-4" /> Trading Terminal
+                </button>
+                <button 
+                    type="button"
+                    onClick={() => setShowWheelModal(true)}
+                    className={`px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
+                      state.spinWheelState?.isActive 
+                        ? 'bg-amber-500 text-black font-black shadow-lg shadow-amber-500/25 animate-pulse' 
+                        : 'text-amber-400 hover:bg-amber-500/10 border border-amber-500/20'
+                    }`}
+                >
+                    <Shuffle className="w-4 h-4" /> 🎡 Spin Wheel
+                    {state.spinWheelState?.isActive && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    )}
                 </button>
             </div>
         )}
@@ -256,6 +272,14 @@ const Dashboard: React.FC = () => {
           <div className="min-h-full pb-10">
             <AuctionRoom />
           </div>
+        )}
+
+        {/* Lucky Wheel Modal */}
+        {isAdmin && (
+          <SpinningWheelModal 
+            isOpen={showWheelModal} 
+            onClose={() => setShowWheelModal(false)} 
+          />
         )}
       </main>
       <footer className={`text-center py-6 border-t font-black uppercase tracking-[0.3em] text-[9px] transition-colors ${isDark ? 'bg-secondary border-accent/10 text-zinc-500' : 'bg-white border-gray-100 text-gray-400'}`}>
