@@ -21,31 +21,37 @@ const AuctionRoom: React.FC = () => {
   const isTeamOwner = userProfile?.role === UserRole.TEAM_OWNER;
 
   return (
-    <div className="min-h-full transition-all duration-500">
+    <div className="h-full min-h-0 transition-all duration-500 flex flex-col">
       {currentPlayer ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-4 sm:gap-6 lg:gap-8">
-          {/* Center Column: Main Action (Live Player) - First on Mobile, Top on Tablet, Center on Desktop */}
-          <div className="md:col-span-2 xl:col-span-6 xl:order-2 flex flex-col gap-6">
-            <PlayerFocus player={currentPlayer} />
-            {isTeamOwner && <div className="mt-auto"><BiddingPanel /></div>}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 lg:gap-4 h-full min-h-0 flex-1">
+          {/* Left Column: Team Info or Log */}
+          <div className="md:col-span-1 xl:col-span-3 xl:order-1 h-full min-h-0 flex flex-col space-y-3">
+            {isTeamOwner && <div className="flex-1 min-h-[300px]"><MyTeamPanel /></div>}
+            <div className="flex-1 min-h-0 h-full"><AuctionLog /></div>
           </div>
 
-          {/* Left Column: Team Info or Log */}
-          <div className="md:col-span-1 xl:col-span-3 xl:order-1 space-y-6 flex flex-col xl:h-[calc(100vh-140px)]">
-            {isTeamOwner && <div className="flex-1 min-h-[350px]"><MyTeamPanel /></div>}
-            <div className="flex-1 min-h-[300px] xl:min-h-0"><AuctionLog /></div>
+          {/* Center Column: Main Action (Live Player) */}
+          <div className="md:col-span-2 xl:col-span-5 xl:order-2 h-full min-h-0 flex flex-col gap-3">
+            <div className="flex-1 min-h-0 h-full"><PlayerFocus player={currentPlayer} /></div>
+            {isTeamOwner && <div className="mt-auto shrink-0"><BiddingPanel /></div>}
           </div>
 
           {/* Right Column: Player Pool */}
-          <div className="md:col-span-1 xl:col-span-3 xl:order-3 xl:h-[calc(100vh-140px)] min-h-[400px] xl:min-h-0">
+          <div className="md:col-span-1 xl:col-span-4 xl:order-3 h-full min-h-0">
             <PlayerPool />
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-4 sm:gap-6 lg:gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 lg:gap-4 h-full min-h-0 flex-1">
+          {/* Left Column: Team Info or Log */}
+          <div className="md:col-span-1 xl:col-span-3 xl:order-1 h-full min-h-0 flex flex-col space-y-3">
+            {isTeamOwner && <div className="flex-1 min-h-[300px]"><MyTeamPanel /></div>}
+            <div className="flex-1 min-h-0 h-full"><AuctionLog /></div>
+          </div>
+
           {/* Center Column: Waiting state */}
-          <div className="md:col-span-2 xl:col-span-6 xl:order-2 flex flex-col gap-6 justify-center">
-            <div className={`flex items-center justify-center min-h-[350px] md:h-[400px] rounded-[3rem] border-4 border-dashed transition-all duration-500 ${isDark ? 'bg-secondary/30 border-accent/20' : 'bg-gray-50 border-blue-500/20'}`}>
+          <div className="md:col-span-2 xl:col-span-5 xl:order-2 h-full min-h-0 flex flex-col gap-3 justify-center">
+            <div className={`flex items-center justify-center h-full rounded-[2.5rem] border-4 border-dashed transition-all duration-500 ${isDark ? 'bg-secondary/30 border-accent/20' : 'bg-gray-50 border-blue-500/20'}`}>
                 <div className="text-center p-6 sm:p-8">
                     <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-2xl ${isDark ? 'bg-zinc-900' : 'bg-white'}`}>
                         <Loader2 className={`w-8 h-8 animate-spin ${isDark ? 'text-accent' : 'text-blue-600'}`} />
@@ -56,14 +62,8 @@ const AuctionRoom: React.FC = () => {
             </div>
           </div>
 
-          {/* Left Column: Team Info or Log */}
-          <div className="md:col-span-1 xl:col-span-3 xl:order-1 space-y-6 flex flex-col xl:h-[calc(100vh-140px)]">
-            {isTeamOwner && <div className="flex-1 min-h-[350px]"><MyTeamPanel /></div>}
-            <div className="flex-1 min-h-[300px] xl:min-h-0"><AuctionLog /></div>
-          </div>
-
           {/* Right Column: Player Pool */}
-          <div className="md:col-span-1 xl:col-span-3 xl:order-3 xl:h-[calc(100vh-140px)] min-h-[400px] xl:min-h-0">
+          <div className="md:col-span-1 xl:col-span-4 xl:order-3 h-full min-h-0">
             <PlayerPool />
           </div>
         </div>

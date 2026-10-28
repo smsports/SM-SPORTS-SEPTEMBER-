@@ -85,9 +85,9 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div className={`min-h-screen font-sans flex flex-col transition-colors duration-500 ${isDark ? 'bg-primary text-white' : 'bg-[#f8faff] text-gray-900'}`}>
-      <header className={`shadow-md border-b sticky top-0 z-40 transition-colors duration-500 ${isDark ? 'bg-secondary border-accent/20' : 'bg-white border-gray-100'}`}>
-        <div className="container mx-auto px-4 py-3 flex justify-between items-center">
+    <div className={`h-screen max-h-screen font-sans flex flex-col overflow-hidden transition-colors duration-500 ${isDark ? 'bg-primary text-white' : 'bg-[#f8faff] text-gray-900'}`}>
+      <header className={`shadow-md border-b shrink-0 z-40 transition-colors duration-500 ${isDark ? 'bg-secondary border-accent/20' : 'bg-white border-gray-100'}`}>
+        <div className="w-full px-4 lg:px-6 py-2 flex justify-between items-center">
           
           <div className="flex items-center gap-4 cursor-pointer group" onClick={() => navigate('/')}>
              <div className={`w-12 h-12 rounded-2xl border p-2 shadow-xl flex items-center justify-center overflow-hidden transition-all group-hover:scale-110 ${isDark ? 'bg-black border-accent/50 shadow-accent/5' : 'bg-white border-gray-200 shadow-gray-200/50'}`}>
@@ -183,93 +183,83 @@ const Dashboard: React.FC = () => {
           <div className={`${isDark ? 'text-accent' : 'text-accent'}`}>{isAdmin ? 'Admin Mode' : (isTeamOwner ? 'Live Bidding Enabled' : 'Read Only')}</div>
       </div>
 
-      <main className="flex-1 w-full max-w-[1800px] mx-auto p-2 sm:p-4 lg:p-6 overflow-y-auto">
-        {/* Plan Message Banner */}
+      <main className="flex-1 min-h-0 w-full px-2 sm:px-4 lg:px-5 pb-1 overflow-hidden flex flex-col">
+        {/* Plan Message Banner (Compact) */}
         {!state.isPaid && state.teams.length > 2 && userProfile?.role !== UserRole.SUPER_ADMIN ? (
-          <div className={`mb-6 p-4 rounded-2xl border-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-pulse ${
+          <div className={`mb-2 p-2.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shrink-0 animate-pulse ${
             isDark ? 'bg-red-950/40 border-red-500/50 text-red-200' : 'bg-red-50 border-red-300 text-red-900'
           }`}>
-            <div className="flex items-center gap-3">
-              <ShieldAlert className="w-5 h-5 text-red-500 shrink-0" />
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-red-500 shrink-0" />
               <div>
-                <p className="font-black text-xs uppercase tracking-wider text-red-500">
-                  The auction cannot be started until a plan is purchased
+                <p className="font-black text-[11px] uppercase tracking-wider text-red-500">
+                  Plan required to start auction
                 </p>
-                <p className={`text-[10px] font-bold mt-0.5 ${isDark ? 'text-red-300/80' : 'text-red-700'}`}>
-                  Free plan allows up to 2 teams only. You currently have {state.teams.length} teams. Please purchase a plan to start the auction.
+                <p className={`text-[9px] font-bold ${isDark ? 'text-red-300/80' : 'text-red-700'}`}>
+                  Free plan allows up to 2 teams. Currently have {state.teams.length} teams.
                 </p>
               </div>
             </div>
             <button
               onClick={() => navigate(`/admin?upgrade=${auctionId}`)}
-              className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 shadow-lg active:scale-95 whitespace-nowrap"
+              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[9px] font-black uppercase tracking-widest flex items-center gap-1 shadow-md active:scale-95 whitespace-nowrap"
             >
-              <CreditCard className="w-3.5 h-3.5" /> Purchase Plan
+              <CreditCard className="w-3 h-3" /> Purchase Plan
             </button>
-          </div>
-        ) : (state.isPaid || userProfile?.role === UserRole.SUPER_ADMIN) ? (
-          <div className={`mb-6 p-3 rounded-2xl border flex items-center justify-between gap-3 ${
-            isDark ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-          }`}>
-            <div className="flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-              <span className="text-[10px] font-black uppercase tracking-wider">
-                Current Plan: {state.planId ? state.planId.replace(/_/g, ' ').toUpperCase() : 'Active Paid Plan'} • All Limits Removed
-              </span>
-            </div>
-            <span className="text-[8px] font-black bg-emerald-500/20 px-2.5 py-0.5 rounded-full text-emerald-400 uppercase tracking-widest">
-              ACTIVE
-            </span>
           </div>
         ) : null}
 
-        {/* Navigation Tabs for Admins */}
+        {/* Navigation Tabs for Admins (Compact Bar) */}
         {isAdmin && state.status !== AuctionStatus.Finished && (
-            <div className="flex flex-wrap items-center gap-2 mb-6 bg-slate-900/50 p-1.5 rounded-2xl border border-white/5 w-fit">
+            <div className="flex flex-wrap items-center gap-1.5 mb-2 bg-slate-900/60 p-1 rounded-xl border border-white/5 w-fit shrink-0">
                 <button 
                     onClick={() => setView('AUCTION')}
-                    className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${view === 'AUCTION' ? 'bg-accent text-primary' : 'text-slate-500 hover:text-slate-300'}`}
+                    className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${view === 'AUCTION' ? 'bg-accent text-primary shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
                 >
-                    <Trophy className="w-4 h-4" /> Bidding Floor
+                    <Trophy className="w-3.5 h-3.5" /> Bidding Floor
                 </button>
                 <button 
                     onClick={() => setView('TRADE')}
-                    className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${view === 'TRADE' ? 'bg-amber-600 text-black' : 'text-slate-500 hover:text-slate-300'}`}
+                    className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${view === 'TRADE' ? 'bg-amber-600 text-black shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
                 >
-                    <ArrowRightLeft className="w-4 h-4" /> Trading Terminal
+                    <ArrowRightLeft className="w-3.5 h-3.5" /> Trading Terminal
                 </button>
                 <button 
                     type="button"
                     onClick={() => setShowWheelModal(true)}
-                    className={`px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
+                    className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${
                       state.spinWheelState?.isActive 
                         ? 'bg-amber-500 text-black font-black shadow-lg shadow-amber-500/25 animate-pulse' 
                         : 'text-amber-400 hover:bg-amber-500/10 border border-amber-500/20'
                     }`}
                 >
-                    <Shuffle className="w-4 h-4" /> 🎡 Spin Wheel
+                    <Shuffle className="w-3.5 h-3.5" /> Spin Wheel
                     {state.spinWheelState?.isActive && (
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                     )}
                 </button>
             </div>
         )}
 
         {state.status === AuctionStatus.Finished ? (
-          isTeamOwner && myTeam ? <TeamPostAuctionView team={myTeam} /> : <AdminPostAuctionView />
+          <div className="flex-1 overflow-y-auto">
+            {isTeamOwner && myTeam ? <TeamPostAuctionView team={myTeam} /> : <AdminPostAuctionView />}
+          </div>
         ) : view === 'TRADE' ? (
-          <TradingPanel />
+          <div className="flex-1 overflow-y-auto">
+            <TradingPanel />
+          </div>
         ) : isAdmin ? (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 min-h-full pb-10">
-            <div className="xl:col-span-8 2xl:col-span-9">
+          <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-3 lg:gap-4 h-full">
+            <div className="xl:col-span-8 2xl:col-span-8 h-full min-h-0">
               <AuctionRoom />
             </div>
-            <div className="xl:col-span-4 2xl:col-span-3">
+            <div className="xl:col-span-4 2xl:col-span-4 h-full min-h-0">
               <LiveAdminPanel />
             </div>
           </div>
         ) : (
-          <div className="min-h-full pb-10">
+          <div className="flex-1 min-h-0 h-full">
             <AuctionRoom />
           </div>
         )}
@@ -282,12 +272,12 @@ const Dashboard: React.FC = () => {
           />
         )}
       </main>
-      <footer className={`text-center py-6 border-t font-black uppercase tracking-[0.3em] text-[9px] transition-colors ${isDark ? 'bg-secondary border-accent/10 text-zinc-500' : 'bg-white border-gray-100 text-gray-400'}`}>
+      <footer className={`text-center py-1.5 border-t font-black uppercase tracking-[0.25em] text-[8px] shrink-0 transition-colors ${isDark ? 'bg-secondary/90 border-accent/10 text-zinc-500' : 'bg-white border-gray-100 text-gray-400'}`}>
         <p>
           &copy; 2026 SM SPORTS • Live Auction System •{' '}
           <a href={`${window.location.origin}/#/obs-overlay/${auctionId}`} target="_blank" className="text-accent hover:underline">Open OBS Overlay</a>
           {' • '}
-          <a href={`${window.location.origin}/#/auction/${auctionId}/curator`} target="_blank" className="text-accent hover:underline">Open Curator Portal (Tablet/Laptop)</a>
+          <a href={`${window.location.origin}/#/auction/${auctionId}/curator`} target="_blank" className="text-accent hover:underline">Open Curator Portal</a>
         </p>
       </footer>
     </div>

@@ -82,38 +82,38 @@ const PlayerPool: React.FC = () => {
   }, [availableRoles, availableCategories]);
 
   return (
-    <div className={`rounded-[2.5rem] shadow-2xl h-full flex flex-col border-4 transition-all duration-500 overflow-hidden ${isDark ? 'bg-secondary border-accent/20 shadow-accent/5' : 'bg-white border-blue-500/20 shadow-blue-600/10'}`}>
-      <div className={`p-6 border-b transition-colors ${isDark ? 'bg-zinc-900/30 border-accent/10' : 'bg-gray-50/50 border-blue-500/10'}`}>
-        <h2 className={`text-[10px] font-black uppercase tracking-[0.3em] mb-4 flex items-center gap-3 ${isDark ? 'text-accent' : 'text-blue-600'}`}>
-            <span className={`w-1 h-4 rounded-full ${isDark ? 'bg-accent' : 'bg-blue-600'}`}></span>
+    <div className={`rounded-[2rem] shadow-2xl h-full flex flex-col border-4 transition-all duration-500 overflow-hidden min-h-0 ${isDark ? 'bg-secondary border-accent/20 shadow-accent/5' : 'bg-white border-blue-500/20 shadow-blue-600/10'}`}>
+      <div className={`p-3 lg:p-4 border-b shrink-0 transition-colors ${isDark ? 'bg-zinc-900/30 border-accent/10' : 'bg-gray-50/50 border-blue-500/10'}`}>
+        <h2 className={`text-[10px] font-black uppercase tracking-[0.3em] mb-2 flex items-center gap-2 ${isDark ? 'text-accent' : 'text-blue-600'}`}>
+            <span className={`w-1 h-3.5 rounded-full ${isDark ? 'bg-accent' : 'bg-blue-600'}`}></span>
             {activeTab === 'teams' ? 'Team Purses' : 'Player Pool'}
         </h2>
         
         {activeTab !== 'teams' && (
-            <div className="space-y-4">
+            <div className="space-y-2">
                 <div className="relative group">
-                    <Search className={`absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 transition-colors ${isDark ? 'text-zinc-600 group-focus-within:text-accent' : 'text-gray-400 group-focus-within:text-blue-600'}`} />
+                    <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 transition-colors ${isDark ? 'text-zinc-600 group-focus-within:text-accent' : 'text-gray-400 group-focus-within:text-blue-600'}`} />
                     <input 
                         type="text" 
                         placeholder="Search by name..." 
                         value={searchTerm} 
                         onChange={(e) => setSearchTerm(e.target.value)} 
-                        className={`w-full border rounded-2xl py-3 pl-12 pr-12 text-xs font-black uppercase tracking-widest outline-none transition-all ${isDark ? 'bg-black border-accent/10 text-white focus:border-accent/50' : 'bg-white border-blue-500/10 text-gray-900 focus:border-blue-500/50'}`} 
+                        className={`w-full border rounded-xl py-2 pl-9 pr-9 text-[11px] font-black uppercase tracking-wider outline-none transition-all ${isDark ? 'bg-black border-accent/10 text-white focus:border-accent/50' : 'bg-white border-blue-500/10 text-gray-900 focus:border-blue-500/50'}`} 
                     />
-                    {searchTerm && <button onClick={() => setSearchTerm('')} className={`absolute right-4 top-1/2 -translate-y-1/2 transition-colors ${isDark ? 'text-zinc-600 hover:text-red-400' : 'text-gray-400 hover:text-red-500'}`}><X className="h-4 w-4" /></button>}
+                    {searchTerm && <button onClick={() => setSearchTerm('')} className={`absolute right-3.5 top-1/2 -translate-y-1/2 transition-colors ${isDark ? 'text-zinc-600 hover:text-red-400' : 'text-gray-400 hover:text-red-500'}`}><X className="h-3.5 w-3.5" /></button>}
                 </div>
 
                 {/* Role Filter */}
-                <div className="flex flex-col gap-2">
-                    <div className={`flex items-center gap-2 text-[9px] font-black uppercase tracking-widest px-1 ${isDark ? 'text-zinc-600' : 'text-gray-400'}`}>
-                        <Filter className="w-3 h-3"/> Filter By Role
+                <div className="flex flex-col gap-1">
+                    <div className={`flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest px-1 ${isDark ? 'text-zinc-600' : 'text-gray-400'}`}>
+                        <Filter className="w-2.5 h-2.5"/> Filter By Role
                     </div>
-                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto custom-scrollbar">
+                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto custom-scrollbar">
                         {rolesToDisplay.map((role) => (
                             <button
                                 key={role}
                                 onClick={() => setSelectedRole(role)}
-                                className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${selectedRole === role ? (isDark ? 'bg-accent border-accent text-zinc-950 shadow-lg shadow-accent/20' : 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-600/20') : (isDark ? 'bg-black border-accent/10 text-zinc-500 hover:border-accent/30 hover:text-accent' : 'bg-white border-blue-500/10 text-gray-400 hover:border-blue-500/30 hover:text-blue-600')}`}
+                                className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all border ${selectedRole === role ? (isDark ? 'bg-accent border-accent text-zinc-950 shadow-md shadow-accent/20' : 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-600/20') : (isDark ? 'bg-black border-accent/10 text-zinc-500 hover:border-accent/30 hover:text-accent' : 'bg-white border-blue-500/10 text-gray-400 hover:border-blue-500/30 hover:text-blue-600')}`}
                             >
                                 {role}
                             </button>
@@ -124,14 +124,14 @@ const PlayerPool: React.FC = () => {
         )}
       </div>
 
-      <div className={`flex border-b transition-colors ${isDark ? 'border-accent/10 bg-black/20' : 'border-blue-500/10 bg-gray-50/50'}`}>
-        <TabButton tab="upcoming" label="Upcoming" icon={<Clock className="w-4 h-4"/>} />
-        <TabButton tab="sold" label="Sold" icon={<CheckCircle className="w-4 h-4"/>} />
-        <TabButton tab="unsold" label="Unsold" icon={<Ban className="w-4 h-4"/>} />
-        <TabButton tab="teams" label="Teams" icon={<Users className="w-4 h-4"/>} />
+      <div className={`flex border-b shrink-0 transition-colors ${isDark ? 'border-accent/10 bg-black/20' : 'border-blue-500/10 bg-gray-50/50'}`}>
+        <TabButton tab="upcoming" label="Upcoming" icon={<Clock className="w-3.5 h-3.5"/>} />
+        <TabButton tab="sold" label="Sold" icon={<CheckCircle className="w-3.5 h-3.5"/>} />
+        <TabButton tab="unsold" label="Unsold" icon={<Ban className="w-3.5 h-3.5"/>} />
+        <TabButton tab="teams" label="Teams" icon={<Users className="w-3.5 h-3.5"/>} />
       </div>
 
-      <div className="flex-grow overflow-y-auto p-4 custom-scrollbar">
+      <div className="flex-grow overflow-y-auto p-2.5 custom-scrollbar min-h-0">
         {activeTab === 'teams' ? (
             <div className="space-y-3">
                 {[...teams].sort((a,b) => b.budget - a.budget).map(team => (

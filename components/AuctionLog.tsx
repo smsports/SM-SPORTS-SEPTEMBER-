@@ -23,9 +23,9 @@ const AuctionLog: React.FC = () => {
   const isDark = theme === 'dark';
 
   return (
-    <div className={`rounded-[2.5rem] shadow-2xl p-6 h-full flex flex-col border-4 transition-all duration-500 ${isDark ? 'bg-secondary border-accent/20 shadow-accent/5' : 'bg-white border-blue-500/20 shadow-blue-600/10'}`}>
-      <h3 className={`text-[10px] font-black uppercase tracking-[0.3em] mb-4 border-b pb-2 ${isDark ? 'text-accent border-accent/10' : 'text-blue-600 border-blue-500/10'}`}>Auction Log</h3>
-      <div className="overflow-y-auto flex-grow pr-2 custom-scrollbar">
+    <div className={`rounded-[2rem] shadow-2xl p-3.5 sm:p-4 h-full flex flex-col border-4 min-h-0 overflow-hidden transition-all duration-500 ${isDark ? 'bg-secondary border-accent/20 shadow-accent/5' : 'bg-white border-blue-500/20 shadow-blue-600/10'}`}>
+      <h3 className={`text-[10px] font-black uppercase tracking-[0.3em] mb-2.5 border-b pb-1.5 shrink-0 ${isDark ? 'text-accent border-accent/10' : 'text-blue-600 border-blue-500/10'}`}>Auction Log</h3>
+      <div className="overflow-y-auto flex-grow pr-1.5 custom-scrollbar min-h-0">
         <ul className="space-y-3">
           {state.auctionLog.map((log, index) => (
             <li key={index} className={`flex items-start text-[10px] font-black uppercase tracking-tight animate-fade-in ${isDark ? 'text-zinc-400' : 'text-gray-600'}`}>

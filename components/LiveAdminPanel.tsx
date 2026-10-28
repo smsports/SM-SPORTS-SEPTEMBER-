@@ -4,7 +4,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { AuctionStatus, Team, Player, ProjectorLayout, OBSLayout, UserRole } from '../types';
 import TeamStatusCard from '../components/TeamStatusCard';
 import { SpinningWheelModal } from './SpinningWheelModal';
-import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign, Cast, Lock, Unlock, Monitor, ChevronDown, Shuffle, Search, User, Palette, Trophy, Gavel, Wallet, Eye, EyeOff, Clock, Zap, Undo2, RefreshCw, LayoutList, ShieldAlert, CreditCard, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign, Cast, Lock, Unlock, Monitor, ChevronDown, Shuffle, Search, User, Palette, Trophy, Gavel, Wallet, Eye, EyeOff, Clock, Zap, Undo2, RefreshCw, LayoutList, ShieldAlert, CreditCard, AlertTriangle, CheckCircle, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { calculateMaxBid, getEffectiveBasePrice } from '../utils';
 
@@ -16,6 +16,7 @@ const LiveAdminPanel: React.FC = () => {
   const navigate = useNavigate();
   const [isProcessing, setIsProcessing] = useState(false);
   const [showWheelModal, setShowWheelModal] = useState(false);
+  const [panelView, setPanelView] = useState<'BIDDING' | 'BROADCAST' | 'TEAMS'>('BIDDING');
 
   // Move isRoundActive to component scope to ensure it's accessible by all inner functions
   const isRoundActive = state.status === AuctionStatus.InProgress && state.currentPlayerId;
@@ -576,11 +577,12 @@ const LiveAdminPanel: React.FC = () => {
         if (!isRoundActive || isSellingMode || !hasPaidPlan) return null;
 
         return (
-            <div className="mb-6">
-                <h3 className={`text-[10px] font-black uppercase tracking-[0.3em] mb-3 flex items-center ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>
-                    <Zap className={`w-3.5 h-3.5 mr-2 ${isDark ? 'text-accent' : 'text-blue-600'}`} /> Quick Bids (Next: ₹{nextBid})
+            <div className="mb-2">
+                <h3 className={`text-[9px] font-black uppercase tracking-[0.25em] mb-1.5 flex items-center justify-between ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>
+                    <span className="flex items-center"><Zap className={`w-3 h-3 mr-1.5 ${isDark ? 'text-accent' : 'text-blue-600'}`} /> Quick Bids (Next: ₹{nextBid})</span>
+                    <span className={`text-[8px] font-black uppercase tracking-wider ${isDark ? 'text-accent' : 'text-blue-600'}`}>{teams.length} Teams</span>
                 </h3>
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-2 gap-1.5 max-h-[190px] 2xl:max-h-[250px] overflow-y-auto custom-scrollbar p-0.5">
                     {teams.map(team => {
                         let allowed = true;
                         let reason = '';
@@ -658,261 +660,160 @@ const LiveAdminPanel: React.FC = () => {
 
 
   return (
-    <div className={`p-4 md:p-6 rounded-[2.5rem] shadow-2xl h-full flex flex-col border-4 relative transition-all duration-500 ${isDark ? 'bg-secondary border-accent/20 shadow-accent/5' : 'bg-white border-blue-500/20 shadow-blue-600/10'}`}>
+    <div className={`p-3 lg:p-4 rounded-[2rem] shadow-2xl h-full flex flex-col border-4 relative transition-all duration-500 overflow-hidden min-h-0 ${isDark ? 'bg-secondary border-accent/20 shadow-accent/5' : 'bg-white border-blue-500/20 shadow-blue-600/10'}`}>
 
+      {/* Plan Warning if not paid */}
       {!hasPaidPlan ? (
-        <div className={`mb-6 p-5 rounded-2xl border-2 animate-pulse ${isDark ? 'bg-red-900/10 border-red-500/30' : 'bg-red-50 border-red-200'}`}>
-          <div className="flex items-center gap-3 text-red-500 mb-2">
-            <ShieldAlert className="w-6 h-6" />
-            <h3 className="font-black uppercase tracking-[0.2em] text-xs">Auction Cannot Be Started</h3>
+        <div className={`mb-2 p-2.5 rounded-xl border shrink-0 animate-pulse ${isDark ? 'bg-red-900/10 border-red-500/30' : 'bg-red-50 border-red-200'}`}>
+          <div className="flex items-center gap-2 text-red-500 mb-1">
+            <ShieldAlert className="w-4 h-4" />
+            <h3 className="font-black uppercase tracking-wider text-[10px]">Free Limit Reached</h3>
           </div>
-          <p className={`text-[10px] font-black uppercase tracking-tight mb-4 leading-relaxed ${isDark ? 'text-zinc-400' : 'text-gray-600'}`}>
-            The auction cannot be started until the plan is purchased. Free plan is limited to only 2 teams (this auction has {teams.length} teams). Please purchase any plan to start the auction and remove limits.
+          <p className={`text-[9px] font-black uppercase tracking-tight mb-2 leading-tight ${isDark ? 'text-zinc-400' : 'text-gray-600'}`}>
+            Upgrade to start bidding with {teams.length} teams.
           </p>
           <button
             onClick={() => navigate(`/admin?upgrade=${activeAuctionId}`)}
-            className={`w-full font-black py-3 rounded-xl text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg ${isDark ? 'bg-red-600 hover:bg-red-500 text-white shadow-red-600/20' : 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/20'}`}
+            className={`w-full font-black py-2 rounded-lg text-[9px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-md ${isDark ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}
           >
-            <CreditCard className="w-4 h-4" /> Purchase Plan
+            <CreditCard className="w-3.5 h-3.5" /> Purchase Plan
           </button>
-        </div>
-      ) : (state.isPaid || userProfile?.role === UserRole.SUPER_ADMIN) ? (
-        <div className={`mb-6 px-5 py-3 rounded-2xl border flex items-center justify-between ${isDark ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
-          <div className="flex items-center gap-2.5">
-            <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">
-                Current Plan: {state.planId ? state.planId.replace(/_/g, ' ').toUpperCase() : 'Pro Plan'}
-              </p>
-              <p className={`text-[9px] font-bold ${isDark ? 'text-zinc-400' : 'text-gray-500'}`}>
-                All Limits Removed • Live Bidding Active
-              </p>
-            </div>
-          </div>
-          <span className="text-[8px] font-black bg-emerald-500/20 px-2.5 py-1 rounded-full text-emerald-400 uppercase tracking-widest">Active</span>
         </div>
       ) : null}
 
-      <div className={`flex justify-between items-center mb-6 border-b pb-4 ${isDark ? 'border-accent/10' : 'border-blue-500/10'}`}>
-        <div className="flex flex-col gap-3 w-full">
-          <div className="flex justify-between items-center w-full">
-            <h2 className={`text-2xl font-black uppercase tracking-tighter italic ${isDark ? 'advaya-text' : 'text-gray-900'}`}>Auctioneer</h2>
-            <button onClick={() => navigate('/admin')} className={`text-[10px] font-black uppercase tracking-widest flex items-center transition-colors ${isDark ? 'text-zinc-500 hover:text-accent' : 'text-gray-400 hover:text-blue-600'}`}>
-              <ArrowLeft className="w-3.5 h-3.5 mr-2" /> Dashboard
-            </button>
-          </div>
+      {/* Header: Title + Dashboard link */}
+      <div className={`flex justify-between items-center mb-2 pb-2 border-b shrink-0 ${isDark ? 'border-accent/10' : 'border-blue-500/10'}`}>
+        <div className="flex items-center gap-2">
+          <h2 className={`text-base lg:text-lg font-black uppercase tracking-tighter italic leading-none ${isDark ? 'advaya-text' : 'text-gray-900'}`}>Auctioneer</h2>
+          <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${isDark ? 'bg-accent/10 text-accent' : 'bg-blue-100 text-blue-700'}`}>Cockpit</span>
+        </div>
+        <button onClick={() => navigate('/admin')} className={`text-[9px] font-black uppercase tracking-widest flex items-center transition-colors ${isDark ? 'text-zinc-500 hover:text-accent' : 'text-gray-400 hover:text-blue-600'}`}>
+          <ArrowLeft className="w-3 h-3 mr-1" /> Dashboard
+        </button>
+      </div>
 
-          {/* Quick Actions & Inline Status Segments */}
-          <div className={`flex flex-wrap gap-3 items-center rounded-2xl p-2.5 w-full border ${isDark ? 'bg-primary/50 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={(e) => { e.stopPropagation(); copyOBSLink('transparent'); }}
-                className={`p-2 rounded-xl border transition-all ${isDark ? 'bg-zinc-900 border-accent/20 text-accent hover:bg-accent hover:text-zinc-950' : 'bg-white border-blue-500/20 text-blue-600 hover:bg-blue-600 hover:text-white'}`}
-                title="Copy OBS Transparent Link"
-              >
-                <Cast className="w-4 h-4" />
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); copyOBSLink('green'); }}
-                className={`p-2 rounded-xl border transition-all ${isDark ? 'bg-zinc-900 border-accent/20 text-accent hover:bg-accent hover:text-zinc-950' : 'bg-white border-blue-500/20 text-blue-600 hover:bg-blue-600 hover:text-white'}`}
-                title="Copy Projector View Link"
-              >
-                <Monitor className="w-4 h-4" />
-              </button>
+      {/* Segmented Mode Tabs: Bidding | Broadcast | Squads */}
+      <div className={`grid grid-cols-3 p-1 rounded-xl border mb-2 shrink-0 ${isDark ? 'bg-zinc-900/80 border-accent/10' : 'bg-gray-100 border-blue-500/10'}`}>
+        <button
+          type="button"
+          onClick={() => setPanelView('BIDDING')}
+          className={`py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
+            panelView === 'BIDDING'
+              ? (isDark ? 'bg-accent text-zinc-950 shadow-md shadow-accent/20' : 'bg-blue-600 text-white shadow-md shadow-blue-600/20')
+              : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-500 hover:text-blue-600')
+          }`}
+        >
+          <Zap className="w-3 h-3" /> Live Bidding
+        </button>
+        <button
+          type="button"
+          onClick={() => setPanelView('BROADCAST')}
+          className={`py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
+            panelView === 'BROADCAST'
+              ? (isDark ? 'bg-accent text-zinc-950 shadow-md shadow-accent/20' : 'bg-blue-600 text-white shadow-md shadow-blue-600/20')
+              : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-500 hover:text-blue-600')
+          }`}
+        >
+          <Cast className="w-3 h-3" /> Broadcast
+        </button>
+        <button
+          type="button"
+          onClick={() => setPanelView('TEAMS')}
+          className={`py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
+            panelView === 'TEAMS'
+              ? (isDark ? 'bg-accent text-zinc-950 shadow-md shadow-accent/20' : 'bg-blue-600 text-white shadow-md shadow-blue-600/20')
+              : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-500 hover:text-blue-600')
+          }`}
+        >
+          <Users className="w-3 h-3" /> Squads ({teams.length})
+        </button>
+      </div>
 
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setShowWheelModal(true); }}
-                className={`px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm active:scale-95 ${
-                  state.spinWheelState?.isActive
-                    ? 'bg-amber-500 text-black border-amber-400 shadow-amber-500/30 animate-pulse'
-                    : (isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500 hover:text-black' : 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-500 hover:text-black')
-                }`}
-                title="Spinning Wheel (Random Teams / Players Draw)"
-              >
-                <Shuffle className="w-3.5 h-3.5" />
-                <span>Spin Wheel</span>
-                {state.spinWheelState?.isActive && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                )}
-              </button>
+      {/* Top Quick Bar (ALWAYS accessible across all tabs): Cast, Monitor, Spin Wheel, Bidding ON/OFF */}
+      <div className={`flex flex-wrap gap-1.5 items-center justify-between rounded-xl p-1.5 mb-2 border shrink-0 ${isDark ? 'bg-primary/50 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={(e) => { e.stopPropagation(); copyOBSLink('transparent'); }}
+            className={`p-1.5 rounded-lg border transition-all ${isDark ? 'bg-zinc-900 border-accent/20 text-accent hover:bg-accent hover:text-zinc-950' : 'bg-white border-blue-500/20 text-blue-600 hover:bg-blue-600 hover:text-white'}`}
+            title="Copy OBS Transparent Link"
+          >
+            <Cast className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); copyOBSLink('green'); }}
+            className={`p-1.5 rounded-lg border transition-all ${isDark ? 'bg-zinc-900 border-accent/20 text-accent hover:bg-accent hover:text-zinc-950' : 'bg-white border-blue-500/20 text-blue-600 hover:bg-blue-600 hover:text-white'}`}
+            title="Copy Projector View Link"
+          >
+            <Monitor className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setShowWheelModal(true); }}
+            className={`px-2.5 py-1 rounded-lg border text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1 shadow-sm active:scale-95 ${
+              state.spinWheelState?.isActive
+                ? 'bg-amber-500 text-black border-amber-400 shadow-amber-500/30 animate-pulse'
+                : (isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500 hover:text-black' : 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-500 hover:text-black')
+            }`}
+            title="Spinning Wheel"
+          >
+            <Shuffle className="w-3 h-3" />
+            <span>Spin Wheel</span>
+            {state.spinWheelState?.isActive && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+            )}
+          </button>
+        </div>
 
-              {/* Bidding Status Segmented Buttons listed directly */}
-              <div className={`flex rounded-xl p-1 ml-2 border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
-                <button
-                  onClick={() => updateBiddingStatus('ON')}
-                  disabled={!hasPaidPlan}
-                  className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center ${biddingStatus === 'ON'
-                      ? 'bg-accent text-primary shadow-lg shadow-accent/20'
-                      : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
-                >
-                  <Unlock className="w-3.5 h-3.5 mr-2" /> ON
-                </button>
-                <button
-                  onClick={() => updateBiddingStatus('PAUSED')}
-                  className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center ${biddingStatus !== 'ON'
-                      ? 'bg-accent text-primary shadow-lg shadow-accent/20'
-                      : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
-                >
-                  <Lock className="w-3.5 h-3.5 mr-2" /> OFF
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Display & Sponsors Toolbar (Fully Inline Buttons) */}
-          <div className={`flex flex-col gap-3 rounded-2xl p-3 w-full mt-1 border ${isDark ? 'bg-primary/50 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
-            <div className="flex flex-col sm:flex-row items-center gap-4 w-full">
-              <div className="w-full sm:flex-1">
-                <label className={`block text-[8px] uppercase font-black tracking-[0.2em] mb-1.5 ${isDark ? 'text-zinc-600' : 'text-gray-400'}`}>Projector Theme</label>
-                <div className={`flex flex-wrap gap-1 p-1 rounded-xl border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
-                  {['STANDARD', 'IPL', 'MODERN', 'ADVAYA', 'NEON', 'FUTURISTIC'].map(l => (
-                    <button
-                      key={l}
-                      onClick={() => updateTheme('PROJECTOR', l)}
-                      className={`flex-1 px-2 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-tighter transition-all ${state.projectorLayout === l
-                          ? 'bg-accent text-primary'
-                          : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-400 hover:text-blue-600')}`}
-                    >
-                      {l.slice(0, 4)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="w-full sm:flex-1">
-                <label className={`block text-[8px] uppercase font-black tracking-[0.2em] mb-1.5 ${isDark ? 'text-zinc-600' : 'text-gray-400'}`}>OBS Theme</label>
-                <div className={`flex flex-wrap gap-1.5 p-1 rounded-xl border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
-                  {['STANDARD', 'EMERALD_GOLD', 'ADVAYA', 'MINIMAL', 'VERTICAL'].map(l => (
-                    <button
-                      key={l}
-                      onClick={() => updateTheme('OBS', l)}
-                      className={`px-2 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-tight transition-all border
-                        ${state.obsLayout === l
-                          ? l === 'STANDARD' ? 'bg-[#2A0A5E] border-[#00E5FF] text-white shadow-lg' : l === 'EMERALD_GOLD' ? 'bg-emerald-600 border-emerald-400 text-white shadow-lg' : 'bg-accent border-accent text-primary'
-                          : (isDark ? 'bg-zinc-900/40 border-transparent text-zinc-500 hover:text-white' : 'bg-white border-gray-150 text-gray-400 hover:text-blue-600')}`}
-                    >
-                      {l === 'STANDARD' ? '💜 Purple' : l === 'EMERALD_GOLD' ? '💚 Green' : l.replace('_', ' ')}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className={`flex flex-col gap-2 w-full pt-3 border-t ${isDark ? 'border-accent/10' : 'border-blue-500/10'}`}>
-              <div className="flex justify-between items-center">
-                <label className={`block text-[8px] uppercase font-black tracking-[0.2em] ${isDark ? 'text-zinc-600' : 'text-gray-400'}`}>Admin View Override</label>
-                {state.adminViewOverride?.type === 'SQUAD' && (
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {teams.map(t => (
-                      <button
-                        key={t.id}
-                        onClick={() => setAdminView({ type: 'SQUAD', data: { teamId: t.id } })}
-                        className={`px-3 py-1 rounded-lg text-[7px] font-black uppercase tracking-widest border transition-all ${
-                          state.adminViewOverride?.data?.teamId === t.id
-                          ? (isDark ? 'bg-accent text-zinc-950 border-accent' : 'bg-blue-600 text-white border-blue-600')
-                          : (isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-white' : 'bg-white border-gray-100 text-gray-400 hover:text-blue-600')
-                        }`}
-                      >
-                        {t.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className={`flex flex-wrap gap-1.5 p-1.5 rounded-xl border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
-                {['NONE', 'SQUAD', 'PURSES', 'TOP_5', 'UNSOLD'].map(v => (
-                  <button
-                    key={v}
-                    onClick={() => {
-                      if (v === 'SQUAD') {
-                        setAdminView({ type: 'SQUAD', data: { teamId: teams[0]?.id } });
-                      } else {
-                        setAdminView(v === 'NONE' ? null : { type: v as any });
-                      }
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${(!state.adminViewOverride && v === 'NONE') || (state.adminViewOverride?.type === v)
-                        ? 'bg-accent text-primary'
-                        : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-400 hover:text-blue-600')}`}
-                  >
-                    {v}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className={`flex flex-wrap items-center justify-between gap-3 w-full pt-3 border-t ${isDark ? 'border-accent/10' : 'border-blue-500/10'}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => updateSponsorVisibility('PROJECTOR')}
-                  className={`px-3 py-2 rounded-xl flex items-center gap-2 text-[9px] font-black uppercase tracking-widest border transition-all active:scale-95 ${state.sponsorConfig?.showOnProjector
-                      ? 'bg-accent text-primary border-accent shadow-lg shadow-accent/20'
-                      : (isDark ? 'bg-zinc-900 border-accent/10 text-zinc-500' : 'bg-white border-blue-500/10 text-gray-400')}`}
-                >
-                  <Monitor className="w-3.5 h-3.5" /> Proj
-                </button>
-                <button
-                  onClick={() => updateSponsorVisibility('OBS')}
-                  className={`px-3 py-2 rounded-xl flex items-center gap-2 text-[9px] font-black uppercase tracking-widest border transition-all active:scale-95 ${state.sponsorConfig?.showOnOBS
-                      ? (isDark ? 'bg-purple-500 text-white border-purple-500 shadow-lg shadow-purple-500/20' : 'bg-purple-600 text-white border-purple-600 shadow-lg shadow-purple-600/20')
-                      : (isDark ? 'bg-zinc-900 border-accent/10 text-zinc-500' : 'bg-white border-blue-500/10 text-gray-400')}`}
-                >
-                  <Cast className="w-3.5 h-3.5" /> OBS
-                </button>
-                <button
-                  onClick={toggleHighlights}
-                  className={`px-3 py-2 rounded-xl flex items-center gap-2 text-[9px] font-black uppercase tracking-widest border transition-all active:scale-95 ${state.sponsorConfig?.showHighlights
-                      ? (isDark ? 'bg-orange-500 text-white border-orange-500 shadow-lg shadow-orange-500/20' : 'bg-orange-600 text-white border-orange-600 shadow-lg shadow-orange-600/20')
-                      : (isDark ? 'bg-zinc-900 border-accent/10 text-zinc-500' : 'bg-white border-blue-500/10 text-gray-400')}`}
-                >
-                  <LayoutList className="w-3.5 h-3.5" /> Ticker
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="relative group w-14">
-                  <input
-                    type="number"
-                    className={`w-full border-2 rounded-xl text-[10px] p-2 pr-6 text-center font-black tabular-nums transition-all outline-none ${isDark ? 'bg-zinc-900 border-accent/10 text-white focus:border-accent' : 'bg-gray-50 border-blue-500/10 text-gray-900 focus:border-blue-500'}`}
-                    value={sponsorLoop}
-                    onChange={handleSponsorLoopChange}
-                    onBlur={saveSponsorLoop}
-                    title="Loop Interval (Sec)"
-                  />
-                  <Clock className={`w-3 h-3 absolute top-1/2 -translate-y-1/2 right-2 ${isDark ? 'text-zinc-600' : 'text-gray-400'} pointer-events-none`} />
-                </div>
-              </div>
-            </div>
-          </div>
+        {/* Bidding Status ON/OFF */}
+        <div className={`flex rounded-lg p-0.5 border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
+          <button
+            onClick={() => updateBiddingStatus('ON')}
+            disabled={!hasPaidPlan}
+            className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest transition-all flex items-center ${biddingStatus === 'ON'
+                ? 'bg-accent text-primary shadow-sm'
+                : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
+          >
+            <Unlock className="w-2.5 h-2.5 mr-1" /> ON
+          </button>
+          <button
+            onClick={() => updateBiddingStatus('PAUSED')}
+            className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest transition-all flex items-center ${biddingStatus !== 'ON'
+                ? 'bg-accent text-primary shadow-sm'
+                : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
+          >
+            <Lock className="w-2.5 h-2.5 mr-1" /> OFF
+          </button>
         </div>
       </div>
 
       {/* NOTIFICATION BANNER */}
       {notification && (
-        <div className={`fixed top-6 right-6 z-[100] p-5 rounded-2xl shadow-2xl border-2 animate-slide-in flex items-center gap-4 max-w-md ${notification.type === 'error' ? 'bg-red-900/90 border-red-500 text-white backdrop-blur-md' : 'bg-green-900/90 border-green-500 text-white backdrop-blur-md'}`}>
-          {notification.type === 'error' ? <AlertOctagon className="w-6 h-6 text-red-400" /> : <CheckCircle className="w-6 h-6 text-green-400" />}
+        <div className={`fixed top-6 right-6 z-[100] p-4 rounded-2xl shadow-2xl border-2 animate-slide-in flex items-center gap-3 max-w-md ${notification.type === 'error' ? 'bg-red-900/90 border-red-500 text-white backdrop-blur-md' : 'bg-green-900/90 border-green-500 text-white backdrop-blur-md'}`}>
+          {notification.type === 'error' ? <AlertOctagon className="w-5 h-5 text-red-400" /> : <CheckCircle className="w-5 h-5 text-green-400" />}
           <span className="text-xs font-black uppercase tracking-tight">{notification.message}</span>
-          <button onClick={() => setNotification(null)} className="ml-auto hover:scale-110 transition-transform"><X className="w-5 h-5" /></button>
+          <button onClick={() => setNotification(null)} className="ml-auto hover:scale-110 transition-transform"><X className="w-4 h-4" /></button>
         </div>
       )}
 
-      {/* CUSTOM CONFIRMATION MODAL (INLINE) */}
+      {/* CONFIRMATION MODAL */}
       {confirmAction && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md animate-fade-in">
-          <div className={`border-4 rounded-[3rem] p-8 max-w-md w-full shadow-2xl transition-all duration-500 ${isDark ? 'bg-secondary border-accent/30 shadow-accent/10' : 'bg-white border-blue-500/30 shadow-blue-600/10'}`}>
-            <div className={`flex items-center gap-4 mb-6 ${isDark ? 'text-accent' : 'text-amber-500'}`}>
-              <AlertTriangle className="w-8 h-8" />
-              <h3 className="text-2xl font-black uppercase tracking-tighter italic">{confirmAction.title}</h3>
+          <div className={`border-4 rounded-[2.5rem] p-6 max-w-md w-full shadow-2xl transition-all duration-500 ${isDark ? 'bg-secondary border-accent/30 shadow-accent/10' : 'bg-white border-blue-500/30 shadow-blue-600/10'}`}>
+            <div className={`flex items-center gap-3 mb-4 ${isDark ? 'text-accent' : 'text-amber-500'}`}>
+              <AlertTriangle className="w-6 h-6" />
+              <h3 className="text-xl font-black uppercase tracking-tighter italic">{confirmAction.title}</h3>
             </div>
-            <p className={`text-sm font-bold mb-8 leading-relaxed ${isDark ? 'text-zinc-400' : 'text-gray-600'}`}>{confirmAction.message}</p>
-            <div className="flex gap-4">
+            <p className={`text-xs font-bold mb-6 leading-relaxed ${isDark ? 'text-zinc-400' : 'text-gray-600'}`}>{confirmAction.message}</p>
+            <div className="flex gap-3">
               <button
                 onClick={() => setConfirmAction(null)}
-                className={`flex-1 py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all active:scale-95 ${isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                className={`flex-1 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all active:scale-95 ${isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
               >
                 Cancel
               </button>
               <button
                 onClick={confirmAction.onConfirm}
-                className={`flex-1 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg transition-all active:scale-95 ${isDark ? 'bg-accent text-zinc-950 hover:bg-white shadow-accent/20' : 'bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/20'}`}
+                className={`flex-1 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg transition-all active:scale-95 ${isDark ? 'bg-accent text-zinc-950 hover:bg-white shadow-accent/20' : 'bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/20'}`}
               >
                 Confirm
               </button>
@@ -921,113 +822,273 @@ const LiveAdminPanel: React.FC = () => {
         </div>
       )}
 
-      {/* SELECTION MODE TOGGLE (Inline Segments) */}
-      <div className={`rounded-2xl p-2.5 mb-6 flex justify-between items-center border transition-all duration-500 ${isDark ? 'bg-primary/40 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
-        <span className={`text-[10px] font-black uppercase tracking-widest ml-2 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Selection Mode</span>
-        <div className={`flex p-1 rounded-xl border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
-          <button
-            onClick={playerSelectionMode !== 'MANUAL' ? toggleSelectionMode : undefined}
-            className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${playerSelectionMode === 'MANUAL'
-                ? 'bg-accent text-primary shadow-lg shadow-accent/20'
-                : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
-          >
-            Manual
-          </button>
-          <button
-            onClick={playerSelectionMode !== 'AUTO' ? toggleSelectionMode : undefined}
-            className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${playerSelectionMode === 'AUTO'
-                ? 'bg-accent text-primary shadow-lg shadow-accent/20'
-                : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
-          >
-            Auto
-          </button>
-        </div>
-      </div>
+      {/* MAIN TAB CONTENT */}
+      {panelView === 'BIDDING' && (
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1 flex flex-col justify-between space-y-2">
+          <div className="space-y-2 shrink-0">
+            {/* Quick 1-click View Override Bar on Projector/OBS */}
+            <div className={`flex items-center justify-between px-2 py-1 rounded-xl border ${isDark ? 'bg-zinc-900/50 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
+              <span className={`text-[8px] font-black uppercase tracking-wider ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Projector View:</span>
+              <div className="flex items-center gap-1">
+                {['NONE', 'PURSES', 'TOP_5', 'UNSOLD'].map(v => (
+                  <button
+                    key={v}
+                    onClick={() => setAdminView(v === 'NONE' ? null : { type: v as any })}
+                    className={`px-2 py-0.5 rounded-md text-[7px] font-black uppercase tracking-widest transition-all ${
+                      (!state.adminViewOverride && v === 'NONE') || (state.adminViewOverride?.type === v)
+                        ? 'bg-accent text-primary shadow-sm'
+                        : (isDark ? 'text-zinc-500 hover:text-white bg-zinc-800/60' : 'text-gray-500 hover:text-blue-600 bg-white border border-gray-200')
+                    }`}
+                  >
+                    {v.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-      {/* REPAIR DOCUMENT SIZE BUTTON */}
-      <div className={`rounded-2xl p-2.5 mb-6 flex justify-between items-center border transition-all duration-500 ${isDark ? 'bg-primary/40 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
-        <div className="flex items-center gap-3 ml-2">
-            <ShieldAlert className={`w-4 h-4 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`} />
+            {/* UNDO BANNER */}
+            {lastAction && (
+              <div className={`border-l-4 p-2 rounded-xl shadow-md flex justify-between items-center animate-fade-in ${isDark ? 'bg-amber-900/20 border-amber-500 text-amber-200' : 'bg-amber-50 border-amber-500 text-amber-900'}`}>
+                <div className="flex items-center text-[9px] font-bold uppercase tracking-tight">
+                  <AlertOctagon className="w-3.5 h-3.5 mr-1.5 text-amber-500 shrink-0" />
+                  <span>Marked <b className={isDark ? 'text-white' : 'text-black'}>{lastAction.name}</b> as <b className={isDark ? 'text-white' : 'text-black'}>{lastAction.type}</b></span>
+                </div>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={handleUndoLastAction}
+                    disabled={isProcessing}
+                    className="font-black px-2 py-0.5 rounded-md uppercase tracking-wider text-[8px] bg-amber-600 hover:bg-amber-500 text-white shadow-sm"
+                  >
+                    Undo
+                  </button>
+                  <button onClick={() => setLastAction(null)} className="hover:scale-110 transition-transform"><X className="w-3 h-3" /></button>
+                </div>
+              </div>
+            )}
+
+            {/* ACTION BUTTONS (SOLD / UNSOLD / CANCEL / NEXT PLAYER) */}
+            <div className="shrink-0">
+              {getControlButtons()}
+            </div>
+
+            {/* QUICK BIDS */}
+            <div className="shrink-0">
+              {renderQuickBidButtons()}
+            </div>
+          </div>
+
+          {/* BOTTOM BAR: SELECTION MODE & RESETS */}
+          <div className="pt-1.5 border-t space-y-1.5 shrink-0 border-white/5">
+            <div className={`rounded-xl p-1.5 flex justify-between items-center border ${isDark ? 'bg-primary/40 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
+              <span className={`text-[8px] font-black uppercase tracking-widest ml-1 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Selection Mode</span>
+              <div className={`flex p-0.5 rounded-lg border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
+                <button
+                  onClick={playerSelectionMode !== 'MANUAL' ? toggleSelectionMode : undefined}
+                  className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-all ${playerSelectionMode === 'MANUAL'
+                      ? 'bg-accent text-primary shadow-sm'
+                      : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
+                >
+                  Manual
+                </button>
+                <button
+                  onClick={playerSelectionMode !== 'AUTO' ? toggleSelectionMode : undefined}
+                  className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-all ${playerSelectionMode === 'AUTO'
+                      ? 'bg-accent text-primary shadow-sm'
+                      : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
+                >
+                  Auto
+                </button>
+              </div>
+            </div>
+
+            {!isSellingMode && (
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={handleResetPlayer}
+                  disabled={isProcessing || !state.currentPlayerId}
+                  className={`flex items-center justify-center gap-1 font-black py-1.5 rounded-lg transition-all active:scale-95 uppercase tracking-widest text-[8px] ${isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'} disabled:opacity-30`}
+                  title="Clears bids for current player only"
+                >
+                  <RotateCcw className={`h-3 w-3 ${isProcessing ? 'animate-spin' : ''}`} />
+                  Reset Current
+                </button>
+                <button
+                  onClick={handleResetFull}
+                  disabled={isProcessing}
+                  className={`flex items-center justify-center gap-1 font-black py-1.5 rounded-lg transition-all active:scale-95 uppercase tracking-widest text-[8px] border ${isDark ? 'bg-red-950/20 border-red-900/50 text-red-400 hover:bg-red-900/30' : 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100'} disabled:opacity-30`}
+                  title="Resets auction status to Not Started"
+                >
+                  <AlertOctagon className={`h-3 w-3 ${isProcessing ? 'animate-spin' : ''}`} />
+                  Reset Full
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {panelView === 'BROADCAST' && (
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1 space-y-2.5">
+          {/* Themes Settings */}
+          <div className={`flex flex-col gap-2 rounded-xl p-2.5 border ${isDark ? 'bg-primary/50 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
             <div>
-                <p className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Size Repair</p>
-                <p className="text-[8px] font-bold text-zinc-500 uppercase">Database Cleanup</p>
+              <label className={`block text-[8px] uppercase font-black tracking-[0.2em] mb-1 ${isDark ? 'text-zinc-600' : 'text-gray-400'}`}>Projector Theme</label>
+              <div className={`flex flex-wrap gap-1 p-1 rounded-lg border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
+                {['STANDARD', 'IPL', 'MODERN', 'ADVAYA', 'NEON', 'FUTURISTIC'].map(l => (
+                  <button
+                    key={l}
+                    onClick={() => updateTheme('PROJECTOR', l)}
+                    className={`flex-1 min-w-[45px] px-1.5 py-1 rounded-md text-[7px] font-black uppercase tracking-tighter transition-all ${state.projectorLayout === l
+                        ? 'bg-accent text-primary'
+                        : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-400 hover:text-blue-600')}`}
+                  >
+                    {l.slice(0, 4)}
+                  </button>
+                ))}
+              </div>
             </div>
+
+            <div>
+              <label className={`block text-[8px] uppercase font-black tracking-[0.2em] mb-1 ${isDark ? 'text-zinc-600' : 'text-gray-400'}`}>OBS Theme</label>
+              <div className={`flex flex-wrap gap-1 p-1 rounded-lg border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
+                {['STANDARD', 'EMERALD_GOLD', 'ADVAYA', 'MINIMAL', 'VERTICAL'].map(l => (
+                  <button
+                    key={l}
+                    onClick={() => updateTheme('OBS', l)}
+                    className={`flex-1 min-w-[55px] px-1.5 py-1 rounded-md text-[7px] font-black uppercase tracking-tight transition-all border
+                      ${state.obsLayout === l
+                        ? l === 'STANDARD' ? 'bg-[#2A0A5E] border-[#00E5FF] text-white shadow-sm' : l === 'EMERALD_GOLD' ? 'bg-emerald-600 border-emerald-400 text-white shadow-sm' : 'bg-accent border-accent text-primary'
+                        : (isDark ? 'bg-zinc-900/40 border-transparent text-zinc-500 hover:text-white' : 'bg-white border-gray-150 text-gray-400 hover:text-blue-600')}`}
+                  >
+                    {l === 'STANDARD' ? '💜 Purple' : l === 'EMERALD_GOLD' ? '💚 Green' : l.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Admin View Overrides Full Section */}
+          <div className={`flex flex-col gap-2 rounded-xl p-2.5 border ${isDark ? 'bg-primary/50 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
+            <label className={`block text-[8px] uppercase font-black tracking-[0.2em] ${isDark ? 'text-zinc-600' : 'text-gray-400'}`}>Admin View Override</label>
+            <div className={`flex flex-wrap gap-1 p-1 rounded-lg border ${isDark ? 'bg-zinc-900 border-accent/10' : 'bg-white border-blue-500/10'}`}>
+              {['NONE', 'SQUAD', 'PURSES', 'TOP_5', 'UNSOLD'].map(v => (
+                <button
+                  key={v}
+                  onClick={() => {
+                    if (v === 'SQUAD') {
+                      setAdminView({ type: 'SQUAD', data: { teamId: teams[0]?.id } });
+                    } else {
+                      setAdminView(v === 'NONE' ? null : { type: v as any });
+                    }
+                  }}
+                  className={`flex-1 px-2 py-1 rounded-md text-[7px] font-black uppercase tracking-widest transition-all ${(!state.adminViewOverride && v === 'NONE') || (state.adminViewOverride?.type === v)
+                      ? 'bg-accent text-primary'
+                      : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-400 hover:text-blue-600')}`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+
+            {state.adminViewOverride?.type === 'SQUAD' && (
+              <div className="flex flex-wrap gap-1 mt-1 p-1 rounded-lg bg-black/20">
+                {teams.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setAdminView({ type: 'SQUAD', data: { teamId: t.id } })}
+                    className={`px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest border transition-all ${
+                      state.adminViewOverride?.data?.teamId === t.id
+                      ? (isDark ? 'bg-accent text-zinc-950 border-accent' : 'bg-blue-600 text-white border-blue-600')
+                      : (isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-white' : 'bg-white border-gray-100 text-gray-400 hover:text-blue-600')
+                    }`}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Sponsor Toggles & Interval */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => updateSponsorVisibility('PROJECTOR')}
+                  className={`px-2 py-1 rounded-lg flex items-center gap-1 text-[8px] font-black uppercase tracking-widest border transition-all ${state.sponsorConfig?.showOnProjector
+                      ? 'bg-accent text-primary border-accent'
+                      : (isDark ? 'bg-zinc-900 border-accent/10 text-zinc-500' : 'bg-white border-blue-500/10 text-gray-400')}`}
+                >
+                  <Monitor className="w-3 h-3" /> Proj
+                </button>
+                <button
+                  onClick={() => updateSponsorVisibility('OBS')}
+                  className={`px-2 py-1 rounded-lg flex items-center gap-1 text-[8px] font-black uppercase tracking-widest border transition-all ${state.sponsorConfig?.showOnOBS
+                      ? (isDark ? 'bg-purple-500 text-white border-purple-500' : 'bg-purple-600 text-white border-purple-600')
+                      : (isDark ? 'bg-zinc-900 border-accent/10 text-zinc-500' : 'bg-white border-blue-500/10 text-gray-400')}`}
+                >
+                  <Cast className="w-3 h-3" /> OBS
+                </button>
+                <button
+                  onClick={toggleHighlights}
+                  className={`px-2 py-1 rounded-lg flex items-center gap-1 text-[8px] font-black uppercase tracking-widest border transition-all ${state.sponsorConfig?.showHighlights
+                      ? (isDark ? 'bg-orange-500 text-white border-orange-500' : 'bg-orange-600 text-white border-orange-600')
+                      : (isDark ? 'bg-zinc-900 border-accent/10 text-zinc-500' : 'bg-white border-blue-500/10 text-gray-400')}`}
+                >
+                  <LayoutList className="w-3 h-3" /> Ticker
+                </button>
+              </div>
+
+              <div className="relative group w-14">
+                <input
+                  type="number"
+                  className={`w-full border rounded-lg text-[9px] p-1 pr-5 text-center font-black tabular-nums outline-none ${isDark ? 'bg-zinc-900 border-accent/10 text-white' : 'bg-gray-50 border-blue-500/10 text-gray-900'}`}
+                  value={sponsorLoop}
+                  onChange={handleSponsorLoopChange}
+                  onBlur={saveSponsorLoop}
+                  title="Loop Interval (Sec)"
+                />
+                <Clock className={`w-2.5 h-2.5 absolute top-1/2 -translate-y-1/2 right-1.5 ${isDark ? 'text-zinc-600' : 'text-gray-400'} pointer-events-none`} />
+              </div>
+            </div>
+          </div>
+
+          {/* Size Repair */}
+          <div className={`rounded-xl p-2.5 flex justify-between items-center border ${isDark ? 'bg-primary/40 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
+            <div className="flex items-center gap-2 ml-1">
+              <ShieldAlert className={`w-3.5 h-3.5 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`} />
+              <div>
+                <p className={`text-[9px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Size Repair</p>
+                <p className="text-[7px] font-bold text-zinc-500 uppercase">Database Cleanup</p>
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                if (window.confirm("This will overwrite your auction document with a clean version, removing large bulky data that exceeds 1MB limits. Your sub-collections are safe. Continue?")) {
+                  try {
+                    setIsProcessing(true);
+                    await repairAuctionDocument();
+                    showNotification("Repair successful! Document size reset.", "success");
+                  } catch (e: any) {
+                    showNotification("Repair failed: " + e.message);
+                  } finally {
+                    setIsProcessing(false);
+                  }
+                }
+              }}
+              className={`px-3 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${isDark ? 'bg-zinc-800 text-zinc-400 hover:text-red-400' : 'bg-white border-gray-100 text-gray-400 hover:text-red-500'} border`}
+            >
+              {isProcessing ? <Loader2 className="w-3 h-3 animate-spin"/> : 'Run Repair'}
+            </button>
+          </div>
         </div>
-        <button
-          onClick={async () => {
-            if (window.confirm("This will overwrite your auction document with a clean version, removing large bulky data (like old player/team lists) that exceeds 1MB limits. Your sub-collections are safe. Continue?")) {
-              try {
-                setIsProcessing(true);
-                await repairAuctionDocument();
-                showNotification("Repair successful! Document size reset.", "success");
-              } catch (e: any) {
-                showNotification("Repair failed: " + e.message);
-              } finally {
-                setIsProcessing(false);
-              }
-            }
-          }}
-          className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-red-950/20 hover:text-red-400 hover:border-red-900/50' : 'bg-white border-gray-100 text-gray-400 hover:text-red-500'} border`}
-        >
-          {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : 'Run Repair'}
-        </button>
-      </div>
+      )}
 
-      <div className="mb-8 space-y-4">
-        {/* UNDO BANNER */}
-        {lastAction && (
-          <div className={`border-l-8 p-4 rounded-2xl shadow-xl flex justify-between items-center animate-fade-in mb-6 ${isDark ? 'bg-amber-900/20 border-amber-500 text-amber-200' : 'bg-amber-50 border-amber-500 text-amber-900'}`}>
-            <div className="flex items-center text-xs font-bold uppercase tracking-tight">
-              <AlertOctagon className="w-5 h-5 mr-3" />
-              <span>Just marked <b className={isDark ? 'text-white' : 'text-black'}>{lastAction.name}</b> as <b className={isDark ? 'text-white' : 'text-black'}>{lastAction.type}</b></span>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={handleUndoLastAction}
-                disabled={isProcessing}
-                className={`font-black px-4 py-2 rounded-xl flex items-center transition-all active:scale-95 uppercase tracking-widest text-[10px] ${isDark ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-600/20' : 'bg-amber-600 hover:bg-amber-700 text-white shadow-lg shadow-amber-600/20'}`}
-              >
-                <Undo2 className="w-3.5 h-3.5 mr-2" /> Undo
-              </button>
-              <button onClick={() => setLastAction(null)} className="hover:scale-110 transition-transform"><X className="w-5 h-5" /></button>
-            </div>
-          </div>
-        )}
-
-        {getControlButtons()}
-
-        {renderQuickBidButtons()}
-
-        {!isSellingMode && (
-          <div className={`grid grid-cols-2 gap-3 mt-6 pt-6 border-t ${isDark ? 'border-accent/10' : 'border-blue-500/10'}`}>
-            <button
-              onClick={handleResetPlayer}
-              disabled={isProcessing || !state.currentPlayerId}
-              className={`flex flex-col items-center justify-center font-black py-4 rounded-2xl transition-all active:scale-95 uppercase tracking-widest text-[9px] ${isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'} disabled:opacity-30`}
-              title="Clears bids for current player only"
-            >
-              <RotateCcw className={`mb-1.5 h-5 w-5 ${isProcessing ? 'animate-spin' : ''}`} />
-              Reset Current
-            </button>
-            <button
-              onClick={handleResetFull}
-              disabled={isProcessing}
-              className={`flex flex-col items-center justify-center font-black py-4 rounded-2xl transition-all active:scale-95 uppercase tracking-widest text-[9px] border-2 ${isDark ? 'bg-red-950/20 border-red-900/50 text-red-400 hover:bg-red-900/30' : 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100'} disabled:opacity-30`}
-              title="Resets auction status to Not Started"
-            >
-              <AlertOctagon className={`mb-1.5 h-5 w-5 ${isProcessing ? 'animate-spin' : ''}`} />
-              Reset Full
-            </button>
-          </div>
-        )}
-      </div>
-
-      <h3 className={`text-[10px] font-black uppercase tracking-[0.3em] mb-4 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Teams Overview</h3>
-      <div className="flex-grow overflow-y-auto space-y-4 pr-2 custom-scrollbar">
-        {teams.map((team: Team) => (
-          <TeamStatusCard key={team.id} team={team} />
-        ))}
-      </div>
+      {panelView === 'TEAMS' && (
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+          {teams.map((team: Team) => (
+            <TeamStatusCard key={team.id} team={team} />
+          ))}
+        </div>
+      )}
 
       <SpinningWheelModal isOpen={showWheelModal} onClose={() => setShowWheelModal(false)} />
     </div>
