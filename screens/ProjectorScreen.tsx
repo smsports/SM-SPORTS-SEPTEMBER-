@@ -141,6 +141,14 @@ const ProjectorScreen: React.FC = () => {
   const [showSoldOverlay, setShowSoldOverlay] = useState(false);
   const [soldAnimationPlayer, setSoldAnimationPlayer] = useState<{player: Player, bid: number, bidder: Team | null} | null>(null);
 
+  // When a new player is selected or auction is in progress, dismiss the sold overlay immediately
+  useEffect(() => {
+    if (state.status === AuctionStatus.InProgress || state.status === AuctionStatus.Paused) {
+        setShowSoldOverlay(false);
+        setSoldAnimationPlayer(null);
+    }
+  }, [state.currentPlayerId, state.status]);
+
   useEffect(() => {
     if (display.status === 'SOLD' && display.player) {
         setSoldAnimationPlayer({ player: display.player, bid: display.bid, bidder: display.bidder });
@@ -154,11 +162,10 @@ const ProjectorScreen: React.FC = () => {
         setShowSoldOverlay(true);
         const timer = setTimeout(() => {
             setShowSoldOverlay(false);
-            // Optionally clear soldAnimationPlayer after transition
-        }, 4000); // 3 seconds + 1s for fade out
+        }, 4000);
         return () => clearTimeout(timer);
     }
-  }, [display.status, display.player, showSoldOverlay]);
+  }, [display.status, display.player]);
 
   useEffect(() => {
       const { currentPlayerId, players, currentBid, highestBidder, status, teams, auctionLog } = state;
@@ -171,14 +178,17 @@ const ProjectorScreen: React.FC = () => {
       if (currentPlayer) {
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
           let derivedStatus: 'LIVE' | 'SOLD' | 'UNSOLD' | 'FINISHED' = 'LIVE';
-          if (status === AuctionStatus.Sold || currentPlayer.status === 'SOLD') {
+          if (status === AuctionStatus.Sold) {
               derivedStatus = 'SOLD';
           } else if (status === AuctionStatus.Unsold) {
               derivedStatus = 'UNSOLD';
+          } else if (status === AuctionStatus.InProgress || status === AuctionStatus.Paused) {
+              // Whenever live bidding is active, the active lot is always LIVE
+              derivedStatus = 'LIVE';
+          } else if (currentPlayer.status === 'SOLD') {
+              derivedStatus = 'SOLD';
           } else if (currentPlayer.status === 'UNSOLD') {
-              // If player is UNSOLD from a previous round but is now the currentPlayer and auction is back in progress,
-              // treat them as LIVE/Fresh unless specifically marked UNSOLD again in this session.
-              derivedStatus = (status === AuctionStatus.InProgress || status === AuctionStatus.Paused) ? 'LIVE' : 'UNSOLD';
+              derivedStatus = 'UNSOLD';
           }
           let resolvedBidder = highestBidder;
           if (derivedStatus === 'SOLD' && !resolvedBidder && currentPlayer.soldTo) {
@@ -436,123 +446,166 @@ const ProjectorScreen: React.FC = () => {
       if (type === 'PURSES') {
           const sortedTeams = [...state.teams].sort((a,b) => b.budget - a.budget);
           const isIpl = state.projectorLayout === 'IPL';
-          
-          if (isIpl) {
-              const rowVariants: any = {
-                hidden: { opacity: 0, y: 30 },
-                visible: (i: number) => ({
-                  opacity: 1,
-                  y: 0,
-                  transition: {
-                    delay: i * 0.05,
-                    duration: 0.4,
-                  },
-                }),
-              };
+          const maxSlots = state.maxPlayersPerTeam || 15;
+          const numTeams = sortedTeams.length;
 
-              return (
-                  <RenderOverrideContainer title="">
-                      <div className="h-full flex flex-col overflow-hidden">
-                           <div className="flex items-center justify-center gap-6 mb-8 mt-2">
-                               <div className="bg-white p-2 rounded-lg h-16 w-16 flex items-center justify-center border-2 border-blue-900 shadow-xl">
-                                   <img src={state.systemLogoUrl || "https://picsum.photos/seed/logo/200/200"} className="h-full object-contain" referrerPolicy="no-referrer" />
-                               </div>
-                               <div className="flex flex-col">
-                                   <h2 className="text-4xl font-black italic tracking-tighter text-white uppercase">{state.tournamentName || "LIVE AUCTION"}</h2>
-                                   <p className="text-sm font-bold text-blue-400 uppercase tracking-widest -mt-1">PURSE REMAINING</p>
-                               </div>
-                           </div>
-
-                           <div className="grid grid-cols-12 bg-gradient-to-b from-white via-gray-100 to-gray-400 text-blue-900 font-black p-3 rounded-t-lg mb-2 text-xs tracking-tighter shadow-xl">
-                               <div className="col-span-4 pl-4">TEAM</div>
-                               <div className="col-span-3 text-right pr-12">PURSE REMAINING</div>
-                               <div className="col-span-2 text-center">SLOTS REMAINING</div>
-                               <div className="col-span-3 text-center">MAX TOTALS</div>
-                           </div>
-
-                           <div className="flex-1 overflow-y-auto space-y-1.5 pr-2 custom-scrollbar">
-                               {sortedTeams.map((team, idx) => {
-                                   const slotsTaken = team.players.length;
-                                   const maxSlots = state.maxPlayersPerTeam || 15;
-                                   const slotsRemaining = maxSlots - slotsTaken;
-                                   return (
-                                       <motion.div
-                                           key={team.id}
-                                           custom={idx}
-                                           initial="hidden"
-                                           animate="visible"
-                                           variants={rowVariants}
-                                           whileHover={{ scale: 1.01, backgroundColor: 'rgba(255,255,255,0.08)' }}
-                                           className="grid grid-cols-12 bg-gradient-to-r from-[#1c2b6b] via-[#283593] to-[#1c2b6b] text-white p-3 rounded border border-white/10 items-center shadow-lg"
-                                       >
-                                           <div className="col-span-4 flex items-center gap-4 pl-2">
-                                               {team.logoUrl ? <img src={team.logoUrl} className="w-9 h-9 object-contain rounded-full bg-white p-0.5 shadow-md" referrerPolicy="no-referrer" /> : <div className="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center text-[10px] shadow-md">{team.name.charAt(0)}</div>}
-                                               <span className="font-black text-xl uppercase italic tracking-tighter truncate drop-shadow-lg">{team.name}</span>
-                                           </div>
-                                           <div className="col-span-3 text-right pr-12 font-mono font-black text-3xl text-yellow-400 italic drop-shadow-[0_0_10px_rgba(234,179,8,0.3)]">
-                                               ₹ {(team.budget / 100).toFixed(2)}Cr
-                                           </div>
-                                           <div className="col-span-2 flex justify-center">
-                                               <div className="bg-[#0b0f2a] w-20 h-10 flex items-center justify-center rounded border border-blue-400/50 font-black text-2xl shadow-inner">{slotsRemaining}</div>
-                                           </div>
-                                           <div className="col-span-3 flex justify-center">
-                                               <div className="bg-slate-800/80 w-20 h-10 flex items-center justify-center rounded border border-white/20 font-black text-2xl text-gray-300 shadow-inner">{maxSlots}</div>
-                                           </div>
-                                       </motion.div>
-                                   );
-                               })}
-                           </div>
-
-                           <div className="mt-4 bg-[#0a0f2b] border-t-2 border-blue-500/50 p-4 flex justify-between items-center text-xs font-black italic tracking-[0.2em] text-blue-300 rounded-b-xl shadow-2xl">
-                               <div className="flex items-center gap-3">
-                                   <div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(59,130,246,1)]"></div>
-                                   <span>MAXIMUM OVERSEAS PLAYERS: 2</span>
-                               </div>
-                               <div className="flex items-center gap-3">
-                                   <span>MAXIMUM SLOTS: {state.maxPlayersPerTeam || 15}</span>
-                                   <div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(59,130,246,1)]"></div>
-                               </div>
-                           </div>
-                      </div>
-                  </RenderOverrideContainer>
-              );
-          }
+          // Responsive fit-to-screen grid:
+          // Determines optimal column and row layout so 100% of teams fit on screen without scrolling
+          let gridCols = 'grid-cols-2 md:grid-cols-4';
+          if (numTeams <= 4) gridCols = 'grid-cols-2 md:grid-cols-4';
+          else if (numTeams <= 6) gridCols = 'grid-cols-3';
+          else if (numTeams <= 8) gridCols = 'grid-cols-4';
+          else if (numTeams <= 10) gridCols = 'grid-cols-5';
+          else gridCols = 'grid-cols-4 lg:grid-cols-6';
 
           return (
-              <RenderOverrideContainer title="Live Purse Standings">
-                  <div className="h-full overflow-y-auto p-4 custom-scrollbar pr-6">
-                      <div className="grid grid-cols-1 gap-6">
-                          {sortedTeams.map((team, i) => (
-                              <div key={team.id} className="flex items-center justify-between bg-gradient-to-r from-slate-800/40 to-black/40 p-10 rounded-[2.5rem] border border-white/5 hover:border-green-500/50 transition-all hover:translate-x-4 shadow-2xl relative overflow-hidden group">
-                                  <div className={`absolute left-0 top-0 h-full w-3 transition-colors ${i === 0 ? 'bg-yellow-500' : i === 1 ? 'bg-slate-300' : i === 2 ? 'bg-orange-500' : 'bg-slate-700'}`}></div>
-                                  <div className="flex items-center gap-10">
-                                      <span className={`text-6xl font-black w-24 text-center italic ${i === 0 ? 'text-yellow-400 drop-shadow-[0_0_20px_rgba(234,179,8,0.5)]' : i === 1 ? 'text-slate-300' : i === 2 ? 'text-orange-400' : 'text-slate-700'}`}>
-                                          #{i+1}
-                                      </span>
-                                      {team.logoUrl ? (
-                                          <img src={team.logoUrl} className="w-28 h-28 rounded-3xl bg-white p-2 object-contain shadow-2xl border-2 border-white/10 group-hover:scale-110 transition-transform" />
-                                      ) : (
-                                          <div className="w-28 h-28 rounded-3xl bg-slate-800 flex items-center justify-center font-black text-5xl italic border-2 border-white/10">
-                                              {team.name.charAt(0)}
+              <RenderOverrideContainer title="">
+                  <div className="h-full flex flex-col overflow-hidden">
+                      {/* Compact Header for fit-to-screen */}
+                      <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10 shrink-0">
+                          <div className="flex items-center gap-4">
+                              <div className={`p-2 rounded-2xl h-14 w-14 flex items-center justify-center border-2 ${
+                                  isIpl ? 'bg-blue-950/80 border-blue-400/50 shadow-[0_0_20px_rgba(59,130,246,0.5)]' : 'bg-slate-900 border-yellow-500/50 shadow-lg'
+                              }`}>
+                                  {state.auctionLogoUrl || state.systemLogoUrl ? (
+                                      <img src={state.auctionLogoUrl || state.systemLogoUrl} className="max-h-full max-w-full object-contain" referrerPolicy="no-referrer" />
+                                  ) : (
+                                      <Trophy className={`w-8 h-8 ${isIpl ? 'text-yellow-400' : 'text-amber-400'}`} />
+                                  )}
+                              </div>
+                              <div>
+                                  <h2 className="text-3xl lg:text-4xl font-black italic tracking-tight text-white uppercase leading-none drop-shadow-md">
+                                      {state.tournamentName || "LIVE AUCTION"}
+                                  </h2>
+                                  <p className={`text-xs font-black uppercase tracking-[0.3em] mt-1 ${isIpl ? 'text-blue-400' : 'text-amber-400'}`}>
+                                      TEAM PURSES & SQUAD REMAINING • {numTeams} TEAMS
+                                  </p>
+                              </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                              <div className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 flex items-center gap-2">
+                                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_10px_rgba(52,211,153,1)]"></div>
+                                  <span className="text-[11px] font-black uppercase tracking-widest text-emerald-300">LIVE SYNC</span>
+                              </div>
+                              <div className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-right">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Max Squad Size</span>
+                                  <span className="text-xs font-black text-white">{maxSlots} Players / Team</span>
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* Fit-to-screen Cards Grid */}
+                      <div className={`flex-1 grid ${gridCols} gap-3 md:gap-4 overflow-hidden min-h-0`}>
+                          {sortedTeams.map((team, idx) => {
+                              const slotsTaken = team.players?.length || 0;
+                              const slotsRemaining = Math.max(0, maxSlots - slotsTaken);
+                              const progressPct = Math.min(100, Math.round((slotsTaken / maxSlots) * 100));
+                              const isTop1 = idx === 0;
+                              const isTop2 = idx === 1;
+                              const isTop3 = idx === 2;
+
+                              return (
+                                  <div 
+                                      key={team.id}
+                                      className={`rounded-2xl md:rounded-3xl border-2 flex flex-col justify-between p-3.5 md:p-4.5 transition-all shadow-xl relative overflow-hidden h-full ${
+                                          isIpl 
+                                              ? (isTop1 
+                                                  ? 'bg-gradient-to-b from-[#1e2e70]/95 via-[#0e163d]/95 to-[#060a1c]/95 border-yellow-400/80 shadow-[0_0_30px_rgba(250,204,21,0.25)]' 
+                                                  : 'bg-gradient-to-b from-[#111942]/90 via-[#0a0f2b]/95 to-[#040716]/95 border-blue-400/30 hover:border-blue-400/60') 
+                                              : (isTop1 
+                                                  ? 'bg-gradient-to-b from-amber-950/80 via-slate-900/95 to-slate-950/95 border-amber-400/80 shadow-[0_0_30px_rgba(251,191,36,0.2)]' 
+                                                  : 'bg-gradient-to-b from-slate-900/90 via-slate-900/95 to-slate-950/95 border-white/15 hover:border-amber-400/40')
+                                      }`}
+                                  >
+                                      {/* Top: Rank + Team Logo + Name */}
+                                      <div className="flex items-center gap-3">
+                                          {/* Rank Badge */}
+                                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 italic shadow-md border ${
+                                              isTop1 
+                                                  ? 'bg-gradient-to-tr from-amber-500 to-yellow-300 text-black border-yellow-200' 
+                                                  : isTop2 
+                                                  ? 'bg-gradient-to-tr from-slate-300 to-white text-black border-white' 
+                                                  : isTop3 
+                                                  ? 'bg-gradient-to-tr from-amber-700 to-orange-400 text-white border-orange-300' 
+                                                  : 'bg-white/10 text-slate-300 border-white/10'
+                                          }`}>
+                                              #{idx + 1}
                                           </div>
-                                      )}
-                                      <div>
-                                          <h3 className="text-5xl font-black text-white italic uppercase tracking-tighter mb-2">{team.name}</h3>
-                                          <div className="flex items-center gap-4">
-                                              <p className="text-sm text-slate-500 font-black uppercase tracking-[0.3em] font-mono">{team.players.length} Players Signed</p>
-                                              <div className="w-2 h-2 rounded-full bg-slate-800"></div>
-                                              <p className="text-sm text-blue-500 font-bold uppercase tracking-widest">{team.teamCode}</p>
+
+                                          {/* Team Logo */}
+                                          <div className="w-10 h-10 md:w-11 md:h-11 rounded-xl bg-white p-1 flex items-center justify-center shrink-0 shadow-md border border-white/30 overflow-hidden">
+                                              {team.logoUrl ? (
+                                                  <img src={team.logoUrl} alt={team.name} className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                                              ) : (
+                                                  <span className="font-black text-slate-900 text-base">{team.name.charAt(0)}</span>
+                                              )}
+                                          </div>
+
+                                          {/* Team Name & Code */}
+                                          <div className="min-w-0 flex-1">
+                                              <h3 className="font-black text-sm md:text-base uppercase tracking-tight text-white truncate leading-tight drop-shadow-sm">
+                                                  {team.name}
+                                              </h3>
+                                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest truncate">
+                                                  {team.shortName || team.teamCode || `Team ${idx + 1}`}
+                                              </p>
+                                          </div>
+                                      </div>
+
+                                      {/* Center: Big Purse Remaining Display */}
+                                      <div className="my-auto py-2">
+                                          <span className={`text-[9px] font-black uppercase tracking-[0.25em] block mb-0.5 ${
+                                              isIpl ? 'text-blue-300' : 'text-amber-400/80'
+                                          }`}>
+                                              PURSE REMAINING
+                                          </span>
+                                          <div className="flex items-baseline gap-1.5 flex-wrap">
+                                              <span className={`font-mono font-black text-2xl md:text-3xl lg:text-4xl italic tracking-tight leading-none drop-shadow-md tabular-nums ${
+                                                  isIpl ? 'text-yellow-400' : 'text-emerald-400'
+                                              }`}>
+                                                  ₹ {team.budget.toLocaleString()}
+                                              </span>
+                                              {team.budget >= 10000000 ? (
+                                                  <span className="text-[11px] font-black text-slate-400 font-mono">
+                                                      ({(team.budget / 10000000).toFixed(2)} Cr)
+                                                  </span>
+                                              ) : team.budget >= 100000 ? (
+                                                  <span className="text-[11px] font-black text-slate-400 font-mono">
+                                                      ({(team.budget / 100000).toFixed(2)} L)
+                                                  </span>
+                                              ) : null}
+                                          </div>
+                                      </div>
+
+                                      {/* Bottom: Squad Slots Progress Bar */}
+                                      <div className="pt-2 border-t border-white/10">
+                                          <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider mb-1.5">
+                                              <span className="text-slate-300 flex items-center gap-1">
+                                                  <Users className="w-3 h-3 text-blue-400" /> Signed: {slotsTaken}
+                                              </span>
+                                              <span className={`px-2 py-0.5 rounded-md font-mono ${
+                                                  slotsRemaining > 0 
+                                                      ? (isIpl ? 'bg-blue-500/20 text-blue-300 border border-blue-400/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30')
+                                                      : 'bg-red-500/20 text-red-300 border border-red-500/30'
+                                              }`}>
+                                                  {slotsRemaining} Left
+                                              </span>
+                                          </div>
+                                          
+                                          {/* Mini progress bar */}
+                                          <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                                              <div 
+                                                  className={`h-full rounded-full transition-all duration-500 ${
+                                                      isIpl ? 'bg-gradient-to-r from-blue-500 to-yellow-400' : 'bg-gradient-to-r from-amber-500 to-emerald-400'
+                                                  }`}
+                                                  style={{ width: `${progressPct}%` }}
+                                              />
                                           </div>
                                       </div>
                                   </div>
-                                  <div className="text-right bg-white/5 px-12 py-6 rounded-[2rem] border border-white/10 shadow-inner group-hover:bg-green-500/10 transition-colors">
-                                      <p className="text-xs text-slate-500 uppercase font-black tracking-[0.3em] mb-3 font-mono">Available Funds</p>
-                                      <p className="text-7xl font-black text-green-400 tabular-nums italic tracking-tighter drop-shadow-[0_0_20px_rgba(74,222,128,0.3)]">
-                                          ₹{team.budget.toLocaleString()}
-                                      </p>
-                                  </div>
-                              </div>
-                          ))}
+                              );
+                          })}
                       </div>
                   </div>
               </RenderOverrideContainer>
@@ -740,7 +793,11 @@ const ProjectorScreen: React.FC = () => {
     );
   }
 
-  const { player, bid, bidder, status } = display;
+  const { player: dispPlayer, bid, bidder, status } = display;
+  const activePlayer = (state.currentPlayerId && (state.status === AuctionStatus.InProgress || state.status === AuctionStatus.Paused))
+      ? (state.players.find(p => String(p.id) === String(state.currentPlayerId)) || dispPlayer)
+      : dispPlayer;
+  const player = activePlayer;
   const layout = state.projectorLayout || 'STANDARD';
 
   if (!state.status && !state.tournamentName) {
@@ -869,13 +926,12 @@ const ProjectorScreen: React.FC = () => {
 
                   <div className="flex-1 flex flex-col p-4 relative z-10 items-center justify-start">
                        {/* Main Content Box from Image */}
-                       <AnimatePresence mode="wait">
+                       <AnimatePresence>
                            <motion.div 
-                                key={player?.id}
-                                initial={{ opacity: 0, scale: 0.9, y: 50 }}
-                                animate={{ opacity: 1, scale: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 1.1, filter: "blur(10px)" }}
-                                transition={{ duration: 0.6, ease: "circOut" }}
+                                key={player?.id || 'live-lot'}
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                transition={{ duration: 0.35, ease: "easeOut" }}
                                 className="w-[95%] h-[65%] border-4 border-white/40 rounded-[2.5rem] bg-black/60 backdrop-blur-3xl p-8 flex flex-col relative overflow-hidden shadow-[0_0_120px_rgba(59,130,246,0.4)]"
                            >
                             <div className="flex items-center justify-end mb-2">
@@ -1041,7 +1097,7 @@ const ProjectorScreen: React.FC = () => {
 
                             {/* Status Overlays */}
                             <AnimatePresence>
-                                {showSoldOverlay && soldAnimationPlayer && (
+                                {showSoldOverlay && soldAnimationPlayer && status === 'SOLD' && (
                                     <motion.div 
                                         initial={{ opacity: 0 }}
                                         animate={{ opacity: 1 }}

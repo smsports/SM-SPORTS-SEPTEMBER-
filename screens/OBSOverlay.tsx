@@ -980,10 +980,23 @@ const OBSOverlay: React.FC = () => {
                                     </div>
                                 )}
                             </div>
-                            <div className="relative z-30 mt-6">
+
+                            {/* Base Price Badge below player photo with vibrant color background */}
+                            <div className="relative -mt-6 z-20 mb-1">
+                                <div className={`px-6 py-1.5 rounded-full shadow-[0_6px_25px_rgba(0,0,0,0.8)] border-2 border-white flex items-center gap-2.5 select-none ${
+                                    isPurple 
+                                        ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black shadow-amber-500/30' 
+                                        : 'bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-500 text-black shadow-emerald-500/30'
+                                }`}>
+                                    <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80">BASE PRICE</span>
+                                    <span className="text-base font-black font-mono tracking-tight">₹ {player ? getEffectiveBasePrice(player, state.categories).toLocaleString() : '0'}</span>
+                                </div>
+                            </div>
+
+                            <div className="relative z-30 mt-1">
                                 <div className="flex items-stretch shadow-2xl rounded-full overflow-hidden border-4 border-white min-w-[280px] transform hover:scale-105 transition-transform">
                                     <div className={`${normalBg} text-white px-5 py-3 flex items-center justify-center border-r border-gray-700`}>
-                                        <span className={`text-xs font-bold uppercase tracking-widest ${accentTextClass}`}>{bidder ? 'Current Bid' : 'Base Price'}</span>
+                                        <span className={`text-xs font-bold uppercase tracking-widest ${accentTextClass}`}>{bidder ? 'Current Bid' : 'Starting Price'}</span>
                                     </div>
                                     <div className={`bg-gradient-to-r ${isPurple ? 'from-[#00E5FF] to-blue-700' : 'from-[#00C853] to-emerald-800'} px-6 py-2 flex items-center justify-center flex-grow`}>
                                         <span className={`text-5xl font-black text-white leading-none tabular-nums drop-shadow-sm ${!bidder ? 'animate-pulse text-cyan-200' : ''}`}>{bid.toLocaleString()}</span>
