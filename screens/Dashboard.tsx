@@ -214,7 +214,7 @@ const Dashboard: React.FC = () => {
             <div className="flex flex-wrap items-center gap-1.5 mb-2 bg-slate-900/60 p-1 rounded-xl border border-white/5 w-fit shrink-0">
                 <button 
                     onClick={() => setView('AUCTION')}
-                    className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${view === 'AUCTION' ? 'bg-accent text-primary shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+                    className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${view === 'AUCTION' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-sm border border-purple-400/40' : 'text-slate-500 hover:text-slate-300'}`}
                 >
                     <Trophy className="w-3.5 h-3.5" /> Bidding Floor
                 </button>

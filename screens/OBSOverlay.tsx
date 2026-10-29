@@ -161,6 +161,7 @@ const OverlayCard = React.memo(({ children, title, tickerShow, tickerContent, la
             <div className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent"></div>
         </div>
         <Marquee show={tickerShow} content={tickerContent} layout={layout} />
+        <SpinWheelBroadcastOverlay target="OBS" />
     </div>
 ));
 
@@ -495,9 +496,26 @@ const OBSOverlay: React.FC = () => {
       }
   }
 
-  if (display.status === 'FINISHED') return <div className="min-h-screen w-full flex flex-col items-center justify-center relative"><div className="bg-green-900/90 text-white px-16 py-8 rounded-3xl border-4 border-green-500 shadow-[0_0_50px_rgba(34,197,94,0.5)] animate-bounce-in text-center"><h1 className="text-4xl md:text-6xl font-black tracking-widest uppercase text-green-400 mb-2">AUCTION</h1><h1 className="text-4xl md:text-6xl font-black tracking-widest uppercase text-white">COMPLETED</h1></div><Marquee show={state.sponsorConfig?.showTickerOnOBS ?? state.sponsorConfig?.showHighlights ?? false} content={marqueeContent} layout={state.obsLayout} /></div>;
+  if (display.status === 'FINISHED') return (
+    <div className="min-h-screen w-full flex flex-col items-center justify-center relative">
+      <div className="bg-green-900/90 text-white px-16 py-8 rounded-3xl border-4 border-green-500 shadow-[0_0_50px_rgba(34,197,94,0.5)] animate-bounce-in text-center">
+        <h1 className="text-4xl md:text-6xl font-black tracking-widest uppercase text-green-400 mb-2">AUCTION</h1>
+        <h1 className="text-4xl md:text-6xl font-black tracking-widest uppercase text-white">COMPLETED</h1>
+      </div>
+      <Marquee show={state.sponsorConfig?.showTickerOnOBS ?? state.sponsorConfig?.showHighlights ?? false} content={marqueeContent} layout={state.obsLayout} />
+      <SpinWheelBroadcastOverlay target="OBS" />
+    </div>
+  );
 
-  if (display.status === 'WAITING' || !display.player) return <div className="min-h-screen w-full flex flex-col items-center justify-end pb-20 relative"><div className="bg-slate-900/90 text-white px-12 py-4 rounded-full border-2 border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.3)] animate-pulse mb-10"><h1 className="text-2xl font-bold tracking-[0.5em] uppercase text-cyan-400">{state.status === AuctionStatus.NotStarted ? "AUCTION STARTING SOON" : "WAITING FOR AUCTION"}</h1></div><Marquee show={state.sponsorConfig?.showTickerOnOBS ?? state.sponsorConfig?.showHighlights ?? false} content={marqueeContent} layout={state.obsLayout} /></div>;
+  if (display.status === 'WAITING' || !display.player) return (
+    <div className="min-h-screen w-full flex flex-col items-center justify-end pb-20 relative">
+      <div className="bg-slate-900/90 text-white px-12 py-4 rounded-full border-2 border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.3)] animate-pulse mb-10">
+        <h1 className="text-2xl font-bold tracking-[0.5em] uppercase text-cyan-400">{state.status === AuctionStatus.NotStarted ? "AUCTION STARTING SOON" : "WAITING FOR AUCTION"}</h1>
+      </div>
+      <Marquee show={state.sponsorConfig?.showTickerOnOBS ?? state.sponsorConfig?.showHighlights ?? false} content={marqueeContent} layout={state.obsLayout} />
+      <SpinWheelBroadcastOverlay target="OBS" />
+    </div>
+  );
 
   const { player, bid, bidder, status } = display;
   const layout = state.obsLayout || 'STANDARD';

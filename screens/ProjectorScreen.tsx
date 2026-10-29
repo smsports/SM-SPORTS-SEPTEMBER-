@@ -362,22 +362,23 @@ const ProjectorScreen: React.FC = () => {
           <div className={`h-screen w-full bg-[#020617] text-white flex flex-col relative overflow-hidden font-sans`}>
               {isIpl ? <IplRotatingRings /> : <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,_#1e293b_0%,_transparent_100%)] opacity-30"></div>}
               <Header />
-              <div className="flex-1 p-10 flex flex-col overflow-hidden relative z-10">
+              <div className="flex-1 p-3 md:p-6 lg:p-8 flex flex-col overflow-hidden relative z-10 min-h-0">
                   {title ? (
-                      <div className="mb-10 text-center animate-fade-in">
+                      <div className="mb-6 text-center animate-fade-in shrink-0">
                           <div className="inline-block relative">
-                              <h1 className={`text-6xl lg:text-8xl font-black uppercase tracking-tighter italic text-transparent bg-clip-text ${isIpl ? 'bg-gradient-to-b from-white to-gray-400' : 'bg-gradient-to-b from-yellow-300 to-yellow-600'} drop-shadow-2xl`}>
+                              <h1 className={`text-5xl lg:text-7xl font-black uppercase tracking-tighter italic text-transparent bg-clip-text ${isIpl ? 'bg-gradient-to-b from-white to-gray-400' : 'bg-gradient-to-b from-yellow-300 to-yellow-600'} drop-shadow-2xl`}>
                                   {title}
                               </h1>
-                              <div className={`absolute -bottom-4 left-0 w-full h-1.5 ${isIpl ? 'bg-gradient-to-r from-transparent via-blue-500 to-transparent' : 'bg-gradient-to-r from-transparent via-yellow-500 to-transparent'} rounded-full shadow-[0_0_20px_rgba(234,179,8,0.5)]`}></div>
+                              <div className={`absolute -bottom-3 left-0 w-full h-1.5 ${isIpl ? 'bg-gradient-to-r from-transparent via-blue-500 to-transparent' : 'bg-gradient-to-r from-transparent via-yellow-500 to-transparent'} rounded-full shadow-[0_0_20px_rgba(234,179,8,0.5)]`}></div>
                           </div>
                       </div>
                   ) : null}
-                  <div className={`flex-1 overflow-hidden ${isIpl ? 'bg-[#0d1333]/80 border-2 border-white/20' : 'bg-slate-900/40 border border-white/10'} backdrop-blur-3xl rounded-[3rem] p-10 shadow-[0_20px_100px_rgba(0,0,0,0.5)] relative flex flex-col animate-slide-up`}>
+                  <div className={`flex-1 overflow-hidden ${isIpl ? 'bg-[#0d1333]/90 border-2 border-white/20' : 'bg-slate-900/60 border border-white/10'} backdrop-blur-3xl rounded-[2.5rem] p-4 md:p-6 lg:p-7 shadow-[0_20px_100px_rgba(0,0,0,0.5)] relative flex flex-col animate-slide-up min-h-0`}>
                       {children}
                   </div>
               </div>
               <Marquee show={state.sponsorConfig?.showTickerOnProjector ?? state.sponsorConfig?.showHighlights ?? false} content={marqueeContent} layout={state.projectorLayout} />
+              <SpinWheelBroadcastOverlay target="PROJECTOR" />
           </div>
           );
       };
@@ -452,17 +453,46 @@ const ProjectorScreen: React.FC = () => {
           // Responsive fit-to-screen grid:
           // Determines optimal column and row layout so 100% of teams fit on screen without scrolling
           let gridCols = 'grid-cols-2 md:grid-cols-4';
-          if (numTeams <= 4) gridCols = 'grid-cols-2 md:grid-cols-4';
-          else if (numTeams <= 6) gridCols = 'grid-cols-3';
-          else if (numTeams <= 8) gridCols = 'grid-cols-4';
-          else if (numTeams <= 10) gridCols = 'grid-cols-5';
-          else gridCols = 'grid-cols-4 lg:grid-cols-6';
+          if (numTeams <= 4) gridCols = 'grid-cols-2 lg:grid-cols-4';
+          else if (numTeams <= 6) gridCols = 'grid-cols-2 md:grid-cols-3';
+          else if (numTeams <= 8) gridCols = 'grid-cols-2 md:grid-cols-4';
+          else if (numTeams <= 10) gridCols = 'grid-cols-2 md:grid-cols-5';
+          else gridCols = 'grid-cols-3 lg:grid-cols-6';
+
+          // Dynamic responsive typography based on team count to utilize available device size
+          const nameFontSize = numTeams <= 4 
+              ? 'text-2xl md:text-3xl lg:text-4xl 2xl:text-5xl' 
+              : numTeams <= 6
+              ? 'text-xl md:text-2xl lg:text-3xl 2xl:text-4xl'
+              : numTeams <= 8 
+              ? 'text-lg md:text-xl lg:text-2xl 2xl:text-3xl' 
+              : 'text-base md:text-lg lg:text-xl 2xl:text-2xl';
+
+          const purseFontSize = numTeams <= 4 
+              ? 'text-4xl md:text-5xl lg:text-7xl 2xl:text-8xl' 
+              : numTeams <= 6
+              ? 'text-3xl md:text-4xl lg:text-6xl 2xl:text-7xl'
+              : numTeams <= 8 
+              ? 'text-2xl md:text-4xl lg:text-5xl 2xl:text-6xl' 
+              : 'text-xl md:text-3xl lg:text-4xl 2xl:text-5xl';
+
+          const logoSize = numTeams <= 4 
+              ? 'w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24' 
+              : numTeams <= 8 
+              ? 'w-12 h-12 md:w-16 md:h-16 lg:w-20 lg:h-20' 
+              : 'w-10 h-10 md:w-12 md:h-12 lg:w-14 lg:h-14';
+
+          const rankSize = numTeams <= 4 
+              ? 'w-10 h-10 md:w-12 md:h-12 text-sm md:text-base' 
+              : numTeams <= 8 
+              ? 'w-8 h-8 md:w-10 md:h-10 text-xs md:text-sm' 
+              : 'w-7 h-7 text-xs';
 
           return (
               <RenderOverrideContainer title="">
-                  <div className="h-full flex flex-col overflow-hidden">
+                  <div className="h-full flex flex-col overflow-hidden min-h-0">
                       {/* Compact Header for fit-to-screen */}
-                      <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10 shrink-0">
+                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10 shrink-0">
                           <div className="flex items-center gap-4">
                               <div className={`p-2 rounded-2xl h-14 w-14 flex items-center justify-center border-2 ${
                                   isIpl ? 'bg-blue-950/80 border-blue-400/50 shadow-[0_0_20px_rgba(59,130,246,0.5)]' : 'bg-slate-900 border-yellow-500/50 shadow-lg'
@@ -496,7 +526,7 @@ const ProjectorScreen: React.FC = () => {
                       </div>
 
                       {/* Fit-to-screen Cards Grid */}
-                      <div className={`flex-1 grid ${gridCols} gap-3 md:gap-4 overflow-hidden min-h-0`}>
+                      <div className={`flex-1 grid ${gridCols} gap-3 md:gap-4 lg:gap-5 overflow-hidden min-h-0`}>
                           {sortedTeams.map((team, idx) => {
                               const slotsTaken = team.players?.length || 0;
                               const slotsRemaining = Math.max(0, maxSlots - slotsTaken);
@@ -508,20 +538,20 @@ const ProjectorScreen: React.FC = () => {
                               return (
                                   <div 
                                       key={team.id}
-                                      className={`rounded-2xl md:rounded-3xl border-2 flex flex-col justify-between p-3.5 md:p-4.5 transition-all shadow-xl relative overflow-hidden h-full ${
+                                      className={`rounded-2xl md:rounded-3xl border-2 flex flex-col justify-between p-4 md:p-5 lg:p-6 transition-all shadow-2xl relative overflow-hidden h-full ${
                                           isIpl 
                                               ? (isTop1 
-                                                  ? 'bg-gradient-to-b from-[#1e2e70]/95 via-[#0e163d]/95 to-[#060a1c]/95 border-yellow-400/80 shadow-[0_0_30px_rgba(250,204,21,0.25)]' 
-                                                  : 'bg-gradient-to-b from-[#111942]/90 via-[#0a0f2b]/95 to-[#040716]/95 border-blue-400/30 hover:border-blue-400/60') 
+                                                  ? 'bg-gradient-to-b from-[#1e2e70]/95 via-[#0e163d]/95 to-[#060a1c]/95 border-yellow-400/90 shadow-[0_0_40px_rgba(250,204,21,0.3)] ring-1 ring-yellow-400/30' 
+                                                  : 'bg-gradient-to-b from-[#111942]/90 via-[#0a0f2b]/95 to-[#040716]/95 border-blue-400/40 hover:border-blue-400/70 shadow-lg') 
                                               : (isTop1 
-                                                  ? 'bg-gradient-to-b from-amber-950/80 via-slate-900/95 to-slate-950/95 border-amber-400/80 shadow-[0_0_30px_rgba(251,191,36,0.2)]' 
-                                                  : 'bg-gradient-to-b from-slate-900/90 via-slate-900/95 to-slate-950/95 border-white/15 hover:border-amber-400/40')
+                                                  ? 'bg-gradient-to-b from-amber-950/80 via-slate-900/95 to-slate-950/95 border-amber-400/90 shadow-[0_0_40px_rgba(251,191,36,0.3)] ring-1 ring-amber-400/30' 
+                                                  : 'bg-gradient-to-b from-slate-900/90 via-slate-900/95 to-slate-950/95 border-white/20 hover:border-amber-400/40 shadow-lg')
                                       }`}
                                   >
                                       {/* Top: Rank + Team Logo + Name */}
-                                      <div className="flex items-center gap-3">
+                                      <div className="flex items-center gap-3.5">
                                           {/* Rank Badge */}
-                                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 italic shadow-md border ${
+                                          <div className={`${rankSize} rounded-xl flex items-center justify-center font-black shrink-0 italic shadow-md border ${
                                               isTop1 
                                                   ? 'bg-gradient-to-tr from-amber-500 to-yellow-300 text-black border-yellow-200' 
                                                   : isTop2 
@@ -534,67 +564,67 @@ const ProjectorScreen: React.FC = () => {
                                           </div>
 
                                           {/* Team Logo */}
-                                          <div className="w-10 h-10 md:w-11 md:h-11 rounded-xl bg-white p-1 flex items-center justify-center shrink-0 shadow-md border border-white/30 overflow-hidden">
+                                          <div className={`${logoSize} rounded-2xl bg-white p-1.5 flex items-center justify-center shrink-0 shadow-lg border-2 border-white/40 overflow-hidden`}>
                                               {team.logoUrl ? (
                                                   <img src={team.logoUrl} alt={team.name} className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
                                               ) : (
-                                                  <span className="font-black text-slate-900 text-base">{team.name.charAt(0)}</span>
+                                                  <span className="font-black text-slate-900 text-xl lg:text-2xl">{team.name.charAt(0)}</span>
                                               )}
                                           </div>
 
-                                          {/* Team Name & Code */}
+                                          {/* Team Name & Code - BOOSTED FONT SIZE */}
                                           <div className="min-w-0 flex-1">
-                                              <h3 className="font-black text-sm md:text-base uppercase tracking-tight text-white truncate leading-tight drop-shadow-sm">
+                                              <h3 className={`font-black ${nameFontSize} uppercase tracking-tight text-white truncate leading-tight drop-shadow-md`}>
                                                   {team.name}
                                               </h3>
-                                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest truncate">
+                                              <p className="text-xs md:text-sm font-bold text-slate-300/80 uppercase tracking-widest truncate mt-0.5">
                                                   {team.shortName || team.teamCode || `Team ${idx + 1}`}
                                               </p>
                                           </div>
                                       </div>
 
-                                      {/* Center: Big Purse Remaining Display */}
-                                      <div className="my-auto py-2">
-                                          <span className={`text-[9px] font-black uppercase tracking-[0.25em] block mb-0.5 ${
-                                              isIpl ? 'text-blue-300' : 'text-amber-400/80'
+                                      {/* Center: Big Purse Remaining Display - BOOSTED FONT SIZE */}
+                                      <div className="my-auto py-2.5">
+                                          <span className={`text-xs md:text-sm font-black uppercase tracking-[0.25em] block mb-1 drop-shadow-sm ${
+                                              isIpl ? 'text-blue-300' : 'text-amber-400/90'
                                           }`}>
                                               PURSE REMAINING
                                           </span>
-                                          <div className="flex items-baseline gap-1.5 flex-wrap">
-                                              <span className={`font-mono font-black text-2xl md:text-3xl lg:text-4xl italic tracking-tight leading-none drop-shadow-md tabular-nums ${
+                                          <div className="flex items-baseline gap-2.5 flex-wrap">
+                                              <span className={`font-mono font-black ${purseFontSize} italic tracking-tight leading-none drop-shadow-[0_4px_15px_rgba(0,0,0,0.8)] tabular-nums ${
                                                   isIpl ? 'text-yellow-400' : 'text-emerald-400'
                                               }`}>
                                                   ₹ {team.budget.toLocaleString()}
                                               </span>
                                               {team.budget >= 10000000 ? (
-                                                  <span className="text-[11px] font-black text-slate-400 font-mono">
-                                                      ({(team.budget / 10000000).toFixed(2)} Cr)
+                                                  <span className="text-sm md:text-base lg:text-lg font-black text-slate-300 font-mono bg-white/10 px-2 py-0.5 rounded-lg border border-white/10">
+                                                      {(team.budget / 10000000).toFixed(2)} Cr
                                                   </span>
                                               ) : team.budget >= 100000 ? (
-                                                  <span className="text-[11px] font-black text-slate-400 font-mono">
-                                                      ({(team.budget / 100000).toFixed(2)} L)
+                                                  <span className="text-sm md:text-base lg:text-lg font-black text-slate-300 font-mono bg-white/10 px-2 py-0.5 rounded-lg border border-white/10">
+                                                      {(team.budget / 100000).toFixed(2)} L
                                                   </span>
                                               ) : null}
                                           </div>
                                       </div>
 
                                       {/* Bottom: Squad Slots Progress Bar */}
-                                      <div className="pt-2 border-t border-white/10">
-                                          <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider mb-1.5">
-                                              <span className="text-slate-300 flex items-center gap-1">
-                                                  <Users className="w-3 h-3 text-blue-400" /> Signed: {slotsTaken}
+                                      <div className="pt-2.5 border-t border-white/10">
+                                          <div className="flex items-center justify-between text-xs font-black uppercase tracking-wider mb-2">
+                                              <span className="text-slate-200 flex items-center gap-1.5 font-bold">
+                                                  <Users className="w-3.5 h-3.5 text-blue-400" /> Signed: <b className="text-white">{slotsTaken}</b>
                                               </span>
-                                              <span className={`px-2 py-0.5 rounded-md font-mono ${
+                                              <span className={`px-2.5 py-1 rounded-lg font-mono font-black text-xs border ${
                                                   slotsRemaining > 0 
-                                                      ? (isIpl ? 'bg-blue-500/20 text-blue-300 border border-blue-400/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30')
-                                                      : 'bg-red-500/20 text-red-300 border border-red-500/30'
+                                                      ? (isIpl ? 'bg-blue-500/25 text-blue-200 border-blue-400/40 shadow-sm' : 'bg-emerald-500/25 text-emerald-200 border-emerald-500/40 shadow-sm')
+                                                      : 'bg-red-500/25 text-red-200 border-red-500/40'
                                               }`}>
-                                                  {slotsRemaining} Left
+                                                  {slotsRemaining} Slots Left
                                               </span>
                                           </div>
                                           
                                           {/* Mini progress bar */}
-                                          <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                                          <div className="w-full bg-white/15 rounded-full h-2.5 overflow-hidden p-0.5 border border-white/10">
                                               <div 
                                                   className={`h-full rounded-full transition-all duration-500 ${
                                                       isIpl ? 'bg-gradient-to-r from-blue-500 to-yellow-400' : 'bg-gradient-to-r from-amber-500 to-emerald-400'
@@ -748,7 +778,21 @@ const ProjectorScreen: React.FC = () => {
       }
   }
 
-  if (display.status === 'FINISHED') return <div className="h-screen w-full bg-slate-900 text-white flex flex-col relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-black font-sans"><div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20"></div><Header /><div className="flex-1 flex flex-col items-center justify-center p-8 z-10 animate-slide-up"><div className="text-center"><h1 className="text-5xl lg:text-9xl font-black text-yellow-400 tracking-widest uppercase drop-shadow-[0_0_45px_rgba(250,204,21,0.6)]">AUCTION COMPLETED</h1><div className="h-3 w-64 bg-gradient-to-r from-transparent via-yellow-500 to-transparent mx-auto mt-10 rounded-full"></div><p className="text-2xl lg:text-4xl text-gray-500 uppercase tracking-[0.6em] font-light mt-12 animate-pulse">Thank You For Watching</p></div></div><Marquee show={!!(state.sponsorConfig?.showOnProjector && state.sponsors.length > 0)} content={marqueeContent} layout={state.projectorLayout} /></div>;
+  if (display.status === 'FINISHED') return (
+    <div className="h-screen w-full bg-slate-900 text-white flex flex-col relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-black font-sans">
+      <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20"></div>
+      <Header />
+      <div className="flex-1 flex flex-col items-center justify-center p-8 z-10 animate-slide-up">
+        <div className="text-center">
+          <h1 className="text-5xl lg:text-9xl font-black text-yellow-400 tracking-widest uppercase drop-shadow-[0_0_45px_rgba(250,204,21,0.6)]">AUCTION COMPLETED</h1>
+          <div className="h-3 w-64 bg-gradient-to-r from-transparent via-yellow-500 to-transparent mx-auto mt-10 rounded-full"></div>
+          <p className="text-2xl lg:text-4xl text-gray-500 uppercase tracking-[0.6em] font-light mt-12 animate-pulse">Thank You For Watching</p>
+        </div>
+      </div>
+      <Marquee show={!!(state.sponsorConfig?.showOnProjector && state.sponsors.length > 0)} content={marqueeContent} layout={state.projectorLayout} />
+      <SpinWheelBroadcastOverlay target="PROJECTOR" />
+    </div>
+  );
 
   if (display.status === 'WAITING' || !display.player) {
     const tName = state.tournamentName || "LIVE AUCTION";
@@ -789,6 +833,7 @@ const ProjectorScreen: React.FC = () => {
           </motion.div>
         </div>
         <Marquee show={!!(state.sponsorConfig?.showOnProjector && state.sponsors.length > 0)} content={marqueeContent} layout={state.projectorLayout} />
+        <SpinWheelBroadcastOverlay target="PROJECTOR" />
       </div>
     );
   }

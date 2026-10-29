@@ -5,7 +5,7 @@ import confetti from 'canvas-confetti';
 import { 
   Trophy, User, Sparkles, X, Shuffle, CheckSquare, Square, 
   Search, Filter, Monitor, Cast, Eye, EyeOff, Volume2, VolumeX,
-  RotateCcw, Trash2, CheckCircle2, ChevronRight
+  RotateCcw, Trash2, CheckCircle2, ChevronRight, Plus, ListPlus, Gift, FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -24,10 +24,30 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const { state, updateSpinWheelState } = useAuction();
   const { teams = [], players = [], unsoldPlayers = [], categories = [] } = state;
 
-  const [mode, setMode] = useState<'TEAMS' | 'PLAYERS'>('TEAMS');
+  const [mode, setMode] = useState<'TEAMS' | 'PLAYERS' | 'CUSTOM'>('TEAMS');
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   
+  // Custom items states
+  const [customItems, setCustomItems] = useState<SpinWheelItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('spin_wheel_custom_items');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [
+      { id: 'custom-1', name: 'Option 1', type: 'CUSTOM', color: SLICE_COLORS[0] },
+      { id: 'custom-2', name: 'Option 2', type: 'CUSTOM', color: SLICE_COLORS[1] },
+      { id: 'custom-3', name: 'Option 3', type: 'CUSTOM', color: SLICE_COLORS[2] },
+      { id: 'custom-4', name: 'Option 4', type: 'CUSTOM', color: SLICE_COLORS[3] },
+    ];
+  });
+  const [customInputText, setCustomInputText] = useState('');
+  const [bulkText, setBulkText] = useState('');
+  const [showBulkAdd, setShowBulkAdd] = useState(false);
+
   // Player filter states
   const [playerFilterMode, setPlayerFilterMode] = useState<'ALL' | 'UNSOLD' | 'CATEGORY'>('UNSOLD');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -48,6 +68,25 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const currentRotationRef = useRef<number>(0);
+
+  // Sync broadcast state if already active in state
+  useEffect(() => {
+    if (state.spinWheelState) {
+      if (state.spinWheelState.showOnProjector !== undefined) {
+        setShowOnProjector(state.spinWheelState.showOnProjector);
+      }
+      if (state.spinWheelState.showOnOBS !== undefined) {
+        setShowOnOBS(state.spinWheelState.showOnOBS);
+      }
+    }
+  }, [state.spinWheelState]);
+
+  // Persist custom items to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('spin_wheel_custom_items', JSON.stringify(customItems));
+    } catch {}
+  }, [customItems]);
 
   // Initialize selection when teams or players load
   useEffect(() => {
@@ -142,11 +181,87 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
       }));
   }, [players, selectedPlayerIds]);
 
-  const activeItems = mode === 'TEAMS' ? teamItems : playerItems;
+  // Convert custom items or active items
+  const activeItems = useMemo(() => {
+    if (mode === 'TEAMS') return teamItems;
+    if (mode === 'PLAYERS') return playerItems;
+    return customItems;
+  }, [mode, teamItems, playerItems, customItems]);
+
+  // Custom Item Handlers
+  const handleAddCustomItem = (nameToAdd?: string) => {
+    const text = (nameToAdd || customInputText).trim();
+    if (!text) return;
+    const newItem: SpinWheelItem = {
+      id: 'custom-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+      name: text,
+      shortName: text.length > 8 ? text.slice(0, 8) : undefined,
+      type: 'CUSTOM',
+      color: SLICE_COLORS[customItems.length % SLICE_COLORS.length]
+    };
+    const nextCustom = [...customItems, newItem];
+    setCustomItems(nextCustom);
+    if (!nameToAdd) setCustomInputText('');
+  };
+
+  const handleBulkAdd = () => {
+    if (!bulkText.trim()) return;
+    const lines = bulkText
+      .split(/[\n,]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (lines.length === 0) return;
+    
+    const newItems: SpinWheelItem[] = lines.map((line, idx) => ({
+      id: 'custom-' + Date.now() + '-' + idx + '-' + Math.random().toString(36).substr(2, 4),
+      name: line,
+      shortName: line.length > 8 ? line.slice(0, 8) : undefined,
+      type: 'CUSTOM',
+      color: SLICE_COLORS[(customItems.length + idx) % SLICE_COLORS.length]
+    }));
+    
+    setCustomItems(prev => [...prev, ...newItems]);
+    setBulkText('');
+    setShowBulkAdd(false);
+  };
+
+  const handleDeleteCustomItem = (id: string) => {
+    setCustomItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  const handleLoadNumbersPreset = () => {
+    const items: SpinWheelItem[] = Array.from({ length: 8 }, (_, i) => ({
+      id: `custom-num-${i + 1}-${Date.now()}`,
+      name: `Option ${i + 1}`,
+      shortName: `#${i + 1}`,
+      type: 'CUSTOM',
+      color: SLICE_COLORS[i % SLICE_COLORS.length]
+    }));
+    setCustomItems(items);
+  };
+
+  const handleLoadPrizesPreset = () => {
+    const prizes = ['Grand Prize', 'Wildcard', 'Extra ₹50L', 'Bonus Pick', 'Skip Turn', 'Double Bid'];
+    const items: SpinWheelItem[] = prizes.map((p, idx) => ({
+      id: `custom-prize-${idx}-${Date.now()}`,
+      name: p,
+      shortName: p.length > 8 ? p.slice(0, 8) : undefined,
+      type: 'CUSTOM',
+      color: SLICE_COLORS[idx % SLICE_COLORS.length]
+    }));
+    setCustomItems(items);
+  };
+
+  const handleClearCustom = () => {
+    setCustomItems([]);
+  };
 
   // Sync to Firestore whenever broadcast settings change
   const syncToBroadcast = (overrideState?: Partial<SpinWheelState>) => {
-    if (!showOnProjector && !showOnOBS && !overrideState?.showOnProjector && !overrideState?.showOnOBS) {
+    const projState = overrideState?.showOnProjector !== undefined ? overrideState.showOnProjector : showOnProjector;
+    const obsState = overrideState?.showOnOBS !== undefined ? overrideState.showOnOBS : showOnOBS;
+
+    if (!projState && !obsState) {
       if (state.spinWheelState?.isActive) {
         updateSpinWheelState(null);
       }
@@ -155,8 +270,8 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
     const payload: SpinWheelState = {
       isActive: true,
-      showOnProjector: overrideState?.showOnProjector !== undefined ? overrideState.showOnProjector : showOnProjector,
-      showOnOBS: overrideState?.showOnOBS !== undefined ? overrideState.showOnOBS : showOnOBS,
+      showOnProjector: projState,
+      showOnOBS: obsState,
       mode,
       items: activeItems,
       isSpinning,
@@ -371,8 +486,10 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
     if (mode === 'TEAMS') {
       setSelectedTeamIds(prev => prev.filter(id => id !== winner.id));
-    } else {
+    } else if (mode === 'PLAYERS') {
       setSelectedPlayerIds(prev => prev.filter(id => id !== winner.id));
+    } else {
+      setCustomItems(prev => prev.filter(item => item.id !== winner.id));
     }
 
     setShowWinnerPopup(false);
@@ -477,28 +594,39 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
               <label className="block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500 mb-2">
                 1. Select Draw Type
               </label>
-              <div className="grid grid-cols-2 gap-2 p-1 bg-zinc-900 rounded-2xl border border-white/10">
+              <div className="grid grid-cols-3 gap-1.5 p-1 bg-zinc-900 rounded-2xl border border-white/10">
                 <button
                   type="button"
                   onClick={() => { setMode('TEAMS'); setShowWinnerPopup(false); }}
-                  className={`py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+                  className={`py-2.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
                     mode === 'TEAMS' 
                       ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20' 
                       : 'text-zinc-400 hover:text-white'
                   }`}
                 >
-                  <Trophy className="w-4 h-4" /> Teams ({teams.length})
+                  <Trophy className="w-3.5 h-3.5" /> Teams ({teams.length})
                 </button>
                 <button
                   type="button"
                   onClick={() => { setMode('PLAYERS'); setShowWinnerPopup(false); }}
-                  className={`py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+                  className={`py-2.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
                     mode === 'PLAYERS' 
                       ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20' 
                       : 'text-zinc-400 hover:text-white'
                   }`}
                 >
-                  <User className="w-4 h-4" /> Players ({players.length})
+                  <User className="w-3.5 h-3.5" /> Players ({players.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMode('CUSTOM'); setShowWinnerPopup(false); }}
+                  className={`py-2.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                    mode === 'CUSTOM' 
+                      ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20' 
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  <Gift className="w-3.5 h-3.5" /> Custom ({customItems.length})
                 </button>
               </div>
             </div>
@@ -699,6 +827,147 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
                 </div>
               </div>
             )}
+
+            {/* CUSTOM FIELDS SELECTION & MANAGEMENT */}
+            {mode === 'CUSTOM' && (
+              <div className="space-y-3.5 flex-1 flex flex-col">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">
+                    {customItems.length} Custom Options on Wheel
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowBulkAdd(!showBulkAdd)}
+                      className="text-[9px] font-black uppercase tracking-wider text-amber-400 hover:underline flex items-center gap-1"
+                    >
+                      <ListPlus className="w-3 h-3" />
+                      {showBulkAdd ? 'Single Input' : 'Bulk Paste'}
+                    </button>
+                    <span className="text-zinc-600">•</span>
+                    <button
+                      type="button"
+                      onClick={handleClearCustom}
+                      className="text-[9px] font-black uppercase tracking-wider text-zinc-500 hover:text-red-400"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                </div>
+
+                {/* Presets Row */}
+                <div className="flex items-center gap-1.5 pb-1 border-b border-white/5">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Presets:</span>
+                  <button
+                    type="button"
+                    onClick={handleLoadNumbersPreset}
+                    className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[9px] font-black uppercase tracking-wider border border-white/10 transition-all"
+                  >
+                    1 - 8 Options
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLoadPrizesPreset}
+                    className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[9px] font-black uppercase tracking-wider border border-white/10 transition-all"
+                  >
+                    Prize Pool
+                  </button>
+                </div>
+
+                {/* Single Add Input */}
+                {!showBulkAdd ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleAddCustomItem();
+                    }}
+                    className="flex gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={customInputText}
+                      onChange={(e) => setCustomInputText(e.target.value)}
+                      placeholder="Add custom option (e.g. Prize, Task, Team)..."
+                      className="flex-1 bg-zinc-900 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white placeholder-zinc-500 outline-none focus:border-amber-500 transition-all"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!customInputText.trim()}
+                      className="px-4 py-2.5 rounded-xl bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-amber-400 text-black font-black uppercase text-xs tracking-wider flex items-center gap-1.5 shrink-0 transition-all"
+                    >
+                      <Plus className="w-4 h-4" /> Add
+                    </button>
+                  </form>
+                ) : (
+                  /* Bulk Add Area */
+                  <div className="p-3 bg-zinc-900/80 rounded-2xl border border-amber-500/20 space-y-2">
+                    <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
+                      Paste items separated by commas or line breaks:
+                    </p>
+                    <textarea
+                      value={bulkText}
+                      onChange={(e) => setBulkText(e.target.value)}
+                      placeholder="Option 1&#10;Option 2&#10;Option 3, Option 4..."
+                      rows={3}
+                      className="w-full bg-zinc-950 border border-white/10 rounded-xl p-2.5 text-xs text-white placeholder-zinc-600 outline-none focus:border-amber-500 resize-none font-mono"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowBulkAdd(false)}
+                        className="px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white text-[10px] font-black uppercase"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleBulkAdd}
+                        disabled={!bulkText.trim()}
+                        className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black text-[10px] font-black uppercase tracking-wider"
+                      >
+                        Add All Options
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* List of custom options */}
+                <div className="space-y-1.5 overflow-y-auto max-h-[300px] pr-1">
+                  {customItems.length === 0 ? (
+                    <div className="py-8 text-center border border-dashed border-white/10 rounded-2xl">
+                      <Gift className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
+                      <p className="text-xs text-zinc-400 font-bold">No custom options added yet</p>
+                      <p className="text-[10px] text-zinc-500 mt-0.5">Use the input above or pick a preset</p>
+                    </div>
+                  ) : (
+                    customItems.map((item, idx) => (
+                      <div
+                        key={item.id}
+                        className="p-2.5 rounded-xl bg-zinc-900/60 border border-white/10 flex items-center justify-between gap-3 group hover:border-amber-500/30 transition-all"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span
+                            className="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm"
+                            style={{ backgroundColor: item.color || SLICE_COLORS[idx % SLICE_COLORS.length] }}
+                          />
+                          <span className="text-xs font-black uppercase text-white truncate">
+                            {item.name}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCustomItem(item.id)}
+                          className="p-1 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-80 group-hover:opacity-100"
+                          title="Delete option"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right Column: Wheel Canvas & Spin Action */}
@@ -711,7 +980,7 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   Not Enough Items Selected
                 </h3>
                 <p className="text-xs text-zinc-500 leading-relaxed">
-                  Please select at least 2 {mode === 'TEAMS' ? 'teams' : 'players'} from the left panel to populate the wheel.
+                  Please select or add at least 2 {mode === 'TEAMS' ? 'teams' : mode === 'PLAYERS' ? 'players' : 'custom options'} from the left panel to populate the wheel.
                 </p>
               </div>
             ) : (
@@ -753,7 +1022,7 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
                 </div>
 
                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-3">
-                  {activeItems.length} {mode === 'TEAMS' ? 'Teams' : 'Players'} currently in wheel pool
+                  {activeItems.length} {mode === 'TEAMS' ? 'Teams' : mode === 'PLAYERS' ? 'Players' : 'Options'} currently in wheel pool
                 </p>
               </div>
             )}
@@ -804,7 +1073,7 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
                     </span>
                   )}
                 </div>
-              ) : (
+              ) : winner.type === 'PLAYER' ? (
                 <div className="flex flex-col items-center">
                   <div className="w-32 h-32 rounded-3xl bg-zinc-900 border-4 border-amber-500 p-1.5 shadow-2xl flex items-center justify-center mb-4 overflow-hidden">
                     {winner.logoUrl ? (
@@ -837,6 +1106,22 @@ export const SpinningWheelModal: React.FC<Props> = ({ isOpen, onClose }) => {
                       </span>
                     )}
                   </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center">
+                  <div className="w-32 h-32 rounded-3xl bg-zinc-900 border-4 border-amber-500 p-3 shadow-2xl flex items-center justify-center mb-4 overflow-hidden relative group">
+                    <div className="absolute inset-0 bg-gradient-to-tr from-amber-500/20 to-purple-500/20" />
+                    <Gift className="w-16 h-16 text-amber-400 relative z-10 animate-bounce" />
+                  </div>
+                  <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400 mb-1">
+                    CUSTOM DRAW SELECTION
+                  </h4>
+                  <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tight text-white italic mb-2">
+                    {winner.name}
+                  </h2>
+                  <span className="px-3 py-1 rounded-lg bg-amber-500/20 text-amber-300 font-black text-xs uppercase tracking-wider border border-amber-500/30 mb-4">
+                    Winner Picked
+                  </span>
                 </div>
               )}
 

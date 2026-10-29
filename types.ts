@@ -163,7 +163,7 @@ export type BiddingStatus = 'ON' | 'PAUSED' | 'HIDDEN';
 export interface SpinWheelItem {
   id: string;
   name: string;
-  type: 'TEAM' | 'PLAYER';
+  type: 'TEAM' | 'PLAYER' | 'CUSTOM';
   logoUrl?: string;
   category?: string;
   role?: string;
@@ -176,7 +176,7 @@ export interface SpinWheelState {
   isActive: boolean; // Whether wheel broadcast overlay is active
   showOnProjector: boolean; // Broadcast to projector screen
   showOnOBS: boolean; // Broadcast to OBS stream overlay
-  mode: 'TEAMS' | 'PLAYERS';
+  mode: 'TEAMS' | 'PLAYERS' | 'CUSTOM';
   items: SpinWheelItem[];
   isSpinning: boolean;
   targetIndex?: number;

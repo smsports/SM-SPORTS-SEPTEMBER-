@@ -204,7 +204,7 @@ export const SpinWheelBroadcastOverlay: React.FC<Props> = ({ target }) => {
   const isObs = target === 'OBS';
 
   return (
-    <div className={`fixed inset-0 z-[100] flex items-center justify-center p-4 select-none pointer-events-auto ${
+    <div className={`fixed inset-0 z-[9999] flex items-center justify-center p-4 select-none pointer-events-auto ${
       isObs ? 'bg-black/60 backdrop-blur-sm' : 'bg-black/85 backdrop-blur-xl'
     }`}>
       {/* Background ambient lighting */}
@@ -220,7 +220,7 @@ export const SpinWheelBroadcastOverlay: React.FC<Props> = ({ target }) => {
         {/* Top Header Badge */}
         <div className="flex items-center gap-3 px-6 py-2.5 rounded-full bg-black/80 border-2 border-amber-500/40 text-amber-400 font-black uppercase tracking-[0.3em] text-xs shadow-2xl mb-6">
           <Sparkles className="w-4 h-4 text-amber-400 animate-spin" />
-          <span>LUCKY DRAW • {wheelState?.mode === 'TEAMS' ? 'TEAM' : 'PLAYER'} RANDOMIZER</span>
+          <span>LUCKY DRAW • {wheelState?.mode === 'TEAMS' ? 'TEAM' : wheelState?.mode === 'CUSTOM' ? 'CUSTOM' : 'PLAYER'} RANDOMIZER</span>
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
         </div>
 
@@ -262,7 +262,7 @@ export const SpinWheelBroadcastOverlay: React.FC<Props> = ({ target }) => {
             initial={{ opacity: 0, scale: 0.8, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.8 }}
-            className="fixed inset-0 z-[120] flex items-center justify-center p-6 bg-black/80 backdrop-blur-2xl"
+            className="fixed inset-0 z-[10000] flex items-center justify-center p-6 bg-black/80 backdrop-blur-2xl"
           >
             <div className="relative max-w-xl w-full bg-gradient-to-b from-zinc-900 via-zinc-950 to-black border-4 border-amber-500 rounded-[3rem] p-8 md:p-12 text-center shadow-[0_0_120px_rgba(245,158,11,0.5)] overflow-hidden">
               {/* Golden shimmer beams */}
@@ -297,7 +297,7 @@ export const SpinWheelBroadcastOverlay: React.FC<Props> = ({ target }) => {
                     </span>
                   )}
                 </div>
-              ) : (
+              ) : winner.type === 'PLAYER' ? (
                 <div className="flex flex-col items-center">
                   <div className="w-40 h-40 md:w-48 md:h-48 rounded-[2.5rem] bg-zinc-900/90 border-4 border-amber-500 p-2 shadow-[0_0_50px_rgba(245,158,11,0.4)] flex items-center justify-center mb-6 overflow-hidden">
                     {winner.logoUrl ? (
@@ -330,6 +330,24 @@ export const SpinWheelBroadcastOverlay: React.FC<Props> = ({ target }) => {
                       </span>
                     )}
                   </div>
+                </div>
+              ) : (
+                /* CUSTOM ITEM WINNER */
+                <div className="flex flex-col items-center">
+                  <div className="w-40 h-40 md:w-48 md:h-48 rounded-[2.5rem] bg-zinc-900/90 border-4 border-amber-500 p-4 shadow-[0_0_50px_rgba(245,158,11,0.4)] flex items-center justify-center mb-6 overflow-hidden">
+                    <Sparkles className="w-20 h-20 text-amber-400 animate-pulse" />
+                  </div>
+                  <h3 className="text-xs font-black uppercase tracking-[0.35em] text-amber-400/80 mb-1">
+                    SELECTED OPTION
+                  </h3>
+                  <h1 className="text-3xl md:text-5xl font-black uppercase tracking-tight text-white italic drop-shadow-md mb-2">
+                    {winner.name}
+                  </h1>
+                  {winner.shortName && (
+                    <span className="px-4 py-1 rounded-xl bg-amber-500/20 text-amber-300 font-black text-xs uppercase tracking-widest border border-amber-500/40">
+                      {winner.shortName}
+                    </span>
+                  )}
                 </div>
               )}
             </div>

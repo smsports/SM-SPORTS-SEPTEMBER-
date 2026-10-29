@@ -666,7 +666,17 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
 
     const updateSpinWheelState = async (wheelState: SpinWheelState | null) => {
         if (!activeAuctionId) return;
-        await db.collection('auctions').doc(activeAuctionId).update({ spinWheelState: wheelState });
+        try {
+            if (!wheelState) {
+                await db.collection('auctions').doc(activeAuctionId).update({ spinWheelState: null });
+                return;
+            }
+            // Sanitize all undefined fields so Firestore updateDoc never errors out
+            const clean = JSON.parse(JSON.stringify(wheelState));
+            await db.collection('auctions').doc(activeAuctionId).update({ spinWheelState: clean });
+        } catch (e) {
+            console.error("AuctionContext updateSpinWheelState Error:", e);
+        }
     };
 
     const initiateTrade = async (trade: Omit<TradeRecord, 'processedAt' | 'processedBy'>) => {

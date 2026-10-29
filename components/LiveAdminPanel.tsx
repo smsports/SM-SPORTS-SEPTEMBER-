@@ -18,6 +18,52 @@ const LiveAdminPanel: React.FC = () => {
   const [showWheelModal, setShowWheelModal] = useState(false);
   const [panelView, setPanelView] = useState<'BIDDING' | 'BROADCAST' | 'TEAMS'>('BIDDING');
 
+  // Selected section highlighter color state in bidding panel (persisted)
+  const [highlighterColor, setHighlighterColor] = useState<string>(() => {
+    return localStorage.getItem('admin_highlighter_color') || 'purple';
+  });
+
+  const setHighlighter = (c: string) => {
+    setHighlighterColor(c);
+    localStorage.setItem('admin_highlighter_color', c);
+  };
+
+  const getSectionHighlighterStyle = () => {
+    switch (highlighterColor) {
+      case 'blue':
+        return 'bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 text-white shadow-lg shadow-blue-500/30 border border-blue-400/50 ring-1 ring-blue-400/30';
+      case 'amber':
+        return 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 text-slate-950 font-black shadow-lg shadow-amber-500/30 border border-amber-300 ring-1 ring-amber-300/40';
+      case 'cyan':
+        return 'bg-gradient-to-r from-cyan-500 via-sky-500 to-teal-500 text-slate-950 font-black shadow-lg shadow-cyan-500/30 border border-cyan-300 ring-1 ring-cyan-300/40';
+      case 'emerald':
+        return 'bg-gradient-to-r from-emerald-500 via-teal-500 to-green-600 text-white shadow-lg shadow-emerald-500/30 border border-emerald-400/50 ring-1 ring-emerald-400/30';
+      case 'rose':
+        return 'bg-gradient-to-r from-rose-600 via-pink-600 to-red-600 text-white shadow-lg shadow-rose-500/30 border border-rose-400/50 ring-1 ring-rose-400/30';
+      case 'purple':
+      default:
+        return 'bg-gradient-to-r from-purple-600 via-indigo-600 to-violet-600 text-white shadow-lg shadow-purple-500/30 border border-purple-400/50 ring-1 ring-purple-400/30';
+    }
+  };
+
+  const getPillHighlighterStyle = () => {
+    switch (highlighterColor) {
+      case 'blue':
+        return 'bg-blue-600 text-white border border-blue-400 shadow-sm';
+      case 'amber':
+        return 'bg-amber-500 text-slate-950 font-black border border-amber-300 shadow-sm';
+      case 'cyan':
+        return 'bg-cyan-500 text-slate-950 font-black border border-cyan-300 shadow-sm';
+      case 'emerald':
+        return 'bg-emerald-600 text-white border border-emerald-400 shadow-sm';
+      case 'rose':
+        return 'bg-rose-600 text-white border border-rose-400 shadow-sm';
+      case 'purple':
+      default:
+        return 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white border border-purple-400/60 shadow-sm';
+    }
+  };
+
   // Move isRoundActive to component scope to ensure it's accessible by all inner functions
   const isRoundActive = state.status === AuctionStatus.InProgress && state.currentPlayerId;
   
@@ -686,6 +732,30 @@ const LiveAdminPanel: React.FC = () => {
         <div className="flex items-center gap-2">
           <h2 className={`text-base lg:text-lg font-black uppercase tracking-tighter italic leading-none ${isDark ? 'advaya-text' : 'text-gray-900'}`}>Auctioneer</h2>
           <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${isDark ? 'bg-accent/10 text-accent' : 'bg-blue-100 text-blue-700'}`}>Cockpit</span>
+          
+          {/* Quick Highlighter Color Switcher */}
+          <div className="flex items-center gap-1 ml-1.5 pl-1.5 border-l border-white/10" title="Selected Section Highlighter Color">
+            {[
+              { id: 'purple', bg: 'bg-purple-600', label: 'Purple' },
+              { id: 'blue', bg: 'bg-blue-600', label: 'Royal Blue' },
+              { id: 'amber', bg: 'bg-amber-500', label: 'Gold Amber' },
+              { id: 'cyan', bg: 'bg-cyan-400', label: 'Cyan' },
+              { id: 'emerald', bg: 'bg-emerald-500', label: 'Emerald' },
+              { id: 'rose', bg: 'bg-rose-500', label: 'Rose Red' }
+            ].map(c => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setHighlighter(c.id)}
+                className={`w-3 h-3 rounded-full ${c.bg} transition-all cursor-pointer ${
+                  highlighterColor === c.id 
+                    ? 'ring-2 ring-white scale-125 shadow-md shadow-white/30' 
+                    : 'opacity-40 hover:opacity-100 hover:scale-110'
+                }`}
+                title={`Highlighter: ${c.label}`}
+              />
+            ))}
+          </div>
         </div>
         <button onClick={() => navigate('/admin')} className={`text-[9px] font-black uppercase tracking-widest flex items-center transition-colors ${isDark ? 'text-zinc-500 hover:text-accent' : 'text-gray-400 hover:text-blue-600'}`}>
           <ArrowLeft className="w-3 h-3 mr-1" /> Dashboard
@@ -699,7 +769,7 @@ const LiveAdminPanel: React.FC = () => {
           onClick={() => setPanelView('BIDDING')}
           className={`py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
             panelView === 'BIDDING'
-              ? (isDark ? 'bg-accent text-zinc-950 shadow-md shadow-accent/20' : 'bg-blue-600 text-white shadow-md shadow-blue-600/20')
+              ? getSectionHighlighterStyle()
               : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-500 hover:text-blue-600')
           }`}
         >
@@ -710,7 +780,7 @@ const LiveAdminPanel: React.FC = () => {
           onClick={() => setPanelView('BROADCAST')}
           className={`py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
             panelView === 'BROADCAST'
-              ? (isDark ? 'bg-accent text-zinc-950 shadow-md shadow-accent/20' : 'bg-blue-600 text-white shadow-md shadow-blue-600/20')
+              ? getSectionHighlighterStyle()
               : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-500 hover:text-blue-600')
           }`}
         >
@@ -721,7 +791,7 @@ const LiveAdminPanel: React.FC = () => {
           onClick={() => setPanelView('TEAMS')}
           className={`py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
             panelView === 'TEAMS'
-              ? (isDark ? 'bg-accent text-zinc-950 shadow-md shadow-accent/20' : 'bg-blue-600 text-white shadow-md shadow-blue-600/20')
+              ? getSectionHighlighterStyle()
               : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-500 hover:text-blue-600')
           }`}
         >
@@ -836,7 +906,7 @@ const LiveAdminPanel: React.FC = () => {
                     onClick={() => setAdminView(v === 'NONE' ? null : { type: v as any })}
                     className={`px-2 py-0.5 rounded-md text-[7px] font-black uppercase tracking-widest transition-all ${
                       (!state.adminViewOverride && v === 'NONE') || (state.adminViewOverride?.type === v)
-                        ? 'bg-accent text-primary shadow-sm'
+                        ? getPillHighlighterStyle()
                         : (isDark ? 'text-zinc-500 hover:text-white bg-zinc-800/60' : 'text-gray-500 hover:text-blue-600 bg-white border border-gray-200')
                     }`}
                   >
@@ -885,7 +955,7 @@ const LiveAdminPanel: React.FC = () => {
                 <button
                   onClick={playerSelectionMode !== 'MANUAL' ? toggleSelectionMode : undefined}
                   className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-all ${playerSelectionMode === 'MANUAL'
-                      ? 'bg-accent text-primary shadow-sm'
+                      ? getPillHighlighterStyle()
                       : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
                 >
                   Manual
@@ -893,7 +963,7 @@ const LiveAdminPanel: React.FC = () => {
                 <button
                   onClick={playerSelectionMode !== 'AUTO' ? toggleSelectionMode : undefined}
                   className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-all ${playerSelectionMode === 'AUTO'
-                      ? 'bg-accent text-primary shadow-sm'
+                      ? getPillHighlighterStyle()
                       : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-gray-400 hover:text-gray-600')}`}
                 >
                   Auto
@@ -939,7 +1009,7 @@ const LiveAdminPanel: React.FC = () => {
                     key={l}
                     onClick={() => updateTheme('PROJECTOR', l)}
                     className={`flex-1 min-w-[45px] px-1.5 py-1 rounded-md text-[7px] font-black uppercase tracking-tighter transition-all ${state.projectorLayout === l
-                        ? 'bg-accent text-primary'
+                        ? getPillHighlighterStyle()
                         : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-400 hover:text-blue-600')}`}
                   >
                     {l.slice(0, 4)}
@@ -982,7 +1052,7 @@ const LiveAdminPanel: React.FC = () => {
                     }
                   }}
                   className={`flex-1 px-2 py-1 rounded-md text-[7px] font-black uppercase tracking-widest transition-all ${(!state.adminViewOverride && v === 'NONE') || (state.adminViewOverride?.type === v)
-                      ? 'bg-accent text-primary'
+                      ? getPillHighlighterStyle()
                       : (isDark ? 'text-zinc-500 hover:text-white' : 'text-gray-400 hover:text-blue-600')}`}
                 >
                   {v}
