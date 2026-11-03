@@ -884,3 +884,120 @@ export const pruneAndRepairAuctionDocument = async (
 ): Promise<{ success: boolean; prunedBytes: number; cleanSize: number; originalSize: number }> => {
     return safeSaveAuctionDocument(id, {}, dbInstance);
 };
+
+/**
+ * Resolves the complete squad of players for a team:
+ * 1. Uses allPlayers as the authoritative registry for status (SOLD/UNSOLD/POOL) and soldTo assignments.
+ * 2. Strictly excludes any player marked UNSOLD, POOL, or assigned to a different team.
+ * 3. Incorporates directly assigned players where soldTo matches team name/id.
+ * 4. Deduplicates and assigns captain badges cleanly.
+ */
+export const resolveTeamSquad = (team: Team, allPlayers: Player[] = []): Player[] => {
+    if (!team) return [];
+    const teamNameLower = (team.name || '').trim().toLowerCase();
+    const teamShortLower = (team.shortName || '').trim().toLowerCase();
+    const teamIdStr = String(team.id || '').trim();
+
+    const isMatchForThisTeam = (teamIdentifier?: string, tId?: string | number) => {
+        if (!teamIdentifier && !tId) return false;
+        const norm = (teamIdentifier || '').trim().toLowerCase();
+        const idStr = String(tId || '').trim();
+        return (
+            (norm && (norm === teamNameLower || (teamShortLower && norm === teamShortLower) || norm === teamIdStr)) ||
+            (idStr && idStr === teamIdStr)
+        );
+    };
+
+    // If allPlayers is provided and non-empty, allPlayers is the authoritative registry
+    if (allPlayers && allPlayers.length > 0) {
+        // Fast lookup maps for allPlayers by id and by normalized name
+        const playerById = new Map<string, Player>();
+        const playerByName = new Map<string, Player>();
+        allPlayers.forEach(p => {
+            if (p.id !== undefined && p.id !== null) playerById.set(String(p.id).trim().toLowerCase(), p);
+            if (p.name) playerByName.set(p.name.trim().toLowerCase(), p);
+        });
+
+        // 1. Players from allPlayers who are actively SOLD to this team
+        const soldToThisTeamFromPool = allPlayers.filter(p => {
+            // Must NOT be unsold or pool
+            if (p.status === 'UNSOLD' || p.status === 'POOL') return false;
+            // If status is explicit, it must be SOLD (or TRADED to this team)
+            if (p.status && p.status !== 'SOLD' && p.status !== 'TRADED') return false;
+            // Must match this team
+            return isMatchForThisTeam(p.soldTo, p.teamId);
+        });
+
+        // 2. Direct squad from team.players array, filtering out anyone who is UNSOLD or sold elsewhere
+        const validFromTeamPlayers = (team.players || []).filter(p => {
+            const pIdKey = String(p.id ?? '').trim().toLowerCase();
+            const pNameKey = (p.name || '').trim().toLowerCase();
+            const latest = (pIdKey && playerById.get(pIdKey)) || (pNameKey && playerByName.get(pNameKey));
+
+            if (latest) {
+                // If player is UNSOLD or POOL in allPlayers, EXCLUDE
+                if (latest.status === 'UNSOLD' || latest.status === 'POOL') return false;
+                if (latest.status && latest.status !== 'SOLD' && latest.status !== 'TRADED') return false;
+                // If latest soldTo belongs to a different team, EXCLUDE
+                if (latest.soldTo && !isMatchForThisTeam(latest.soldTo, latest.teamId)) return false;
+                return true;
+            }
+
+            // Fallback for players only on team object: must not be UNSOLD/POOL
+            if (p.status === 'UNSOLD' || p.status === 'POOL') return false;
+            if (p.soldTo && !isMatchForThisTeam(p.soldTo, p.teamId)) return false;
+            return true;
+        });
+
+        // Deduplicate and merge: prefer latest player data from allPlayers
+        const seen = new Set<string>();
+        const squad: Player[] = [];
+
+        [...soldToThisTeamFromPool, ...validFromTeamPlayers].forEach(p => {
+            const pIdKey = String(p.id ?? '').trim().toLowerCase();
+            const pNameKey = (p.name || '').trim().toLowerCase();
+            const key = pIdKey || pNameKey;
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+
+            const latest = (pIdKey && playerById.get(pIdKey)) || (pNameKey && playerByName.get(pNameKey)) || p;
+
+            const isCapt = (team.captainId && String(team.captainId) === String(latest.id)) ||
+                           (team.captainName && team.captainName.trim().toLowerCase() === latest.name.trim().toLowerCase()) ||
+                           latest.isCaptain === true;
+
+            squad.push({
+                ...latest,
+                soldTo: latest.soldTo || team.name,
+                soldPrice: latest.soldPrice !== undefined ? Number(latest.soldPrice) : (Number(latest.basePrice) || 0),
+                isCaptain: isCapt
+            });
+        });
+
+        return squad;
+    }
+
+    // Fallback if allPlayers is not passed
+    const directList = (team.players || []).filter(p => p.status !== 'UNSOLD' && p.status !== 'POOL');
+    const seen = new Set<string>();
+    const squad: Player[] = [];
+
+    directList.forEach(p => {
+        const key = String(p.id ?? p.name).trim().toLowerCase();
+        if (key && !seen.has(key)) {
+            seen.add(key);
+            const isCapt = (team.captainId && String(team.captainId) === String(p.id)) ||
+                           (team.captainName && team.captainName.trim().toLowerCase() === p.name.trim().toLowerCase()) ||
+                           p.isCaptain === true;
+            squad.push({
+                ...p,
+                soldTo: p.soldTo || team.name,
+                soldPrice: p.soldPrice !== undefined ? Number(p.soldPrice) : (Number(p.basePrice) || 0),
+                isCaptain: isCapt
+            });
+        }
+    });
+
+    return squad;
+};
+

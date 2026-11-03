@@ -2,9 +2,13 @@
 import React, { useState } from 'react';
 import { useAuction } from '../hooks/useAuction';
 import { Team, UserRole } from '../types';
-import { Download, Trophy, Users, Wallet, ArrowLeft, Eye, X, RefreshCw, AlertOctagon, CheckSquare, Square, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
+import { Download, Trophy, Users, Wallet, ArrowLeft, Eye, X, RefreshCw, AlertOctagon, CheckSquare, Square, ChevronDown, ChevronUp, FileSpreadsheet, Sparkles, FileText, Image as ImageIcon, Shield, Crown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import TeamPostAuctionView from './TeamPostAuctionView';
+import TeamPosterModal from './TeamPosterModal';
+import TeamPdfExportModal from './TeamPdfExportModal';
+import TeamPhotoPdfExportModal from './TeamPhotoPdfExportModal';
+import { resolveTeamSquad } from '../utils';
 import * as XLSX from 'xlsx';
 
 const AdminPostAuctionView: React.FC = () => {
@@ -13,6 +17,10 @@ const AdminPostAuctionView: React.FC = () => {
     const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
     const [isResetting, setIsResetting] = useState(false);
     const [showExportOptions, setShowExportOptions] = useState(false);
+    const [showPosterModal, setShowPosterModal] = useState(false);
+    const [showPdfModal, setShowPdfModal] = useState(false);
+    const [showPhotoPdfModal, setShowPhotoPdfModal] = useState(false);
+    const [modalTeamId, setModalTeamId] = useState<string | number | undefined>(undefined);
 
     const isAdmin = userProfile?.role === UserRole.ADMIN || userProfile?.role === UserRole.SUPER_ADMIN;
 
@@ -48,18 +56,22 @@ const AdminPostAuctionView: React.FC = () => {
 
     // Calculate Global Stats
     const totalSpent = state.teams.reduce((acc, team) => {
-        const playersList = team.players || [];
-        return acc + playersList.reduce((tSum, p) => tSum + (Number(p.soldPrice) || 0), 0);
+        const squad = resolveTeamSquad(team, state.players);
+        return acc + squad.reduce((tSum, p) => tSum + (Number(p.soldPrice) || 0), 0);
     }, 0);
 
-    const totalSoldPlayers = state.teams.reduce((acc, team) => acc + (team.players || []).length, 0);
+    const totalSoldPlayers = state.teams.reduce((acc, team) => {
+        const squad = resolveTeamSquad(team, state.players);
+        return acc + squad.length;
+    }, 0);
 
     const handleExport = (teamOnly?: Team) => {
         const playersToExport: any[] = [];
         const targetTeams = teamOnly ? [teamOnly] : state.teams;
 
         targetTeams.forEach(team => {
-            (team.players || []).forEach(p => {
+            const squad = resolveTeamSquad(team, state.players);
+            squad.forEach(p => {
                 // Find full registration data from state.registrations
                 const regData = state.registrations.find(rp => rp.fullName === p.name) as any;
                 
@@ -163,21 +175,35 @@ const AdminPostAuctionView: React.FC = () => {
                         <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">Players Sold</p>
                         <p className="text-3xl font-black text-blue-600">{totalSoldPlayers}</p>
                     </div>
-                    <div className="p-6 flex flex-col items-center justify-center gap-3">
+                    <div className="p-6 flex flex-col items-center justify-center gap-2">
                         {isAdmin ? (
                             <>
+                                <div className="grid grid-cols-2 gap-2 w-full">
+                                    <button 
+                                        onClick={() => { setModalTeamId(undefined); setShowPosterModal(true); }}
+                                        className="bg-amber-500 hover:bg-amber-400 text-black px-3 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+                                    >
+                                        <Sparkles className="w-4 h-4 mr-1.5 shrink-0" /> Posters
+                                    </button>
+                                    <button 
+                                        onClick={() => { setModalTeamId('ALL'); setShowPdfModal(true); }}
+                                        className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+                                    >
+                                        <FileText className="w-4 h-4 mr-1.5 shrink-0" /> PDF Roster
+                                    </button>
+                                </div>
                                 <button 
                                     onClick={() => setShowExportOptions(!showExportOptions)}
-                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+                                    className="w-full bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider shadow flex items-center justify-center transition-all"
                                 >
-                                    <FileSpreadsheet className="w-5 h-5 mr-2" /> 
-                                    {showExportOptions ? 'Hide Export Options' : 'Export Master Data'}
-                                    {showExportOptions ? <ChevronUp className="w-4 h-4 ml-2" /> : <ChevronDown className="w-4 h-4 ml-2" />}
+                                    <FileSpreadsheet className="w-4 h-4 mr-2" /> 
+                                    {showExportOptions ? 'Hide Export Options' : 'Export Excel Data'}
+                                    {showExportOptions ? <ChevronUp className="w-4 h-4 ml-1.5" /> : <ChevronDown className="w-4 h-4 ml-1.5" />}
                                 </button>
                                 {showExportOptions && (
                                     <button 
                                         onClick={() => handleExport()}
-                                        className="w-full bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold text-xs uppercase tracking-widest transition-all"
+                                        className="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-widest transition-all"
                                     >
                                         Download Master Excel
                                     </button>
@@ -219,13 +245,41 @@ const AdminPostAuctionView: React.FC = () => {
             </div>
 
             {/* Teams Grid */}
-            <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center">
-                <Users className="w-5 h-5 mr-2 text-blue-600"/> Team Performance
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                <h2 className="text-xl font-bold text-gray-800 flex items-center">
+                    <Users className="w-5 h-5 mr-2 text-blue-600"/> Team Performance ({state.teams.length})
+                </h2>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        onClick={() => { setModalTeamId(undefined); setShowPosterModal(true); }}
+                        className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-black px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                    >
+                        <Sparkles className="w-4 h-4 text-amber-600" /> Squad Posters (All Themes)
+                    </button>
+                    <button
+                        onClick={() => { setModalTeamId('ALL'); setShowPdfModal(true); }}
+                        className="bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 font-black px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                    >
+                        <FileText className="w-4 h-4 text-blue-600" /> Team PDFs (Select Fields)
+                    </button>
+                    <button
+                        onClick={() => { setModalTeamId('ALL'); setShowPhotoPdfModal(true); }}
+                        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-black px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                        title="Export printable PDF with player photos, jersey specifications, and complete roster details"
+                    >
+                        <ImageIcon className="w-4 h-4 text-emerald-600" /> Squad Photo Cards PDF
+                    </button>
+                </div>
+            </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
                 {state.teams.map(team => {
-                    const teamSpent = (team.players || []).reduce((sum, p) => sum + (Number(p.soldPrice) || 0), 0);
+                    const squad = resolveTeamSquad(team, state.players);
+                    const teamSpent = squad.reduce((sum, p) => sum + (Number(p.soldPrice) || 0), 0);
+                    const ownerName = team.ownerName || team.owner || '';
+                    const isOwnerCaptain = team.isOwnerCaptain !== false && !team.captainName && !!ownerName;
+                    const captainName = team.captainName || (isOwnerCaptain ? ownerName : '');
+
                     return (
                         <div key={team.id} className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow overflow-hidden flex flex-col">
                             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
@@ -237,35 +291,74 @@ const AdminPostAuctionView: React.FC = () => {
                                             {team.name.charAt(0)}
                                         </div>
                                     )}
-                                    <h3 className="font-bold text-gray-800 truncate max-w-[150px]">{team.name}</h3>
+                                    <div>
+                                        <h3 className="font-bold text-gray-800 truncate max-w-[150px]">{team.name}</h3>
+                                        {ownerName && (
+                                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider flex items-center gap-1 mt-0.5">
+                                                <Shield className="w-2.5 h-2.5 text-amber-500" />
+                                                <span>Owner: {ownerName}</span>
+                                            </p>
+                                        )}
+                                        {captainName && (
+                                            <p className="text-[10px] text-blue-600 font-black uppercase tracking-wider flex items-center gap-1 mt-0.5">
+                                                <Crown className="w-2.5 h-2.5 text-amber-500" />
+                                                <span>Captain: {captainName} (C)</span>
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
-                                <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded text-gray-600">{(team.players || []).length} Players</span>
+                                <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded text-gray-600">{squad.length} Players</span>
                             </div>
                             
                             <div className="p-5 grid grid-cols-2 gap-4 text-sm">
                                 <div>
                                     <p className="text-gray-400 text-xs uppercase font-bold tracking-widest">Spent</p>
-                                    <p className="font-black text-gray-800 text-lg">₹{teamSpent}</p>
+                                    <p className="font-black text-gray-800 text-lg">₹{teamSpent.toLocaleString()}</p>
                                 </div>
                                 <div>
                                     <p className="text-gray-400 text-xs uppercase font-bold tracking-widest">Remaining</p>
-                                    <p className="font-black text-green-600 text-lg">₹{team.budget}</p>
+                                    <p className="font-black text-green-600 text-lg">₹{team.budget.toLocaleString()}</p>
                                 </div>
                             </div>
 
                             <div className="mt-auto flex flex-col gap-2 p-4 bg-gray-50 border-t border-gray-100">
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    <button 
+                                        onClick={() => { setModalTeamId(team.id); setShowPosterModal(true); }}
+                                        className="bg-amber-50 border border-amber-300 hover:bg-amber-500 hover:text-black text-amber-900 font-black py-2 rounded-lg transition-all flex items-center justify-center text-[9px] uppercase tracking-wider shadow-sm active:scale-95"
+                                        title="Download Squad Poster in multiple themes"
+                                    >
+                                        <Sparkles className="w-3 h-3 mr-1 text-amber-600" /> Poster
+                                    </button>
+                                    <button 
+                                        onClick={() => { setModalTeamId(team.id); setShowPdfModal(true); }}
+                                        className="bg-blue-50 border border-blue-200 hover:bg-blue-600 hover:text-white text-blue-700 font-black py-2 rounded-lg transition-all flex items-center justify-center text-[9px] uppercase tracking-wider shadow-sm active:scale-95"
+                                        title="Download customizable PDF with jersey & owner details"
+                                    >
+                                        <FileText className="w-3 h-3 mr-1" /> PDF
+                                    </button>
+                                    <button 
+                                        onClick={() => { setModalTeamId(team.id); setShowPhotoPdfModal(true); }}
+                                        className="bg-emerald-50 border border-emerald-300 hover:bg-emerald-600 hover:text-white text-emerald-800 font-black py-2 rounded-lg transition-all flex items-center justify-center text-[9px] uppercase tracking-wider shadow-sm active:scale-95"
+                                        title="Download Photo Cards PDF with player photos and jersey details"
+                                    >
+                                        <ImageIcon className="w-3 h-3 mr-1 text-emerald-600" /> Photo PDF
+                                    </button>
+                                </div>
+
                                 <button 
-                                    onClick={() => setSelectedTeam(team)}
-                                    className="w-full bg-white border border-gray-300 hover:border-blue-400 hover:text-blue-600 text-gray-600 font-bold py-2.5 rounded-lg transition-all flex items-center justify-center text-xs uppercase tracking-widest shadow-sm active:scale-95"
+                                    onClick={() => setSelectedTeam({ ...team, players: squad })}
+                                    className="w-full bg-white border border-gray-300 hover:border-blue-400 hover:text-blue-600 text-gray-600 font-bold py-2 rounded-lg transition-all flex items-center justify-center text-xs uppercase tracking-widest shadow-sm active:scale-95"
                                 >
                                     <Eye className="w-4 h-4 mr-2" /> View Squad
                                 </button>
+
                                 {isAdmin && (
                                     <button 
                                         onClick={() => handleExport(team)}
-                                        className="w-full bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-600 hover:text-white font-bold py-2.5 rounded-lg transition-all flex items-center justify-center text-[10px] uppercase tracking-widest active:scale-95"
+                                        className="w-full bg-slate-100 hover:bg-slate-200 border border-gray-200 text-gray-600 font-bold py-1.5 rounded-lg transition-all flex items-center justify-center text-[10px] uppercase tracking-widest active:scale-95"
                                     >
-                                        <Download className="w-3.5 h-3.5 mr-2" /> Export Team Excel
+                                        <Download className="w-3 h-3 mr-1.5" /> Export Excel
                                     </button>
                                 )}
                             </div>
@@ -296,6 +389,44 @@ const AdminPostAuctionView: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Poster Generator Modal */}
+            <TeamPosterModal
+                isOpen={showPosterModal}
+                onClose={() => setShowPosterModal(false)}
+                teams={state.teams}
+                allPlayers={state.players}
+                initialTeamId={modalTeamId}
+                tournamentName={state.tournamentName || 'Championship Tournament'}
+                registrations={state.registrations}
+                systemLogoUrl={state.systemLogoUrl}
+            />
+
+            {/* Team PDF Exporter Modal */}
+            <TeamPdfExportModal
+                isOpen={showPdfModal}
+                onClose={() => setShowPdfModal(false)}
+                teams={state.teams}
+                allPlayers={state.players}
+                initialTeamId={modalTeamId}
+                tournamentName={state.tournamentName || 'Official Squad Roster'}
+                registrations={state.registrations}
+                registrationConfig={state.registrationConfig}
+                systemLogoUrl={state.systemLogoUrl}
+            />
+
+            {/* Team Photo Cards PDF Exporter Modal */}
+            <TeamPhotoPdfExportModal
+                isOpen={showPhotoPdfModal}
+                onClose={() => setShowPhotoPdfModal(false)}
+                teams={state.teams}
+                allPlayers={state.players}
+                initialTeamId={modalTeamId}
+                tournamentName={state.tournamentName || 'Official Squad Photo Dossier'}
+                registrations={state.registrations}
+                registrationConfig={state.registrationConfig}
+                systemLogoUrl={state.systemLogoUrl}
+            />
         </div>
     );
 };

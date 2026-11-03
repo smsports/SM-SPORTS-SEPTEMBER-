@@ -26,10 +26,16 @@ export interface Player {
     runs: number;
     wickets: number;
   };
-  status?: 'SOLD' | 'UNSOLD' | 'TRADED';
+  status?: 'SOLD' | 'UNSOLD' | 'TRADED' | 'POOL';
   soldPrice?: number;
   soldTo?: string;
   isTraded?: boolean;
+  mobile?: string;
+  jerseyName?: string;
+  jerseyNumber?: string | number;
+  jerseySize?: string;
+  isCaptain?: boolean;
+  [key: string]: any;
 }
 
 export interface PromoCode {
@@ -71,7 +77,14 @@ export interface Team {
   teamCode?: string; // Automatically generated like T001, T002
   name: string;
   shortName?: string;
-  owner: string;
+  owner: string; // Owner name
+  ownerName?: string;
+  ownerPhone?: string;
+  ownerPhoto?: string;
+  isOwnerCaptain?: boolean;
+  captainId?: string | number;
+  captainName?: string;
+  captainPhoto?: string;
   logoUrl: string;
   budget: number;
   players: Player[];
@@ -371,6 +384,7 @@ export interface RegistrationCode {
     currentUsage: number;
     isActive: boolean;
     createdAt: number;
+    waiveFee?: boolean;
     redemptions?: {
         playerName: string;
         registeredAt: number;

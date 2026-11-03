@@ -718,11 +718,12 @@ const PlayerRegistration: React.FC = () => {
     const isNavyGolden = config?.theme?.toUpperCase() === 'NAVY_GOLDEN';
     const isClassicNeon = config?.theme?.toUpperCase() === 'CLASSIC_NEON';
 
+    const isCodeFeeWaived = Boolean(validatedOrganiserCode?.waiveFee);
     const discountAmount = isAdminMode
         ? (config?.fee || 0)
         : (isCouponApplied 
             ? appliedDiscount 
-            : (validatedOrganiserCode ? (config?.fee || 0) : 0));
+            : (isCodeFeeWaived ? (config?.fee || 0) : 0));
     const finalFee = isAdminMode ? 0 : Math.max(0, (config?.fee || 0) - discountAmount);
 
     useEffect(() => {
@@ -975,7 +976,13 @@ const PlayerRegistration: React.FC = () => {
                 setOrganiserCodeStatus({ type: 'error', message: 'This code has reached its usage limit' });
                 setValidatedOrganiserCode(null);
             } else {
-                setOrganiserCodeStatus({ type: 'success', message: 'Registration Code accepted! Loading form...' });
+                const isWaived = Boolean(codeData.waiveFee);
+                setOrganiserCodeStatus({ 
+                    type: 'success', 
+                    message: isWaived 
+                        ? 'Registration Code accepted! Form unlocked with 100% fee waiver.' 
+                        : 'Registration Code accepted! Form unlocked. Please complete registration and payment.' 
+                });
                 setValidatedOrganiserCode(codeData);
                 // Auto-fill name if assigned
                 if (codeData.assignedTo && codeData.assignedTo.trim() !== '' && codeData.assignedTo.toLowerCase() !== 'general code') {
@@ -1096,15 +1103,24 @@ const PlayerRegistration: React.FC = () => {
             }
 
             // Valid DB registration code!
-            setOrganiserCodeStatus({ type: 'success', message: 'Registration Code accepted!' });
-            setValidatedOrganiserCode(codeData);
-            
-            // Apply 100% discount
-            setAppliedDiscount(config?.fee || 0);
-            setCouponCode(cleanCode);
-            setIsCouponApplied(true);
-            setPromoSuccess('Organizer Registration Code Accepted! 100% Discount Applied.');
-            setPromoError('');
+            if (codeData.waiveFee) {
+                setOrganiserCodeStatus({ type: 'success', message: 'Registration Code accepted!' });
+                setValidatedOrganiserCode(codeData);
+                // Apply 100% discount
+                setAppliedDiscount(config?.fee || 0);
+                setCouponCode(cleanCode);
+                setIsCouponApplied(true);
+                setPromoSuccess('Organizer Registration Code Accepted! 100% Fee Waiver Applied.');
+                setPromoError('');
+            } else {
+                setOrganiserCodeStatus({ type: 'success', message: 'Registration Code verified for access.' });
+                setValidatedOrganiserCode(codeData);
+                setPromoError('This Registration Code grants access to closed registration, but standard registration fee applies.');
+                setPromoSuccess('');
+                setAppliedDiscount(0);
+                setIsCouponApplied(false);
+                setCouponCode('');
+            }
         } catch (err) {
             setPromoError('Verification failed. Please try again.');
             setPromoSuccess('');
@@ -1162,7 +1178,7 @@ const PlayerRegistration: React.FC = () => {
                 organiserCode: validatedOrganiserCode ? validatedOrganiserCode.code.toUpperCase() : (isAdminMode ? 'ADMIN_MANUAL' : ''),
                 paymentScreenshot: !isAdminMode && config?.paymentMethod === 'MANUAL' && finalFee > 0 ? (paymentScreenshot || '') : '',
                 paymentScreenshotUrl: !isAdminMode && config?.paymentMethod === 'MANUAL' && finalFee > 0 ? (paymentScreenshot || '') : '',
-                razorpayPaymentId: isAdminMode ? 'Bypassed (Admin Manual Entry)' : (finalFee > 0 ? (razorpayId || '') : 'Bypassed (Promo Applied)'),
+                razorpayPaymentId: isAdminMode ? 'Bypassed (Admin Manual Entry)' : (finalFee > 0 ? (razorpayId || '') : (isCodeFeeWaived ? `Waived (Code: ${validatedOrganiserCode?.code})` : 'Bypassed (Promo Applied)')),
                 discountApplied: isAdminMode ? (config?.fee || 0) : (discountAmount || 0),
                 finalFeePaid: isAdminMode ? 0 : (finalFee || 0),
                 paymentStatus: isAdminMode ? 'ADMIN_EXEMPT' : (finalFee === 0 ? 'FREE' : 'COMPLETED'),
@@ -2956,7 +2972,7 @@ const PlayerRegistration: React.FC = () => {
                                                         <ShieldCheck className="w-10 h-10 text-green-400" />
                                                     </div>
                                                     <h4 className="text-2xl font-black text-green-400 uppercase tracking-tight mb-2">FEE WAIVED</h4>
-                                                    <p className="text-xs font-bold uppercase tracking-widest text-slate-400">{validatedOrganiserCode ? `Registration Code ${validatedOrganiserCode.code} applied successfully.` : 'Free registration for this tournament.'}</p>
+                                                    <p className="text-xs font-bold uppercase tracking-widest text-slate-400">{isCodeFeeWaived ? `Registration Code ${validatedOrganiserCode?.code} applied with fee waiver.` : 'Free registration for this tournament.'}</p>
                                                     <p className="text-[10px] font-medium uppercase tracking-widest text-slate-500 mt-2">You can proceed to the next step without any payment.</p>
                                                 </div>
                                             ) : (
@@ -3445,7 +3461,7 @@ const PlayerRegistration: React.FC = () => {
                                 isClassicNeon ? 'bg-[#A6FF00]/10 border-[#A6FF00]/30 text-[#A6FF00]' : 'bg-green-500/10 border-green-500/30 text-green-400'
                             }`}>
                                 <CheckCircle className="w-5 h-5" />
-                                <span>VERIFIED ORGANIZER REGISTRATION : <span className="font-mono text-white bg-black/40 px-3 py-1.5 rounded-xl ml-1">{validatedOrganiserCode.code}</span></span>
+                                <span>VERIFIED ACCESS CODE : <span className="font-mono text-white bg-black/40 px-3 py-1.5 rounded-xl ml-1">{validatedOrganiserCode.code}</span> {validatedOrganiserCode.waiveFee ? '(FEE WAIVED)' : `(STANDARD FEE ₹${finalFee} APPLIES)`}</span>
                             </div>
                         )}
                         {/* DEFAULT FIELDS */}
@@ -3687,7 +3703,7 @@ const PlayerRegistration: React.FC = () => {
                                                 <ShieldCheck className="w-10 h-10" />
                                             </div>
                                             <h4 className="text-2xl font-black uppercase tracking-tight mb-2">FEE WAIVED</h4>
-                                            <p className="text-xs font-bold uppercase tracking-widest opacity-80">{validatedOrganiserCode ? `Registration Code ${validatedOrganiserCode.code} applied successfully.` : 'Registration is free for this tournament.'}</p>
+                                            <p className="text-xs font-bold uppercase tracking-widest opacity-80">{isCodeFeeWaived ? `Registration Code ${validatedOrganiserCode?.code} applied with fee waiver.` : 'Registration is free for this tournament.'}</p>
                                             <p className="text-[10px] font-medium uppercase tracking-widest opacity-60 mt-2">Registration is free. You can submit the form directly.</p>
                                         </div>
                                     ) : (

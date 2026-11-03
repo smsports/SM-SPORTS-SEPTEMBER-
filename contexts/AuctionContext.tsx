@@ -528,7 +528,31 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
         if (!activeAuctionId || !state.currentPlayerId) return;
         const player = state.players.find(p => String(p.id) === String(state.currentPlayerId));
         if (!player) return;
-        await db.collection('auctions').doc(activeAuctionId).collection('players').doc(String(player.id)).update({ status: 'UNSOLD' });
+        await db.collection('auctions').doc(activeAuctionId).collection('players').doc(String(player.id)).update({ 
+            status: 'UNSOLD',
+            soldTo: '',
+            soldPrice: 0 
+        });
+        
+        // Clean up from any team squad array and refund if previously sold
+        for (const t of state.teams) {
+            const hasPlayer = (t.players || []).some(p => 
+                String(p.id) === String(player.id) || 
+                (p.name && player.name && p.name.trim().toLowerCase() === player.name.trim().toLowerCase())
+            );
+            if (hasPlayer) {
+                const updatedSquad = (t.players || []).filter(p => 
+                    String(p.id) !== String(player.id) && 
+                    (!player.name || !p.name || p.name.trim().toLowerCase() !== player.name.trim().toLowerCase())
+                );
+                const refund = player.soldPrice || 0;
+                await db.collection('auctions').doc(activeAuctionId).collection('teams').doc(String(t.id)).update({
+                    players: updatedSquad,
+                    ...(refund > 0 ? { budget: (t.budget || 0) + refund } : {})
+                });
+            }
+        }
+
         const log = { message: `${player.name} UNSOLD`, timestamp: Date.now(), type: 'UNSOLD' as const };
         await db.collection('auctions').doc(activeAuctionId).update({ status: AuctionStatus.Unsold });
         await addLog(log);

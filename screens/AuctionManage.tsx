@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { AuctionSetup, Team, Player, AuctionCategory, Sponsor, PlayerRole, RegistrationConfig, FormField, RegisteredPlayer, BidIncrementSlab, CaptainCode, RegistrationCode, UserRole } from '../types';
-import { getEffectiveBasePrice, compressImage, uploadImageOrFallback, uploadBase64FieldsToStorage, ensurePayloadWithinLimit, safeSaveAuctionDocument, FORBIDDEN_BLOATED_AUCTION_FIELDS, pruneAndRepairAuctionDocument } from '../utils';
+import { getEffectiveBasePrice, compressImage, uploadImageOrFallback, uploadBase64FieldsToStorage, ensurePayloadWithinLimit, safeSaveAuctionDocument, FORBIDDEN_BLOATED_AUCTION_FIELDS, pruneAndRepairAuctionDocument, resolveTeamSquad } from '../utils';
 import { 
     ArrowLeft, Plus, Trash2, Edit, Save, X, Upload, Users, Layers, Trophy, 
     DollarSign, Image as ImageIcon, Briefcase, FileText, Settings, QrCode, 
@@ -11,7 +11,7 @@ import {
     Check as CheckIcon, Check, ShieldCheck, Tag, User, TrendingUp, CreditCard, Shield, 
     UserCheck, UserX, Share2, Download, FileSpreadsheet, Filter, Key, 
     ExternalLink, LayoutList, ToggleRight, ToggleLeft, RefreshCw, FileUp, 
-    Star, UserPlus, Loader2, FileDown, ChevronRight, Zap, ListChecks, Type, Hash, ChevronDownCircle, Megaphone, Phone, Printer, LayoutGrid, Maximize2, AlertTriangle, Move
+    Star, UserPlus, Loader2, FileDown, ChevronRight, Zap, ListChecks, Type, Hash, ChevronDownCircle, Megaphone, Phone, Printer, LayoutGrid, Maximize2, AlertTriangle, Move, Sparkles, Crown, Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import firebase from 'firebase/compat/app';
@@ -26,6 +26,9 @@ import { useTheme } from '../contexts/ThemeContext';
 import { InPlaceDropdown } from '../components/InPlaceDropdown';
 
 import RecollectionManager from './RecollectionManager';
+import TeamPosterModal from '../components/TeamPosterModal';
+import TeamPdfExportModal from '../components/TeamPdfExportModal';
+import TeamPhotoPdfExportModal from '../components/TeamPhotoPdfExportModal';
 
 const DEFAULT_REG_CONFIG: RegistrationConfig = {
     isEnabled: false,
@@ -318,6 +321,11 @@ const AuctionManage: React.FC = () => {
     const [pdfTheme, setPdfTheme] = useState<'NORMAL' | 'ADVAYA'>('NORMAL');
     const [selectedFields, setSelectedFields] = useState<string[]>(['playerNumber', 'name', 'fullName', 'mobile', 'category', 'role', 'soldPrice', 'soldTo', 'jerseyName', 'jerseyNumber', 'jerseySize']);
     const [viewSummary, setViewSummary] = useState(false);
+    const [showPosterModal, setShowPosterModal] = useState(false);
+    const [showPdfModal, setShowPdfModal] = useState(false);
+    const [showPhotoPdfModal, setShowPhotoPdfModal] = useState(false);
+    const [captainSearchQuery, setCaptainSearchQuery] = useState('');
+    const [modalTeamId, setModalTeamId] = useState<string | number | undefined>(undefined);
     const [playersPerPage, setPlayersPerPage] = useState<1 | 2 | 4 | 6 | 9 | 'LIST'>(1);
     const [exportCategorizedPDF, setExportCategorizedPDF] = useState(false);
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -433,26 +441,59 @@ const AuctionManage: React.FC = () => {
         
         // Prepare Data for each team
         teams.forEach(team => {
-            const teamPlayers = players.filter(p => p.soldTo === team.name);
+            const teamPlayers = resolveTeamSquad(team, players);
+            const ownerName = team.ownerName || team.owner || '';
+            const isOwnerCaptain = team.isOwnerCaptain !== false && !team.captainName && !!ownerName;
+            const captainName = team.captainName || (isOwnerCaptain ? ownerName : '');
+            const ownerInPlayers = teamPlayers.find(p => p.name.trim().toLowerCase() === ownerName.trim().toLowerCase());
             
-            const sheetData = teamPlayers.map(p => {
+            const sheetData: any[] = [];
+
+            // Mention owner as Captain at top if designated
+            if (isOwnerCaptain && !ownerInPlayers && ownerName) {
+                const ownerReg = registrations.find(r => r.fullName.trim().toLowerCase() === ownerName.trim().toLowerCase());
+                const ownerRow: any = {};
+                selectedFields.forEach(fieldId => {
+                    if (fieldId === 'name') ownerRow['Player Name'] = `${ownerName} (C)`;
+                    else if (fieldId === 'category') ownerRow['Category'] = 'Franchise Owner';
+                    else if (fieldId === 'role') ownerRow['Role'] = 'Captain & Owner';
+                    else if (fieldId === 'soldPrice') ownerRow['Sold Price'] = 'Retained';
+                    else if (fieldId === 'soldTo') ownerRow['Team'] = team.name;
+                    else if (fieldId === 'isTraded') ownerRow['Traded'] = 'NO';
+                    else if (fieldId === 'mobile') ownerRow['Mobile'] = team.ownerPhone || ownerReg?.mobile || '-';
+                    else if (fieldId === 'jerseyName') ownerRow['Jersey Name'] = ownerReg?.jerseyName || ownerName;
+                    else if (fieldId === 'jerseyNumber') ownerRow['Jersey Number'] = ownerReg?.jerseyNumber || '-';
+                    else if (fieldId === 'jerseySize') ownerRow['Jersey Size'] = ownerReg?.jerseySize || '-';
+                    else if (fieldId.startsWith('cf_')) {
+                        const fieldIdClean = fieldId.replace('cf_', '');
+                        const fieldConfig = regConfig.customFields.find(f => f.id === fieldIdClean);
+                        ownerRow[fieldConfig?.label || fieldIdClean] = ownerReg ? (ownerReg as any)[fieldIdClean] || '-' : '-';
+                    }
+                });
+                sheetData.push(ownerRow);
+            }
+
+            teamPlayers.forEach(p => {
                 const row: any = {};
+                const isPlayerCaptain = (captainName && p.name.trim().toLowerCase() === captainName.trim().toLowerCase()) ||
+                                        p.isCaptain ||
+                                        (isOwnerCaptain && ownerInPlayers && p.name.trim().toLowerCase() === ownerName.trim().toLowerCase());
                 
                 // Get corresponding registration for custom fields and jersey info
                 // Match by ID or name (fallback)
                 const reg = registrations.find(r => String(r.id) === String(p.id)) || registrations.find(r => r.fullName === p.name);
 
                 selectedFields.forEach(fieldId => {
-                    if (fieldId === 'name') row['Player Name'] = p.name;
+                    if (fieldId === 'name') row['Player Name'] = isPlayerCaptain ? `${p.name} (C)` : p.name;
                     else if (fieldId === 'category') row['Category'] = p.category;
                     else if (fieldId === 'role') row['Role'] = p.role;
                     else if (fieldId === 'soldPrice') row['Sold Price'] = p.soldPrice;
                     else if (fieldId === 'soldTo') row['Team'] = p.soldTo;
                     else if (fieldId === 'isTraded') row['Traded'] = p.isTraded ? 'YES' : 'NO';
                     else if (fieldId === 'mobile') row['Mobile'] = reg?.mobile || (p as any).mobile || '-';
-                    else if (fieldId === 'jerseyName') row['Jersey Name'] = reg?.jerseyName || '-';
-                    else if (fieldId === 'jerseyNumber') row['Jersey Number'] = reg?.jerseyNumber || '-';
-                    else if (fieldId === 'jerseySize') row['Jersey Size'] = reg?.jerseySize || '-';
+                    else if (fieldId === 'jerseyName') row['Jersey Name'] = reg?.jerseyName || (p as any).jerseyName || '-';
+                    else if (fieldId === 'jerseyNumber') row['Jersey Number'] = reg?.jerseyNumber || (p as any).jerseyNumber || '-';
+                    else if (fieldId === 'jerseySize') row['Jersey Size'] = reg?.jerseySize || (p as any).jerseySize || '-';
                     else if (fieldId.startsWith('cf_')) {
                         const fieldIdClean = fieldId.replace('cf_', '');
                         const fieldConfig = regConfig.customFields.find(f => f.id === fieldIdClean);
@@ -461,7 +502,7 @@ const AuctionManage: React.FC = () => {
                     }
                 });
                 
-                return row;
+                sheetData.push(row);
             });
 
             if (sheetData.length > 0) {
@@ -883,6 +924,96 @@ const AuctionManage: React.FC = () => {
                 });
             }
             
+            if (modalType === 'TEAM') {
+                if (itemData.captainId || itemData.captainName) {
+                    const targetPlayer = players.find(p => String(p.id) === String(itemData.captainId) || p.name.trim().toLowerCase() === itemData.captainName?.trim().toLowerCase());
+                    if (targetPlayer) {
+                        itemData.captainId = targetPlayer.id;
+                        itemData.captainName = targetPlayer.name;
+                        itemData.captainPhoto = targetPlayer.photoUrl || itemData.captainPhoto || '';
+                        
+                        // Mark player as captain in players collection
+                        batch.update(db.collection('auctions').doc(id).collection('players').doc(String(targetPlayer.id)), {
+                            isCaptain: true,
+                            soldTo: itemData.name,
+                            status: 'SOLD',
+                            soldPrice: targetPlayer.soldPrice || targetPlayer.basePrice || 0,
+                            updatedAt: Date.now()
+                        });
+
+                        // Keep team.players array updated
+                        const existingSquad = itemData.players || [];
+                        const withoutPlayer = existingSquad.filter((p: any) => String(p.id) !== String(targetPlayer.id));
+                        itemData.players = [...withoutPlayer, {
+                            ...targetPlayer,
+                            isCaptain: true,
+                            soldTo: itemData.name,
+                            status: 'SOLD',
+                            soldPrice: targetPlayer.soldPrice || targetPlayer.basePrice || 0
+                        }];
+                    }
+                } else if (itemData.isOwnerCaptain) {
+                    itemData.captainId = '';
+                    itemData.captainName = itemData.owner || itemData.ownerName || '';
+                }
+            }
+
+            if (modalType === 'PLAYER') {
+                if (itemData.status === 'UNSOLD' || itemData.status === 'POOL') {
+                    itemData.soldTo = '';
+                    itemData.soldPrice = 0;
+                    // Scrub from all teams
+                    for (const t of teams) {
+                        const hasPlayer = (t.players || []).some((item: any) => 
+                            String(item.id) === String(itemData.id) || 
+                            (item.name && itemData.name && item.name.trim().toLowerCase() === itemData.name.trim().toLowerCase())
+                        );
+                        if (hasPlayer) {
+                            const updatedSquad = (t.players || []).filter((item: any) => 
+                                String(item.id) !== String(itemData.id) && 
+                                (!item.name || !itemData.name || item.name.trim().toLowerCase() !== itemData.name.trim().toLowerCase())
+                            );
+                            batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(t.id)), {
+                                players: updatedSquad,
+                                updatedAt: Date.now()
+                            });
+                        }
+                    }
+                } else if (itemData.status === 'SOLD' && itemData.soldTo) {
+                    const targetTeam = teams.find(t => t.name === itemData.soldTo || String(t.id) === itemData.soldTo);
+                    if (targetTeam) {
+                        const currentSquad = (targetTeam.players || []).filter((item: any) => 
+                            String(item.id) !== String(itemData.id) && 
+                            (!item.name || !itemData.name || item.name.trim().toLowerCase() !== itemData.name.trim().toLowerCase())
+                        );
+                        batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(targetTeam.id)), {
+                            players: [...currentSquad, itemData],
+                            updatedAt: Date.now()
+                        });
+
+                        // Remove from any other teams
+                        for (const ot of teams) {
+                            if (String(ot.id) !== String(targetTeam.id)) {
+                                const hasOld = (ot.players || []).some((item: any) => 
+                                    String(item.id) === String(itemData.id) || 
+                                    (item.name && itemData.name && item.name.trim().toLowerCase() === itemData.name.trim().toLowerCase())
+                                );
+                                if (hasOld) {
+                                    const cleanedSquad = (ot.players || []).filter((item: any) => 
+                                        String(item.id) !== String(itemData.id) && 
+                                        (!item.name || !itemData.name || item.name.trim().toLowerCase() !== itemData.name.trim().toLowerCase())
+                                    );
+                                    batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(ot.id)), {
+                                        players: cleanedSquad,
+                                        updatedAt: Date.now()
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
             const docRef = db.collection('auctions').doc(id).collection(col).doc(itemData.id);
             if (editItem.id) {
                 batch.set(docRef, itemData, { merge: true });
@@ -944,11 +1075,37 @@ const AuctionManage: React.FC = () => {
         });
 
     const handleUpdatePlayerStatus = async (playerId: string | number, newStatus: string) => {
+        if (!id) return;
         try {
-            await db.collection('auctions').doc(id!).collection('players').doc(String(playerId)).update({
+            const player = players.find(p => String(p.id) === String(playerId));
+            const updates: any = {
                 status: newStatus,
                 updatedAt: Date.now()
-            });
+            };
+            if (newStatus !== 'SOLD') {
+                updates.soldTo = '';
+                updates.soldPrice = 0;
+            }
+            await db.collection('auctions').doc(id).collection('players').doc(String(playerId)).update(updates);
+
+            // Clean up ANY team's squad array in Firestore if status changed from SOLD
+            if (newStatus !== 'SOLD') {
+                for (const t of teams) {
+                    const hasPlayer = (t.players || []).some(
+                        p => String(p.id) === String(playerId) || (player && p.name && p.name.trim().toLowerCase() === player.name.trim().toLowerCase())
+                    );
+                    if (hasPlayer) {
+                        const updatedSquad = (t.players || []).filter(
+                            p => String(p.id) !== String(playerId) && (!player || !p.name || p.name.trim().toLowerCase() !== player.name.trim().toLowerCase())
+                        );
+                        await db.collection('auctions').doc(id).collection('teams').doc(String(t.id)).update({
+                            players: updatedSquad,
+                            updatedAt: Date.now()
+                        });
+                    }
+                }
+            }
+
             showNotification(`Player status updated to ${newStatus}`, 'success');
         } catch (err) {
             console.error(err);
@@ -1768,6 +1925,7 @@ const AuctionManage: React.FC = () => {
                 assignedTo: 'General Code',
                 usageLimit: Number(editRegCode.usageLimit) || 1,
                 isActive: editRegCode.isActive ?? true,
+                waiveFee: editRegCode.waiveFee ?? false,
                 updatedAt: Date.now()
             };
             if (editRegCode.id) {
@@ -1788,7 +1946,7 @@ const AuctionManage: React.FC = () => {
                 showNotification("Registration Code created successfully!", "success");
             }
             setShowRegCodeModal(false);
-            setEditRegCode({ code: '', assignedTo: 'General Code', usageLimit: 1, isActive: true });
+            setEditRegCode({ code: '', assignedTo: 'General Code', usageLimit: 1, isActive: true, waiveFee: false });
         } catch (err: any) { showNotification("Save failed: " + err.message); }
     };
 
@@ -2173,7 +2331,7 @@ const AuctionManage: React.FC = () => {
                                                 return;
                                             }
                                             setModalType('TEAM'); 
-                                            setEditItem({ name: '', owner: '', budget: settingsForm.purseValue }); 
+                                            setEditItem({ name: '', owner: '', ownerName: '', ownerPhone: '', isOwnerCaptain: true, budget: settingsForm.purseValue }); 
                                             setShowModal(true); 
                                         }} 
                                         className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 border shadow-sm transition-all ${isDark ? 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
@@ -2191,14 +2349,35 @@ const AuctionManage: React.FC = () => {
                                             </div>
                                             <div>
                                                 <p className={`font-black uppercase text-sm leading-none ${isDark ? 'text-white' : 'text-gray-800'}`}>{team.name}</p>
-                                                <p className={`text-[10px] font-black uppercase tracking-widest mt-1.5 ${isDark ? 'text-zinc-400' : 'text-gray-600'}`}>Owner: <span className={isDark ? 'text-zinc-100' : 'text-gray-900'}>{team.owner || 'No Owner'}</span></p>
-                                                <div className="flex items-center gap-2 mt-2.5">
+                                                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                                    <p className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-400' : 'text-gray-600'}`}>
+                                                        Owner: <span className={isDark ? 'text-zinc-100 font-bold' : 'text-gray-900 font-bold'}>{team.owner || team.ownerName || 'No Owner'}</span>
+                                                    </p>
+                                                    {(team.owner || team.ownerName) && team.isOwnerCaptain !== false && (
+                                                        <span className="bg-amber-500/15 text-amber-500 dark:text-amber-400 border border-amber-500/30 text-[8px] font-black uppercase px-1.5 py-0.5 rounded tracking-wider flex items-center gap-1">
+                                                            <Crown className="w-2.5 h-2.5" /> Captain (C)
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {team.isOwnerCaptain === false && team.captainName && (
+                                                    <div className="flex items-center gap-1.5 mt-1">
+                                                        <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-black uppercase px-1.5 py-0.5 rounded tracking-wider flex items-center gap-1">
+                                                            <Crown className="w-2.5 h-2.5 text-amber-400" /> Captain: {team.captainName} (C)
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {team.ownerPhone && (
+                                                    <p className={`text-[9px] font-mono mt-0.5 ${isDark ? 'text-zinc-400' : 'text-gray-500'}`}>
+                                                        Tel: {team.ownerPhone}
+                                                    </p>
+                                                )}
+                                                <div className="flex items-center gap-2 mt-2">
                                                     <p className={`text-[10px] font-bold uppercase ${isDark ? 'text-accent' : 'text-blue-600'}`}>₹{team.budget}</p>
                                                     <div className={`w-1 h-1 rounded-full ${isDark ? 'bg-zinc-800' : 'bg-gray-300'}`}></div>
                                                     <p className={`text-[10px] font-black uppercase ${isDark ? 'text-accent' : 'text-blue-600'}`}>{team.teamCode || 'NO ID'}</p>
                                                 </div>
                                                 {team.password && (
-                                                    <p className={`text-[9px] font-black uppercase mt-1.5 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Pass: {team.password}</p>
+                                                    <p className={`text-[9px] font-black uppercase mt-1 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Pass: {team.password}</p>
                                                 )}
                                             </div>
                                         </div>
@@ -2662,30 +2841,103 @@ const AuctionManage: React.FC = () => {
                                                                     ? 'bg-red-600 border-red-700 text-white' 
                                                                     : (isDark ? 'bg-zinc-800 border-zinc-700 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-600')}
                                                             />
-                                                            {p.status === 'SOLD' && (
-                                                                <InPlaceDropdown
-                                                                    value={String(teams.find(t => t.name === p.soldTo)?.id || '')}
-                                                                    placeholder={p.soldTo ? `${p.soldTo} (₹${p.soldPrice || 0})` : 'Assign Team...'}
-                                                                    onChange={async (teamId) => {
-                                                                        const team = teams.find(t => String(t.id) === teamId);
-                                                                        if (team) {
-                                                                            await db.collection('auctions').doc(id!).collection('players').doc(String(p.id)).update({
-                                                                                soldTo: team.name,
-                                                                                updatedAt: Date.now()
-                                                                            });
-                                                                            showNotification(`Assigned to ${team.name}`, "success");
+                                                            <InPlaceDropdown
+                                                                value={String(teams.find(t => t.name === p.soldTo || String(t.id) === p.soldTo)?.id || '')}
+                                                                placeholder={p.soldTo ? `${p.soldTo} (₹${Number(p.soldPrice !== undefined ? p.soldPrice : (p.basePrice || 0)).toLocaleString()})` : 'Assign Team...'}
+                                                                onChange={async (teamId) => {
+                                                                    if (!id) return;
+                                                                    if (!teamId || teamId === 'UNASSIGN') {
+                                                                        await db.collection('auctions').doc(id).collection('players').doc(String(p.id)).update({
+                                                                            soldTo: '',
+                                                                            status: 'POOL',
+                                                                            soldPrice: 0,
+                                                                            updatedAt: Date.now()
+                                                                        });
+                                                                        // Remove from ALL teams' players array in Firestore
+                                                                        for (const t of teams) {
+                                                                            const hasP = (t.players || []).some(item => 
+                                                                                String(item.id) === String(p.id) || 
+                                                                                (item.name && p.name && item.name.trim().toLowerCase() === p.name.trim().toLowerCase())
+                                                                            );
+                                                                            if (hasP) {
+                                                                                const updatedSquad = (t.players || []).filter(item => 
+                                                                                    String(item.id) !== String(p.id) && 
+                                                                                    (!item.name || !p.name || item.name.trim().toLowerCase() !== p.name.trim().toLowerCase())
+                                                                                );
+                                                                                await db.collection('auctions').doc(id).collection('teams').doc(String(t.id)).update({
+                                                                                    players: updatedSquad,
+                                                                                    updatedAt: Date.now()
+                                                                                });
+                                                                            }
                                                                         }
-                                                                    }}
-                                                                    options={teams.map(t => ({
+                                                                        showNotification(`Player removed from team`, "success");
+                                                                        return;
+                                                                    }
+
+                                                                    const team = teams.find(t => String(t.id) === teamId);
+                                                                    if (team) {
+                                                                        const price = p.soldPrice !== undefined && p.soldPrice > 0 ? p.soldPrice : (p.basePrice || 0);
+                                                                        const updatedPlayerObj = {
+                                                                            ...p,
+                                                                            status: 'SOLD' as const,
+                                                                            soldTo: team.name,
+                                                                            soldPrice: price,
+                                                                            updatedAt: Date.now()
+                                                                        };
+
+                                                                        // 1. Update player doc
+                                                                        await db.collection('auctions').doc(id).collection('players').doc(String(p.id)).update({
+                                                                            status: 'SOLD',
+                                                                            soldTo: team.name,
+                                                                            soldPrice: price,
+                                                                            updatedAt: Date.now()
+                                                                        });
+
+                                                                        // 2. Add to team.players array
+                                                                        const currentTeamSquad = (team.players || []).filter(item => 
+                                                                            String(item.id) !== String(p.id) && 
+                                                                            (!item.name || !p.name || item.name.trim().toLowerCase() !== p.name.trim().toLowerCase())
+                                                                        );
+                                                                        await db.collection('auctions').doc(id).collection('teams').doc(String(team.id)).update({
+                                                                            players: [...currentTeamSquad, updatedPlayerObj],
+                                                                            updatedAt: Date.now()
+                                                                        });
+
+                                                                        // 3. Scrub from all other teams
+                                                                        for (const otherTeam of teams) {
+                                                                            if (String(otherTeam.id) !== String(team.id)) {
+                                                                                const hasOldP = (otherTeam.players || []).some(item => 
+                                                                                    String(item.id) === String(p.id) || 
+                                                                                    (item.name && p.name && item.name.trim().toLowerCase() === p.name.trim().toLowerCase())
+                                                                                );
+                                                                                if (hasOldP) {
+                                                                                    const cleanedSquad = (otherTeam.players || []).filter(item => 
+                                                                                        String(item.id) !== String(p.id) && 
+                                                                                        (!item.name || !p.name || item.name.trim().toLowerCase() !== p.name.trim().toLowerCase())
+                                                                                    );
+                                                                                    await db.collection('auctions').doc(id).collection('teams').doc(String(otherTeam.id)).update({
+                                                                                        players: cleanedSquad,
+                                                                                        updatedAt: Date.now()
+                                                                                    });
+                                                                                }
+                                                                            }
+                                                                        }
+
+                                                                        showNotification(`Assigned to ${team.name} directly`, "success");
+                                                                    }
+                                                                }}
+                                                                options={[
+                                                                    ...(p.soldTo ? [{ value: 'UNASSIGN', label: '✕ Remove from Team', badge: '' }] : []),
+                                                                    ...teams.map(t => ({
                                                                         value: String(t.id),
                                                                         label: t.name,
                                                                         badge: `₹${t.budget}`
-                                                                    }))}
-                                                                    isDark={isDark}
-                                                                    size="xs"
-                                                                    buttonClassName={isDark ? 'bg-zinc-950 border-zinc-800 text-zinc-300' : 'bg-white border-gray-200 text-gray-700'}
-                                                                />
-                                                            )}
+                                                                    }))
+                                                                ]}
+                                                                isDark={isDark}
+                                                                size="xs"
+                                                                buttonClassName={isDark ? 'bg-zinc-950 border-zinc-800 text-zinc-300' : 'bg-white border-gray-200 text-gray-700'}
+                                                            />
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4 text-right">
@@ -4486,7 +4738,7 @@ const AuctionManage: React.FC = () => {
                                 <h3 className="text-xs font-black uppercase tracking-widest text-amber-500 mb-4">
                                     {editRegCode.id ? 'Edit Registration Code' : 'Create New Registration Code'}
                                 </h3>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                                     <div>
                                         <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Registration Code</label>
                                         <input 
@@ -4516,6 +4768,37 @@ const AuctionManage: React.FC = () => {
                                             value={editRegCode.usageLimit || 1} 
                                             onChange={e => setEditRegCode({...editRegCode, usageLimit: Number(e.target.value)})} 
                                         />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Fee Payment</label>
+                                        <div className="flex gap-2">
+                                            {[
+                                                { value: 'false', label: 'Require Fee' },
+                                                { value: 'true', label: 'Waive Fee' }
+                                            ].map(opt => {
+                                                const isWaived = (editRegCode.waiveFee === true ? 'true' : 'false') === opt.value;
+                                                return (
+                                                    <button
+                                                        key={opt.value}
+                                                        type="button"
+                                                        onClick={() => setEditRegCode({...editRegCode, waiveFee: opt.value === 'true'})}
+                                                        className={`flex-1 px-3 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                                                            isWaived
+                                                            ? opt.value === 'true'
+                                                                ? 'bg-purple-600 border-purple-500 text-white shadow-lg'
+                                                                : isDark
+                                                                    ? 'bg-amber-500 border-amber-500 text-black shadow-lg shadow-amber-500/25'
+                                                                    : 'bg-amber-500 text-white border-amber-500 shadow-lg'
+                                                            : isDark
+                                                                ? 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-750'
+                                                                : 'bg-white border-2 border-gray-100 text-gray-400 hover:bg-gray-50'
+                                                        }`}
+                                                    >
+                                                        {opt.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
                                     <div>
                                         <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Status</label>
@@ -4551,7 +4834,7 @@ const AuctionManage: React.FC = () => {
                                     {editRegCode.id && (
                                         <button 
                                             type="button"
-                                            onClick={() => setEditRegCode({ code: '', assignedTo: 'General Code', usageLimit: 1, isActive: true })}
+                                            onClick={() => setEditRegCode({ code: '', assignedTo: 'General Code', usageLimit: 1, isActive: true, waiveFee: false })}
                                             className={`px-4 py-2 text-[10px] uppercase font-black tracking-widest rounded-xl transition-all ${
                                                 isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                                             }`}
@@ -4575,6 +4858,7 @@ const AuctionManage: React.FC = () => {
                                     <thead>
                                         <tr className={`${isDark ? 'bg-zinc-800/50 border-b border-zinc-800' : 'bg-gray-50 border-b border-gray-100'}`}>
                                             <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Code Key</th>
+                                            <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Fee Requirement</th>
                                             <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Usages (Used / Limit)</th>
                                             <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Status</th>
                                             <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Actions</th>
@@ -4591,6 +4875,17 @@ const AuctionManage: React.FC = () => {
                                                             {code.code}
                                                         </span>
                                                     </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
+                                                        code.waiveFee
+                                                            ? 'bg-purple-900/20 text-purple-400 border-purple-800/40'
+                                                            : isDark
+                                                                ? 'bg-zinc-850 text-zinc-400 border-zinc-800'
+                                                                : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                                    }`}>
+                                                        {code.waiveFee ? 'WAIVED (FREE)' : 'PAYMENT REQUIRED'}
+                                                    </span>
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     <div className="flex flex-col gap-1">
@@ -4623,7 +4918,7 @@ const AuctionManage: React.FC = () => {
                                         ))}
                                         {registrationCodes.length === 0 && (
                                             <tr>
-                                                <td colSpan={4} className="px-6 py-12 text-center">
+                                                <td colSpan={5} className="px-6 py-12 text-center">
                                                     <div className="max-w-xs mx-auto">
                                                         <Key className="w-12 h-12 text-gray-200 mx-auto mb-4" />
                                                         <p className="text-sm font-black text-gray-400 uppercase tracking-widest">No Organizer Codes Established</p>
@@ -4867,6 +5162,66 @@ const AuctionManage: React.FC = () => {
                                 </div>
 
                                 <div className="space-y-6">
+                                    <div className={`p-8 rounded-3xl border text-center space-y-4 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-amber-50/50 border-amber-200/60'}`}>
+                                        <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-amber-600/10">
+                                            <Sparkles className="w-8 h-8" />
+                                        </div>
+                                        <div>
+                                            <h4 className={`text-lg font-black uppercase tracking-tight ${isDark ? 'text-white' : 'text-gray-800'}`}>Squad Posters</h4>
+                                            <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>6 Visual Themes with SM SPORTS Branding</p>
+                                        </div>
+                                        <p className="text-xs text-gray-500 leading-relaxed italic">
+                                            High-res graphic poster with circular player photos, tournament title, team logo, and owner designated as captain.
+                                        </p>
+                                        <button 
+                                            onClick={() => { setModalTeamId(undefined); setShowPosterModal(true); }}
+                                            className="w-full bg-amber-500 hover:bg-amber-400 text-black font-black py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all text-xs uppercase tracking-widest"
+                                        >
+                                            <Sparkles className="w-4 h-4" />
+                                            Select Theme &amp; Download Poster
+                                        </button>
+                                    </div>
+
+                                    <div className={`p-8 rounded-3xl border text-center space-y-4 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-blue-50/50 border-blue-200/60'}`}>
+                                        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-blue-600/10">
+                                            <FileText className="w-8 h-8" />
+                                        </div>
+                                        <div>
+                                            <h4 className={`text-lg font-black uppercase tracking-tight ${isDark ? 'text-white' : 'text-gray-800'}`}>Team Roster PDF</h4>
+                                            <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Select fields including jersey specs</p>
+                                        </div>
+                                        <p className="text-xs text-gray-500 leading-relaxed italic">
+                                            Export official PDF tables with custom toggles for Jersey Name, Jersey Number, Size, Role, and Owner (Captain).
+                                        </p>
+                                        <button 
+                                            onClick={() => { setModalTeamId('ALL'); setShowPdfModal(true); }}
+                                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 active:scale-95 transition-all text-xs uppercase tracking-widest"
+                                        >
+                                            <Download className="w-4 h-4" />
+                                            Download Squad PDF
+                                        </button>
+                                    </div>
+
+                                    <div className={`p-8 rounded-3xl border text-center space-y-4 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-purple-50/50 border-purple-200/60'}`}>
+                                        <div className="w-16 h-16 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-purple-600/10">
+                                            <Camera className="w-8 h-8" />
+                                        </div>
+                                        <div>
+                                            <h4 className={`text-lg font-black uppercase tracking-tight ${isDark ? 'text-white' : 'text-gray-800'}`}>Squad Photo Cards PDF</h4>
+                                            <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>High-Res Player Photos &amp; Specs</p>
+                                        </div>
+                                        <p className="text-xs text-gray-500 leading-relaxed italic">
+                                            Export PDF with high-res player profile photos, jersey specs, prices, roles, and SM SPORTS branding in 4 or 6 cards/page layouts.
+                                        </p>
+                                        <button 
+                                            onClick={() => { setModalTeamId('ALL'); setShowPhotoPdfModal(true); }}
+                                            className="w-full bg-purple-600 hover:bg-purple-500 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20 active:scale-95 transition-all text-xs uppercase tracking-widest"
+                                        >
+                                            <Camera className="w-4 h-4" />
+                                            Export Photo PDF (All)
+                                        </button>
+                                    </div>
+
                                     <div className={`p-8 rounded-3xl border text-center space-y-4 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-green-50/50 border-green-100'}`}>
                                         <div className="w-16 h-16 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-green-600/10">
                                             <FileSpreadsheet className="w-8 h-8" />
@@ -4880,7 +5235,7 @@ const AuctionManage: React.FC = () => {
                                         </p>
                                         <button 
                                             onClick={() => handleExportExcel('MASTER')}
-                                            className="w-full btn-golden py-4 rounded-2xl flex items-center justify-center gap-3"
+                                            className="w-full btn-golden py-4 rounded-2xl flex items-center justify-center gap-3 text-xs uppercase tracking-widest"
                                         >
                                             <Download className="w-5 h-5" />
                                             Download Master Excel
@@ -4919,7 +5274,7 @@ const AuctionManage: React.FC = () => {
                                             </div>
                                             <div>
                                                 <h3 className={`text-2xl font-black uppercase tracking-tight ${isDark ? 'text-white' : 'text-gray-800'}`}>Final Squad Standings</h3>
-                                                <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Real-time auction results overview</p>
+                                                <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Real-time auction results with Owner &amp; Captain details</p>
                                             </div>
                                         </div>
                                         <button onClick={() => setViewSummary(false)} className={`p-4 rounded-2xl transition-all ${isDark ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-gray-100 text-gray-400'}`}><X className="w-8 h-8" /></button>
@@ -4928,8 +5283,11 @@ const AuctionManage: React.FC = () => {
                                     <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
                                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                                             {teams.map(team => {
-                                                const teamPlayers = players.filter(p => p.soldTo === team.name);
+                                                const teamPlayers = resolveTeamSquad(team, players);
                                                 const spent = teamPlayers.reduce((acc, p) => acc + (p.soldPrice || 0), 0);
+                                                const ownerName = team.ownerName || team.owner || '';
+                                                const isOwnerCaptain = team.isOwnerCaptain !== false && !!ownerName;
+
                                                 return (
                                                     <div key={team.id} className={`rounded-3xl border transition-all ${isDark ? 'bg-zinc-900/50 border-zinc-800 hover:border-zinc-700' : 'bg-white border-gray-100 shadow-sm hover:shadow-md'}`}>
                                                         <div className={`p-6 border-b flex items-center gap-4 ${isDark ? 'border-zinc-800' : 'border-gray-50'}`}>
@@ -4940,12 +5298,46 @@ const AuctionManage: React.FC = () => {
                                                             )}
                                                             <div className="flex-1 min-w-0">
                                                                 <h4 className={`text-sm font-black uppercase truncate ${isDark ? 'text-white' : 'text-gray-800'}`}>{team.name}</h4>
+                                                                {team.isOwnerCaptain === false && team.captainName ? (
+                                                                    <p className="text-[10px] font-black uppercase text-emerald-500 tracking-wider flex items-center gap-1 mt-0.5">
+                                                                        <Crown className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                                                                        <span>Captain: {team.captainName} (C) {ownerName ? `• Owner: ${ownerName}` : ''}</span>
+                                                                    </p>
+                                                                ) : ownerName ? (
+                                                                    <p className="text-[10px] font-black uppercase text-amber-500 tracking-wider flex items-center gap-1 mt-0.5">
+                                                                        <Shield className="w-2.5 h-2.5 text-amber-500 shrink-0" />
+                                                                        <span>Owner &amp; Captain: {ownerName} {isOwnerCaptain && '(C)'}</span>
+                                                                    </p>
+                                                                ) : null}
                                                                 <div className="flex items-center justify-between mt-1">
                                                                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Players: {teamPlayers.length}</p>
                                                                     <p className="text-xs font-black text-blue-500 uppercase tracking-tight">Spent: {spent.toLocaleString()}</p>
                                                                 </div>
                                                             </div>
                                                         </div>
+
+                                                        {/* Team Quick Actions: Poster & PDF */}
+                                                        <div className="p-3 bg-gray-50/70 dark:bg-zinc-950/40 border-b border-gray-100 dark:border-zinc-800/80 grid grid-cols-3 gap-2">
+                                                            <button 
+                                                                onClick={() => { setModalTeamId(team.id); setShowPosterModal(true); }}
+                                                                className="py-1.5 px-2 bg-amber-500/10 hover:bg-amber-500 text-amber-700 hover:text-black dark:text-amber-400 border border-amber-400/30 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all"
+                                                            >
+                                                                <Sparkles className="w-3 h-3" /> Poster
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => { setModalTeamId(team.id); setShowPdfModal(true); }}
+                                                                className="py-1.5 px-2 bg-blue-500/10 hover:bg-blue-600 text-blue-700 hover:text-white dark:text-blue-400 border border-blue-400/30 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all"
+                                                            >
+                                                                <FileText className="w-3 h-3" /> Roster
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => { setModalTeamId(team.id); setShowPhotoPdfModal(true); }}
+                                                                className="py-1.5 px-2 bg-purple-500/10 hover:bg-purple-600 text-purple-700 hover:text-white dark:text-purple-400 border border-purple-400/30 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all"
+                                                            >
+                                                                <Camera className="w-3 h-3" /> Photo PDF
+                                                            </button>
+                                                        </div>
+
                                                         <div className="p-4 space-y-2">
                                                             {teamPlayers.length === 0 ? (
                                                                 <div className="py-8 text-center opacity-30">
@@ -4956,7 +5348,14 @@ const AuctionManage: React.FC = () => {
                                                                 teamPlayers.map(p => (
                                                                     <div key={p.id} className={`flex items-center justify-between p-2 rounded-xl text-[10px] ${isDark ? 'bg-zinc-950/30 hover:bg-zinc-950/60' : 'bg-gray-50/50 hover:bg-gray-50 transition-colors'}`}>
                                                                         <div className="min-w-0">
-                                                                            <p className={`font-black uppercase truncate ${isDark ? 'text-zinc-300' : 'text-gray-700'}`}>{p.name}</p>
+                                                                            <p className={`font-black uppercase truncate flex items-center gap-1.5 ${isDark ? 'text-zinc-300' : 'text-gray-700'}`}>
+                                                                                <span>{p.name}</span>
+                                                                                {(p.isCaptain || (team.captainId && String(team.captainId) === String(p.id))) && (
+                                                                                    <span className="bg-amber-500/20 text-amber-500 border border-amber-500/30 text-[8px] font-black px-1 rounded">
+                                                                                        (C)
+                                                                                    </span>
+                                                                                )}
+                                                                            </p>
                                                                             <p className="text-[8px] font-bold text-gray-400 flex items-center gap-1 uppercase tracking-tighter">
                                                                                 <Tag className="w-2 h-2" /> {p.category} • {p.role}
                                                                             </p>
@@ -4974,11 +5373,33 @@ const AuctionManage: React.FC = () => {
                                             })}
                                         </div>
                                     </div>
-                                    <div className={`p-8 border-t flex justify-end gap-4 ${isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-gray-50/50 order-gray-50'}`}>
-                                        <button onClick={() => setViewSummary(false)} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700' : 'bg-white border text-gray-400 hover:bg-gray-50'}`}>Close Preview</button>
-                                        <button onClick={() => handleExportExcel('MASTER')} className="btn-golden px-10 py-3 rounded-2xl flex items-center gap-2">
-                                            <FileSpreadsheet className="w-4 h-4" /> Download Complete Summary
-                                        </button>
+                                    <div className={`p-6 border-t flex flex-wrap justify-between items-center gap-4 ${isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-gray-50/50 border-gray-100'}`}>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button 
+                                                onClick={() => { setModalTeamId(undefined); setShowPosterModal(true); }}
+                                                className="bg-amber-500 hover:bg-amber-400 text-black px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-sm transition-all"
+                                            >
+                                                <Sparkles className="w-4 h-4" /> Squad Posters
+                                            </button>
+                                            <button 
+                                                onClick={() => { setModalTeamId('ALL'); setShowPdfModal(true); }}
+                                                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-sm transition-all"
+                                            >
+                                                <FileText className="w-4 h-4" /> Table PDF
+                                            </button>
+                                            <button 
+                                                onClick={() => { setModalTeamId('ALL'); setShowPhotoPdfModal(true); }}
+                                                className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-sm transition-all"
+                                            >
+                                                <Camera className="w-4 h-4" /> Photo PDF
+                                            </button>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setViewSummary(false)} className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700' : 'bg-white border text-gray-400 hover:bg-gray-50'}`}>Close</button>
+                                            <button onClick={() => handleExportExcel('MASTER')} className="btn-golden px-8 py-3 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
+                                                <FileSpreadsheet className="w-4 h-4" /> Export Excel
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -5159,6 +5580,204 @@ const AuctionManage: React.FC = () => {
 
                             {modalType === 'TEAM' && (
                                 <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Team Owner Name</label>
+                                        <input 
+                                            type="text" 
+                                            className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-gray-700 focus:bg-white focus:border-blue-400 outline-none transition-all" 
+                                            value={editItem?.owner || editItem?.ownerName || ''} 
+                                            onChange={e => setEditItem({...editItem, owner: e.target.value, ownerName: e.target.value})} 
+                                            placeholder="e.g. Mukesh Ambani / Team Owner" 
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Owner Contact / Mobile Number</label>
+                                        <input 
+                                            type="tel" 
+                                            className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-gray-700 focus:bg-white focus:border-blue-400 outline-none transition-all" 
+                                            value={editItem?.ownerPhone || ''} 
+                                            onChange={e => setEditItem({...editItem, ownerPhone: e.target.value})} 
+                                            placeholder="e.g. +91 9876543210" 
+                                        />
+                                    </div>
+
+                                    {/* Team Captain Configuration & Search Player */}
+                                    <div className="p-3.5 bg-slate-50 dark:bg-zinc-900/60 rounded-2xl border border-slate-200 dark:border-zinc-800 space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest flex items-center gap-1.5">
+                                                <Crown className="w-3.5 h-3.5 text-amber-500" /> Captain Selection
+                                            </label>
+                                            <span className="text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 border border-amber-400/30">
+                                                {editItem?.captainName ? 'Player Captain' : (editItem?.isOwnerCaptain !== false && (editItem?.owner || editItem?.ownerName)) ? 'Owner Captain' : 'Unassigned'}
+                                            </span>
+                                        </div>
+
+                                        {/* Toggle: Owner vs Player */}
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setEditItem({
+                                                        ...editItem,
+                                                        isOwnerCaptain: true,
+                                                        captainId: '',
+                                                        captainName: editItem?.owner || editItem?.ownerName || '',
+                                                        captainPhoto: ''
+                                                    });
+                                                    setCaptainSearchQuery('');
+                                                }}
+                                                className={`py-2 px-2.5 rounded-xl text-[9px] font-black uppercase tracking-wider border flex items-center justify-center gap-1.5 transition-all ${
+                                                    editItem?.isOwnerCaptain !== false && !editItem?.captainId
+                                                        ? 'bg-amber-500 border-amber-500 text-black shadow-xs font-black'
+                                                        : 'bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700 text-gray-500 hover:border-amber-400'
+                                                }`}
+                                            >
+                                                <Shield className="w-3 h-3" /> Owner as Captain
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setEditItem({
+                                                        ...editItem,
+                                                        isOwnerCaptain: false
+                                                    });
+                                                }}
+                                                className={`py-2 px-2.5 rounded-xl text-[9px] font-black uppercase tracking-wider border flex items-center justify-center gap-1.5 transition-all ${
+                                                    editItem?.isOwnerCaptain === false || !!editItem?.captainId
+                                                        ? 'bg-blue-600 border-blue-600 text-white shadow-xs font-black'
+                                                        : 'bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700 text-gray-500 hover:border-blue-400'
+                                                }`}
+                                            >
+                                                <User className="w-3 h-3" /> Search Player
+                                            </button>
+                                        </div>
+
+                                        {/* Current Captain Card Display */}
+                                        {editItem?.captainName ? (
+                                            <div className="p-2.5 bg-white dark:bg-zinc-950 rounded-xl border border-blue-200 dark:border-blue-900/40 flex items-center justify-between shadow-xs">
+                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                    <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-100 dark:bg-zinc-800 border border-amber-400 shrink-0 flex items-center justify-center">
+                                                        {editItem.captainPhoto ? (
+                                                            <img src={editItem.captainPhoto} alt={editItem.captainName} className="w-full h-full object-cover" />
+                                                        ) : (
+                                                            <span className="font-black text-amber-500 text-xs">{(editItem.captainName[0] || 'C').toUpperCase()}</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="truncate">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="font-black text-xs uppercase text-gray-900 dark:text-white truncate">{editItem.captainName}</span>
+                                                            <span className="px-1.5 py-0.2 bg-amber-500 text-black text-[7px] font-black rounded uppercase">Captain (C)</span>
+                                                        </div>
+                                                        <span className="text-[8px] text-gray-400 font-bold uppercase">Assigned Team Captain</span>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setEditItem({
+                                                            ...editItem,
+                                                            captainId: '',
+                                                            captainName: '',
+                                                            captainPhoto: '',
+                                                            isOwnerCaptain: true
+                                                        });
+                                                    }}
+                                                    className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg text-xs"
+                                                    title="Remove assigned captain"
+                                                >
+                                                    <X className="w-3.5 h-3.5" />
+                                                </button>
+                                            </div>
+                                        ) : editItem?.isOwnerCaptain !== false && (editItem?.owner || editItem?.ownerName) ? (
+                                            <div className="p-2 bg-amber-50 dark:bg-amber-950/20 rounded-xl border border-amber-200 dark:border-amber-900/30 flex items-center gap-2 text-amber-800 dark:text-amber-300">
+                                                <Shield className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                                <span className="text-[9px] font-black uppercase">
+                                                    Owner ({editItem.owner || editItem.ownerName}) designated as Captain (C)
+                                                </span>
+                                            </div>
+                                        ) : null}
+
+                                        {/* Player Search Input & Results Dropdown */}
+                                        {(!editItem?.captainName || editItem?.isOwnerCaptain === false) && (
+                                            <div className="space-y-1.5">
+                                                <div className="relative">
+                                                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Search player name, role, category..."
+                                                        value={captainSearchQuery}
+                                                        onChange={(e) => setCaptainSearchQuery(e.target.value)}
+                                                        className="w-full pl-8 pr-7 py-2 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-zinc-700 rounded-xl text-xs font-bold uppercase outline-none focus:border-blue-500 text-gray-800 dark:text-zinc-200"
+                                                    />
+                                                    {captainSearchQuery && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setCaptainSearchQuery('')}
+                                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                                        >
+                                                            <X className="w-3 h-3" />
+                                                        </button>
+                                                    )}
+                                                </div>
+
+                                                {/* Search Results */}
+                                                {captainSearchQuery.trim() && (
+                                                    <div className="max-h-36 overflow-y-auto space-y-1 p-1 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl custom-scrollbar shadow-sm">
+                                                        {players.filter(p => 
+                                                            p.name.toLowerCase().includes(captainSearchQuery.toLowerCase()) ||
+                                                            p.role.toLowerCase().includes(captainSearchQuery.toLowerCase()) ||
+                                                            p.category.toLowerCase().includes(captainSearchQuery.toLowerCase())
+                                                        ).slice(0, 6).length === 0 ? (
+                                                            <p className="text-[9px] text-gray-400 text-center py-2 uppercase font-bold">No players found</p>
+                                                        ) : (
+                                                            players.filter(p => 
+                                                                p.name.toLowerCase().includes(captainSearchQuery.toLowerCase()) ||
+                                                                p.role.toLowerCase().includes(captainSearchQuery.toLowerCase()) ||
+                                                                p.category.toLowerCase().includes(captainSearchQuery.toLowerCase())
+                                                            ).slice(0, 6).map(p => (
+                                                                <div
+                                                                    key={p.id}
+                                                                    className="flex items-center justify-between p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-zinc-800/80 transition-colors"
+                                                                >
+                                                                    <div className="flex items-center gap-2 min-w-0">
+                                                                        <div className="w-6 h-6 rounded-full overflow-hidden bg-gray-100 shrink-0 border border-gray-200">
+                                                                            {p.photoUrl ? (
+                                                                                <img src={p.photoUrl} alt={p.name} className="w-full h-full object-cover" />
+                                                                            ) : (
+                                                                                <span className="w-full h-full flex items-center justify-center text-[9px] font-bold text-gray-400">
+                                                                                    {p.name[0]?.toUpperCase()}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="truncate">
+                                                                            <p className="text-[10px] font-black uppercase text-gray-900 dark:text-white truncate">{p.name}</p>
+                                                                            <p className="text-[7px] font-bold text-gray-400 uppercase">{p.role} • {p.category}</p>
+                                                                        </div>
+                                                                    </div>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setEditItem({
+                                                                                ...editItem,
+                                                                                captainId: p.id,
+                                                                                captainName: p.name,
+                                                                                captainPhoto: p.photoUrl || '',
+                                                                                isOwnerCaptain: false
+                                                                            });
+                                                                            setCaptainSearchQuery('');
+                                                                        }}
+                                                                        className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-[8px] font-black uppercase tracking-wider shrink-0 active:scale-95 flex items-center gap-1"
+                                                                    >
+                                                                        <Crown className="w-2.5 h-2.5" /> Assign
+                                                                    </button>
+                                                                </div>
+                                                            ))
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
                                     <div>
                                         <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Assigned Purse (₹)</label>
                                         <input type="number" className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-gray-700 focus:bg-white focus:border-blue-400 outline-none transition-all" value={editItem?.budget} onChange={e => setEditItem({...editItem, budget: Number(e.target.value)})} />
@@ -5702,6 +6321,44 @@ const AuctionManage: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* SQUAD POSTER GENERATOR MODAL */}
+            <TeamPosterModal
+                isOpen={showPosterModal}
+                onClose={() => setShowPosterModal(false)}
+                teams={teams}
+                allPlayers={players}
+                initialTeamId={modalTeamId}
+                tournamentName={auction?.fullTournamentName || auction?.title || settingsForm.fullTournamentName || settingsForm.title || 'Official Championship'}
+                registrations={registrations}
+                systemLogoUrl={systemBranding.logo}
+            />
+
+            {/* TEAM SQUAD PDF EXPORT MODAL */}
+            <TeamPdfExportModal
+                isOpen={showPdfModal}
+                onClose={() => setShowPdfModal(false)}
+                teams={teams}
+                allPlayers={players}
+                initialTeamId={modalTeamId}
+                tournamentName={auction?.fullTournamentName || auction?.title || settingsForm.fullTournamentName || settingsForm.title || 'Official Squad Roster'}
+                registrations={registrations}
+                registrationConfig={regConfig}
+                systemLogoUrl={systemBranding.logo}
+            />
+
+            {/* SQUAD PHOTO CARDS PDF EXPORT MODAL */}
+            <TeamPhotoPdfExportModal
+                isOpen={showPhotoPdfModal}
+                onClose={() => setShowPhotoPdfModal(false)}
+                teams={teams}
+                allPlayers={players}
+                initialTeamId={modalTeamId}
+                tournamentName={auction?.fullTournamentName || auction?.title || settingsForm.fullTournamentName || settingsForm.title || 'Official Championship'}
+                registrations={registrations}
+                registrationConfig={regConfig}
+                systemLogoUrl={systemBranding.logo}
+            />
         </div>
     );
 };
