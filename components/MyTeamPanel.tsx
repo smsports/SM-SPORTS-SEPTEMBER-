@@ -1,22 +1,24 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuction } from '../hooks/useAuction';
 import { useTheme } from '../contexts/ThemeContext';
-import { Gavel, Wallet, Shirt, Users, Info } from 'lucide-react';
-import { calculateMaxBid } from '../utils';
+import { Gavel, Wallet, Shirt, Users, Info, Calculator, ShieldCheck, Sparkles, Scale } from 'lucide-react';
+import { calculateMaxBid, resolveTeamSquad } from '../utils';
+import TeamStrategyCalculator, { normalizeRole } from './TeamStrategyCalculator';
 
 const MyTeamPanel: React.FC = () => {
   const { state, placeBid, userProfile, nextBid } = useAuction();
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const { teams, highestBidder, currentPlayerId, players } = state;
-  const [activeTab, setActiveTab] = useState<'MY_SQUAD' | 'ALL_TEAMS'>('MY_SQUAD');
+  const [activeTab, setActiveTab] = useState<'MY_SQUAD' | 'ALL_TEAMS' | 'CALCULATOR'>('MY_SQUAD');
+  const [showCalcModal, setShowCalcModal] = useState(false);
 
   // Find the specific team belonging to this logged-in user
   const userTeam = teams.find(t => String(t.id) === String(userProfile?.teamId));
   
   const currentPlayer = currentPlayerId ? players.find(p => String(p.id) === String(currentPlayerId)) : null;
-  const { maxBidAllowed } = React.useMemo(() => {
+  const { maxBidAllowed } = useMemo(() => {
     if (!userTeam) return { maxBidAllowed: 0 };
     const result = calculateMaxBid(userTeam, state, currentPlayer);
     return { maxBidAllowed: result.maxBid };
@@ -42,6 +44,69 @@ const MyTeamPanel: React.FC = () => {
     });
     return merged;
   }, [userTeam, players]);
+
+  // Target squad and role quotas
+  const targetSquadSize = state.maxPlayersPerTeam || (state as any).playersPerTeam || 11;
+  const currentSquadCount = teamPlayers.length;
+  const neededPlayers = Math.max(0, targetSquadSize - currentSquadCount);
+  const globalBasePrice = Math.max(1, Number(state.basePrice || 100));
+
+  // Role shortfalls calculation
+  const roleShortfalls = useMemo(() => {
+    if (!userTeam) return [];
+    const counts: { [key: string]: number } = { 'Batsman': 0, 'Bowler': 0, 'All-Rounder': 0, 'Wicketkeeper': 0 };
+    teamPlayers.forEach(p => {
+      const r = normalizeRole(p.role || p.speciality || p.category);
+      if (counts[r] !== undefined) counts[r]++;
+    });
+
+    // Check configured categories if any have minPerTeam
+    const configuredWithMin = (state.categories || []).filter(c => (c.minPerTeam || 0) > 0);
+    if (configuredWithMin.length > 0) {
+      return configuredWithMin
+        .map(c => {
+          const inSquad = teamPlayers.filter(p => 
+            p.category?.toLowerCase().trim() === c.name.toLowerCase().trim() || 
+            p.role?.toLowerCase().trim() === c.name.toLowerCase().trim()
+          ).length;
+          const deficit = Math.max(0, (c.minPerTeam || 0) - inSquad);
+          return { name: c.name, needed: deficit, basePrice: Number(c.basePrice || globalBasePrice) };
+        })
+        .filter(c => c.needed > 0);
+    }
+
+    // Default cricket squad balance targets
+    const defaultQuotas = [
+      { name: 'Batsman', target: 4, current: counts['Batsman'] || 0, basePrice: globalBasePrice },
+      { name: 'Bowler', target: 3, current: counts['Bowler'] || 0, basePrice: globalBasePrice },
+      { name: 'All-Rounder', target: 2, current: counts['All-Rounder'] || 0, basePrice: globalBasePrice },
+      { name: 'Wicketkeeper', target: 1, current: counts['Wicketkeeper'] || 0, basePrice: globalBasePrice }
+    ];
+
+    return defaultQuotas
+      .map(q => ({ name: q.name, needed: Math.max(0, q.target - q.current), basePrice: q.basePrice }))
+      .filter(q => q.needed > 0);
+  }, [userTeam, teamPlayers, state.categories, globalBasePrice]);
+
+  const shortfallSummary = roleShortfalls.length > 0
+    ? roleShortfalls.map(r => `${r.needed} ${r.name}`).join(', ')
+    : 'All quotas met';
+
+  // Calculate reserve for subsequent slots
+  const subsequentReserve = useMemo(() => {
+    if (neededPlayers <= 1) return 0;
+    const slotsAfterThis = neededPlayers - 1;
+    let shortfallPrices: number[] = [];
+    roleShortfalls.forEach(r => {
+      for (let i = 0; i < r.needed; i++) shortfallPrices.push(r.basePrice);
+    });
+    shortfallPrices.sort((a, b) => a - b);
+    const mandatoryReserve = shortfallPrices.slice(0, Math.min(slotsAfterThis, Math.max(0, shortfallPrices.length - 1))).reduce((a, b) => a + b, 0);
+    const flexSlots = Math.max(0, slotsAfterThis - shortfallPrices.length);
+    return mandatoryReserve + (flexSlots * globalBasePrice);
+  }, [neededPlayers, roleShortfalls, globalBasePrice]);
+
+  const maxSafeBidCalc = Math.max(0, (userTeam?.budget || 0) - subsequentReserve);
 
   if (!userTeam) return (
       <div className={`rounded-[2rem] p-8 text-center border-2 border-dashed ${isDark ? 'bg-secondary/50 border-zinc-800 text-zinc-500' : 'bg-gray-50 border-gray-200 text-gray-400'}`}>
@@ -94,8 +159,37 @@ const MyTeamPanel: React.FC = () => {
             </div>
         </div>
       </div>
+
+      {/* LIVE STRATEGY & BUDGET DIRECTIVE BANNER */}
+      <div className={`mb-4 p-3.5 rounded-2xl border transition-all ${
+        isDark ? 'bg-gradient-to-r from-blue-950/40 via-indigo-950/30 to-zinc-900 border-blue-500/30 shadow-md' : 'bg-gradient-to-r from-blue-50 via-indigo-50 to-white border-blue-200 shadow-sm'
+      }`}>
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-[9px] font-black uppercase tracking-wider text-blue-500">
+              Strategy &amp; Quota Directive
+            </span>
+          </div>
+          <button
+            onClick={() => setShowCalcModal(true)}
+            className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition-all active:scale-95"
+            title="Open Interactive Strategy & Budget Calculator"
+          >
+            <Calculator className="w-3 h-3" /> Live Calculator
+          </button>
+        </div>
+        <p className={`text-[11px] font-black leading-snug tracking-tight ${isDark ? 'text-zinc-200' : 'text-gray-800'}`}>
+          &ldquo;You have <span className="text-emerald-500 font-black">₹{userTeam.budget.toLocaleString()}</span> left and need{' '}
+          <span className="text-blue-500 font-black">{neededPlayers} player{neededPlayers !== 1 ? 's' : ''}</span>{' '}
+          {roleShortfalls.length > 0 && <span className="text-amber-500 font-black">({shortfallSummary})</span>}.{' '}
+          Max bid for next player:{' '}
+          <span className="text-indigo-600 dark:text-cyan-400 underline font-black">₹{maxSafeBidCalc.toLocaleString()}</span>{' '}
+          to maintain minimum squad base prices.&rdquo;
+        </p>
+      </div>
       
-      <div className="mb-6">
+      <div className="mb-4">
         <button
           onClick={handleBid}
           disabled={!canAfford || isLeading}
@@ -111,50 +205,24 @@ const MyTeamPanel: React.FC = () => {
         {isLeading && <p className="text-green-500 text-[9px] mt-2 text-center font-black uppercase tracking-widest animate-pulse">You are the highest bidder!</p>}
       </div>
 
-      {state.autoReserveFunds && !state.unlimitedPurse && state.categories && state.categories.length > 0 && (
-        <div className={`mb-6 p-4 rounded-2xl border transition-all ${isDark ? 'bg-black/20 border-accent/15' : 'bg-gray-50 border-gray-100'}`}>
-          <div className="flex items-center justify-between mb-3 border-b pb-1.5 border-white/5">
-            <h4 className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-accent' : 'text-blue-600'}`}>Max Bid By Category</h4>
-            <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase ${isDark ? 'bg-accent/10 text-accent' : 'bg-blue-100 text-blue-700'}`}>RESERVE ACTIVE</span>
-          </div>
-          <div className="space-y-1.5">
-            {state.categories.map((cat, idx) => {
-              const dummyPlayer = {
-                id: 'dummy_' + cat.name,
-                name: 'Dummy',
-                category: cat.name,
-                basePrice: cat.basePrice,
-                status: 'UNSOLD',
-              };
-              const result = calculateMaxBid(userTeam, state, dummyPlayer as any);
-              return (
-                <div key={idx} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full ${result.allowBid ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                    <span className={`font-black uppercase text-[9px] ${isDark ? 'text-zinc-400' : 'text-gray-600'}`}>{cat.name} (₹{cat.basePrice})</span>
-                  </div>
-                  <span className={`font-black tracking-tight ${result.allowBid ? (isDark ? 'text-white' : 'text-gray-900') : 'text-red-500 text-[10px]'}`}>
-                    {result.allowBid ? `₹${Math.max(0, Math.floor(result.maxBid))}` : (result.reason || 'LOCKED')}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       <div className={`flex p-1 rounded-2xl mb-4 transition-colors ${isDark ? 'bg-zinc-900/50' : 'bg-gray-100'}`}>
           <button 
             onClick={() => setActiveTab('MY_SQUAD')} 
             className={`flex-1 text-[9px] font-black py-2 rounded-xl uppercase tracking-widest transition-all ${activeTab === 'MY_SQUAD' ? (isDark ? 'bg-accent text-zinc-950 shadow-lg shadow-accent/20' : 'bg-white text-blue-600 shadow-sm') : (isDark ? 'text-zinc-500 hover:text-zinc-300' : 'text-gray-400 hover:text-gray-600')}`}
           >
-            My Squad
+            My Squad ({teamPlayers.length})
           </button>
           <button 
             onClick={() => setActiveTab('ALL_TEAMS')} 
             className={`flex-1 text-[9px] font-black py-2 rounded-xl uppercase tracking-widest transition-all ${activeTab === 'ALL_TEAMS' ? (isDark ? 'bg-accent text-zinc-950 shadow-lg shadow-accent/20' : 'bg-white text-blue-600 shadow-sm') : (isDark ? 'text-zinc-500 hover:text-zinc-300' : 'text-gray-400 hover:text-gray-600')}`}
           >
             All Purses
+          </button>
+          <button 
+            onClick={() => setActiveTab('CALCULATOR')} 
+            className={`flex-1 text-[9px] font-black py-2 rounded-xl uppercase tracking-widest transition-all flex items-center justify-center gap-1 ${activeTab === 'CALCULATOR' ? (isDark ? 'bg-accent text-zinc-950 shadow-lg shadow-accent/20' : 'bg-white text-blue-600 shadow-sm') : (isDark ? 'text-zinc-500 hover:text-zinc-300' : 'text-gray-400 hover:text-gray-600')}`}
+          >
+            <Calculator className="w-3 h-3" /> Strategy
           </button>
       </div>
 
@@ -190,7 +258,7 @@ const MyTeamPanel: React.FC = () => {
                     )}
                 </div>
              </>
-         ) : (
+         ) : activeTab === 'ALL_TEAMS' ? (
              <>
                 <h4 className={`text-[10px] font-black uppercase tracking-[0.2em] mb-4 flex items-center border-b pb-2 ${isDark ? 'text-accent border-accent/10' : 'text-blue-600 border-blue-500/10'}`}>
                     <Users className="w-4 h-4 mr-2"/>
@@ -208,8 +276,20 @@ const MyTeamPanel: React.FC = () => {
                     ))}
                 </div>
              </>
+         ) : (
+             <div className="flex-grow overflow-y-auto custom-scrollbar pr-1">
+                 <TeamStrategyCalculator team={userTeam} isEmbedded={true} onPlaceBid={() => handleBid()} />
+             </div>
          )}
       </div>
+
+      {/* Strategy & Budget Calculator Modal */}
+      <TeamStrategyCalculator
+        team={userTeam}
+        isOpen={showCalcModal}
+        onClose={() => setShowCalcModal(false)}
+        onPlaceBid={() => handleBid()}
+      />
     </div>
   );
 };

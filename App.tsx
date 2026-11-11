@@ -120,7 +120,7 @@ const AppContent: React.FC = () => {
 
   // Visibility Logic: Hide Support Widget on Landing Page or OBS Views
   const isLandingPage = location.pathname === '/';
-  const isObsView = location.pathname.includes('obs-') || location.pathname.includes('match-overlay');
+  const isObsView = location.pathname.includes('obs-') || location.pathname.includes('/obs') || location.pathname.includes('/projector') || location.pathname.includes('match-overlay');
   const isRegistrationPage = location.pathname.includes('/register');
   const showSupport = isLoggedIn && !isSupportStaff && !isLandingPage && !isObsView && !isRegistrationPage;
 
@@ -173,8 +173,14 @@ const AppContent: React.FC = () => {
           } />
           <Route path="/match-overlay/:matchId" element={<MatchOverlay />} />
 
-          <Route path="/obs-overlay/:id" element={<OBSOverlay />} />
+          <Route path="/projector/:id" element={<ProjectorScreen />} />
+          <Route path="/projector" element={<ProjectorScreen />} />
           <Route path="/obs-green/:id" element={<ProjectorScreen />} />
+          <Route path="/obs-green" element={<ProjectorScreen />} />
+          <Route path="/obs-overlay/:id" element={<OBSOverlay />} />
+          <Route path="/obs-overlay" element={<OBSOverlay />} />
+          <Route path="/obs/:id" element={<OBSOverlay />} />
+          <Route path="/obs" element={<OBSOverlay />} />
 
           <Route path="/admin/auction/:id/recollection" element={
               isAdmin ? <RecollectionManager /> : <Navigate to="/auth" replace />

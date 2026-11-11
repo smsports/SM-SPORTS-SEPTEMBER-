@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuction } from '../hooks/useAuction';
 import { useTheme } from '../contexts/ThemeContext';
 // Standardized imports
-import { Plus, Search, Menu, AlertCircle, RefreshCw, Database, Trash2, Cast, Monitor, Activity, UserPlus, Link as LinkIcon, ShieldCheck, CreditCard, Scale, FileText, ChevronRight, CheckCircle, Info, Zap, Crown, Users, Gavel, Sparkles, Shield, Book, HelpCircle, UserPlus2, Layout, Youtube, MessageSquare, Star, Trophy, Tag, Check, ShieldAlert, LogOut, AlertTriangle, Clock, X, Megaphone, Infinity as InfinityIcon, CalendarDays, ChevronDown, XCircle, Sun, Moon, Settings } from 'lucide-react';
+import { Plus, Search, Menu, AlertCircle, RefreshCw, Database, Trash2, Cast, Monitor, Activity, UserPlus, Link as LinkIcon, ShieldCheck, CreditCard, Scale, FileText, ChevronRight, CheckCircle, Info, Zap, Crown, Users, Gavel, Sparkles, Shield, Book, HelpCircle, UserPlus2, Layout, LayoutGrid, Youtube, MessageSquare, Star, Trophy, Tag, Check, ShieldAlert, LogOut, AlertTriangle, Clock, X, Megaphone, Infinity as InfinityIcon, CalendarDays, ChevronDown, XCircle, Sun, Moon, Settings } from 'lucide-react';
 import { db } from '../firebase';
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/firestore';
@@ -320,6 +320,17 @@ const AdminDashboard: React.FC = () => {
       });
   };
 
+  const handleToggleAuctionType = async (auctionId: string, currentType: 'BIDDING' | 'DRAFT_BOARD' | undefined) => {
+      const newType = currentType === 'DRAFT_BOARD' ? 'BIDDING' : 'DRAFT_BOARD';
+      try {
+          await db.collection('auctions').doc(auctionId).update({ auctionType: newType });
+          setAuctions(prev => prev.map(a => a.id === auctionId ? { ...a, auctionType: newType } : a));
+          showNotification(`Switched to ${newType === 'DRAFT_BOARD' ? '📋 Category Draft Board' : '🔨 Live Bidding'}!`, "success");
+      } catch (e: any) { 
+          showNotification("Switch failed: " + e.message, "error"); 
+      }
+  };
+
   const renderAuctions = () => {
     const filteredAuctions = auctions.filter(a => {
         const matchesSearch = (a.title || '').toLowerCase().includes(auctionSearchQuery.toLowerCase()) || 
@@ -528,6 +539,22 @@ const AdminDashboard: React.FC = () => {
                                     }`}>
                                         {auction.status}
                                     </span>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleToggleAuctionType(auction.id, auction.auctionType);
+                                        }}
+                                        className={`px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all flex items-center gap-1 active:scale-95 ${
+                                            auction.auctionType === 'DRAFT_BOARD'
+                                                ? 'bg-indigo-600/20 text-indigo-400 border-indigo-500/40 hover:bg-indigo-600/30 shadow-sm'
+                                                : 'bg-amber-500/20 text-amber-400 border-amber-500/40 hover:bg-amber-500/30 shadow-sm'
+                                        }`}
+                                        title={`Current: ${auction.auctionType === 'DRAFT_BOARD' ? 'Category Draft Board' : 'Live Bidding'}. Click to toggle format.`}
+                                    >
+                                        <span>{auction.auctionType === 'DRAFT_BOARD' ? '📋 Draft Board' : '🔨 Live Bidding'}</span>
+                                        <span className="text-[8px] opacity-70 underline ml-0.5">⇄ Switch</span>
+                                    </button>
                                 </div>
                                 <div className="flex flex-wrap gap-4">
                                     <div className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>
@@ -672,9 +699,15 @@ const AdminDashboard: React.FC = () => {
                                 : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500/50'
                             } flex-col gap-2 p-5 rounded-3xl transition-all shadow-lg active:scale-95 flex items-center justify-center border`}
                         >
-                            {isOverFreeLimit ? <ShieldAlert className="w-6 h-6" /> : <Gavel className="w-6 h-6" />}
+                            {isOverFreeLimit ? (
+                                <ShieldAlert className="w-6 h-6" />
+                            ) : auction.auctionType === 'DRAFT_BOARD' ? (
+                                <LayoutGrid className="w-6 h-6 text-white" />
+                            ) : (
+                                <Gavel className="w-6 h-6" />
+                            )}
                             <span className="text-[9px] font-black uppercase tracking-widest text-center">
-                                {isOverFreeLimit ? 'Locked: Buy Plan' : 'Auction Room'}
+                                {isOverFreeLimit ? 'Locked: Buy Plan' : (auction.auctionType === 'DRAFT_BOARD' ? 'Draft Board' : 'Auction Room')}
                             </span>
                         </button>
                         <button 

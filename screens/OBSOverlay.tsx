@@ -7,6 +7,8 @@ import { getEffectiveBasePrice } from '../utils';
 import { Player, Team, AuctionStatus, AuctionState } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { SpinWheelBroadcastOverlay } from '../components/SpinWheelBroadcastOverlay';
+import CategoryDraftBoard from '../components/DraftBoard/CategoryDraftBoard';
+import { getDraftTheme } from '../utils/draftThemes';
 
 interface OverlayState {
     player: Player | null;
@@ -166,8 +168,9 @@ const OverlayCard = React.memo(({ children, title, tickerShow, tickerContent, la
 ));
 
 const OBSOverlay: React.FC = () => {
-  const { state, joinAuction } = useAuction();
-  const { id: auctionId } = useParams<{ id: string }>();
+  const { state, joinAuction, activeAuctionId } = useAuction();
+  const { id: paramAuctionId } = useParams<{ id: string }>();
+  const auctionId = paramAuctionId || activeAuctionId || localStorage.getItem('last_auction_id') || '';
   const [display, setDisplay] = useState<OverlayState>({ player: null, bid: 0, bidder: null, status: 'WAITING' });
   const [currentSponsorIndex, setCurrentSponsorIndex] = useState(0);
 
@@ -309,7 +312,12 @@ const OBSOverlay: React.FC = () => {
       document.documentElement.style.backgroundColor = 'transparent';
   }, []);
 
-  useEffect(() => { if (auctionId) joinAuction(auctionId); }, [auctionId]);
+  useEffect(() => { 
+    if (auctionId) {
+      joinAuction(auctionId);
+      try { localStorage.setItem('last_auction_id', auctionId); } catch (_) {}
+    }
+  }, [auctionId]);
 
   useEffect(() => {
       const { currentPlayerId, players, currentBid, highestBidder, status, teams, categories } = state;
@@ -333,6 +341,30 @@ const OBSOverlay: React.FC = () => {
   }, [state.currentPlayerId, state.players, state.currentBid, state.highestBidder, state.status, state.teams, state.categories]);
 
   if (window.location.protocol === 'blob:') return <div className="min-h-screen w-full flex items-center justify-center bg-black/90 p-10"><div className="bg-red-600/20 border border-red-500 text-white p-8 rounded-xl text-center"><h1 className="text-2xl font-bold mb-2">Preview Mode Detected</h1><p>Please deploy the app to use the OBS Overlay.</p></div></div>;
+
+  // Loading state while connecting to Firestore
+  if (!state.tournamentName && state.players.length === 0 && state.teams.length === 0) {
+      return (
+          <div className="min-h-screen flex flex-col items-center justify-center bg-transparent text-white font-black uppercase tracking-widest">
+              <div className="flex flex-col items-center gap-4 p-8 rounded-3xl bg-black/70 backdrop-blur-md border border-white/10 shadow-2xl">
+                  <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+                  <p className="text-sm font-black text-cyan-400 animate-pulse tracking-wider">Initializing Broadcast Overlay...</p>
+                  <p className="text-[9px] text-zinc-400 tracking-widest uppercase">{auctionId ? `Auction: ${auctionId}` : 'Awaiting Connection...'}</p>
+              </div>
+          </div>
+      );
+  }
+
+  // CATEGORY DRAFT BOARD MODE: Show all players throughout the entire auction on OBS!
+  if (state.auctionType === 'DRAFT_BOARD') {
+      const themeConfig = getDraftTheme(state.draftBoardState?.broadcastTheme);
+      return (
+          <div className={`h-screen w-full relative flex flex-col overflow-hidden ${themeConfig.containerBg}`}>
+              <CategoryDraftBoard isOBSView={true} auctionId={auctionId} />
+              <SpinWheelBroadcastOverlay target="OBS" />
+          </div>
+      );
+  }
 
   if (state.adminViewOverride && state.adminViewOverride.type !== 'NONE') {
       const { type, data } = state.adminViewOverride;
@@ -520,16 +552,7 @@ const OBSOverlay: React.FC = () => {
   const { player, bid, bidder, status } = display;
   const layout = state.obsLayout || 'STANDARD';
 
-  if (!state.status && !state.tournamentName) {
-      return (
-          <div className="min-h-screen flex flex-col items-center justify-center bg-transparent text-white font-black uppercase tracking-widest">
-              <div className="flex flex-col items-center gap-4 p-8 rounded-3xl bg-black/50 backdrop-blur-md border border-white/10">
-                  <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
-                  <p className="text-sm animate-pulse">Initializing Overlay...</p>
-              </div>
-          </div>
-      );
-  }
+
 
   return (
     <>

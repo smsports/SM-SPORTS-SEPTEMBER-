@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { Team } from '../types';
-import { Download, Trophy, Users, Wallet, ArrowLeft, Sparkles, FileText, Shield, Crown, Image as ImageIcon } from 'lucide-react';
+import { Download, Trophy, Users, Wallet, ArrowLeft, Sparkles, FileText, Shield, Crown, Image as ImageIcon, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuction } from '../hooks/useAuction';
 import TeamPosterModal from './TeamPosterModal';
 import TeamPdfExportModal from './TeamPdfExportModal';
 import TeamPhotoPdfExportModal from './TeamPhotoPdfExportModal';
+import AuctionAwardsModal from './AuctionAwardsModal';
+import TeamStrategyCalculator from './TeamStrategyCalculator';
 import { resolveTeamSquad } from '../utils';
 
 interface Props {
@@ -18,6 +20,8 @@ const TeamPostAuctionView: React.FC<Props> = ({ team }) => {
     const [showPosterModal, setShowPosterModal] = useState(false);
     const [showPdfModal, setShowPdfModal] = useState(false);
     const [showPhotoPdfModal, setShowPhotoPdfModal] = useState(false);
+    const [showAwardsModal, setShowAwardsModal] = useState(false);
+    const [showCalcModal, setShowCalcModal] = useState(false);
 
     // Resolve complete squad including directly assigned players
     const squadPlayers = resolveTeamSquad(team, state.players);
@@ -134,8 +138,21 @@ const TeamPostAuctionView: React.FC<Props> = ({ team }) => {
 
                         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                             <button
-                                onClick={() => setShowPosterModal(true)}
+                                onClick={() => setShowCalcModal(true)}
+                                className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-lg flex items-center justify-center font-black shadow-md transition-all active:scale-95 text-xs uppercase tracking-wider"
+                                title="Open Live Strategy & Budget Calculator"
+                            >
+                                <Calculator className="w-4 h-4 mr-1.5" /> Strategy Calc
+                            </button>
+                            <button
+                                onClick={() => setShowAwardsModal(true)}
                                 className="flex-1 sm:flex-none bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black px-3.5 py-2 rounded-lg flex items-center justify-center font-black shadow-md transition-all active:scale-95 text-xs uppercase tracking-wider"
+                            >
+                                <Trophy className="w-4 h-4 mr-1.5" /> Awards &amp; Leaderboard
+                            </button>
+                            <button
+                                onClick={() => setShowPosterModal(true)}
+                                className="flex-1 sm:flex-none bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-3.5 py-2 rounded-lg flex items-center justify-center font-black shadow-sm transition-all active:scale-95 text-xs uppercase tracking-wider"
                             >
                                 <Sparkles className="w-4 h-4 mr-1.5" /> Poster (Themes)
                             </button>
@@ -249,6 +266,25 @@ const TeamPostAuctionView: React.FC<Props> = ({ team }) => {
                 registrations={state.registrations}
                 registrationConfig={state.registrationConfig}
                 systemLogoUrl={state.systemLogoUrl}
+            />
+
+            {/* Auction Awards & Leaderboard Modal */}
+            <AuctionAwardsModal
+                isOpen={showAwardsModal}
+                onClose={() => setShowAwardsModal(false)}
+                teams={state.teams && state.teams.length > 0 ? state.teams : [team]}
+                allPlayers={state.players}
+                tournamentName={state.tournamentName || 'Official Championship'}
+                registrations={state.registrations}
+                auctionLog={state.auctionLog}
+                systemLogoUrl={state.systemLogoUrl}
+            />
+
+            {/* Team Strategy & Budget Calculator Modal */}
+            <TeamStrategyCalculator
+                team={team}
+                isOpen={showCalcModal}
+                onClose={() => setShowCalcModal(false)}
             />
         </div>
     );

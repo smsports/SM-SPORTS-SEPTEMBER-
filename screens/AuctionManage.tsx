@@ -29,6 +29,7 @@ import RecollectionManager from './RecollectionManager';
 import TeamPosterModal from '../components/TeamPosterModal';
 import TeamPdfExportModal from '../components/TeamPdfExportModal';
 import TeamPhotoPdfExportModal from '../components/TeamPhotoPdfExportModal';
+import AuctionAwardsModal from '../components/AuctionAwardsModal';
 
 const DEFAULT_REG_CONFIG: RegistrationConfig = {
     isEnabled: false,
@@ -117,7 +118,7 @@ const AuctionManage: React.FC = () => {
 
     const [settingsForm, setSettingsForm] = useState({
         title: '', fullTournamentName: '', season: '', date: '', matchesDate: '', sport: '', purseValue: 0, basePrice: 0, bidIncrement: 0, playersPerTeam: 0, totalTeams: 0, logoUrl: '', dateTBD: false, venue: '', eventVenue: '',
-        unlimitedPurse: false, autoReserveFunds: false
+        unlimitedPurse: false, autoReserveFunds: false, auctionType: 'BIDDING' as 'BIDDING' | 'DRAFT_BOARD'
     });
     const [slabs, setSlabs] = useState<BidIncrementSlab[]>([]);
     const [newSlab, setNewSlab] = useState({ from: '', increment: '' });
@@ -324,6 +325,7 @@ const AuctionManage: React.FC = () => {
     const [showPosterModal, setShowPosterModal] = useState(false);
     const [showPdfModal, setShowPdfModal] = useState(false);
     const [showPhotoPdfModal, setShowPhotoPdfModal] = useState(false);
+    const [showAwardsModal, setShowAwardsModal] = useState(false);
     const [captainSearchQuery, setCaptainSearchQuery] = useState('');
     const [modalTeamId, setModalTeamId] = useState<string | number | undefined>(undefined);
     const [playersPerPage, setPlayersPerPage] = useState<1 | 2 | 4 | 6 | 9 | 'LIST'>(1);
@@ -597,7 +599,8 @@ const AuctionManage: React.FC = () => {
                     logoUrl: data.logoUrl || '',
                     dateTBD: data.date === 'TBD' || !!data.dateTBD,
                     unlimitedPurse: !!data.unlimitedPurse,
-                    autoReserveFunds: !!data.autoReserveFunds
+                    autoReserveFunds: !!data.autoReserveFunds,
+                    auctionType: (data.auctionType || 'BIDDING') as 'BIDDING' | 'DRAFT_BOARD'
                 });
                 if (data.slabs) setSlabs(data.slabs);
             }
@@ -667,6 +670,19 @@ const AuctionManage: React.FC = () => {
             showNotification("Optimization failed: " + err.message, "error");
         } finally {
             setIsRepairingDoc(false);
+        }
+    };
+
+    const handleSwitchAuctionType = async (type: 'BIDDING' | 'DRAFT_BOARD') => {
+        setSettingsForm(prev => ({ ...prev, auctionType: type }));
+        if (id) {
+            try {
+                await db.collection('auctions').doc(id).update({ auctionType: type });
+                showNotification(`Auction format switched to ${type === 'DRAFT_BOARD' ? '📋 Category Draft Board' : '🔨 Live Bidding'}!`, "success");
+            } catch (err: any) {
+                console.error("Error switching auction mode:", err);
+                showNotification("Failed to switch format: " + err.message, "error");
+            }
         }
     };
 
@@ -2230,6 +2246,79 @@ const AuctionManage: React.FC = () => {
                                                     className={`w-12 h-6 rounded-full transition-all relative ${settingsForm.autoReserveFunds ? 'bg-blue-600' : 'bg-gray-200'}`}
                                                 >
                                                     <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settingsForm.autoReserveFunds ? 'left-7' : 'left-1'}`} />
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Auction Format / Execution Method */}
+                                        <div className="sm:col-span-2 p-5 bg-gradient-to-r from-blue-50/60 via-indigo-50/40 to-slate-50 rounded-2xl border-2 border-blue-200">
+                                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                                                <div>
+                                                    <p className="text-xs font-black text-gray-800 uppercase tracking-wider">
+                                                        Auction Format / Execution Mode
+                                                    </p>
+                                                    <p className="text-[10px] text-gray-500 font-medium">
+                                                        Choose between traditional live bidding or the category turn draft board
+                                                    </p>
+                                                </div>
+                                                <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider bg-blue-600 text-white w-fit">
+                                                    {settingsForm.auctionType === 'DRAFT_BOARD' ? '📋 Category Draft Board' : '🔨 Live Bidding'}
+                                                </span>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSwitchAuctionType('BIDDING')}
+                                                    className={`p-3.5 rounded-xl text-left border-2 transition-all ${
+                                                        settingsForm.auctionType !== 'DRAFT_BOARD'
+                                                            ? 'bg-white border-blue-600 shadow-md ring-2 ring-blue-500/20'
+                                                            : 'bg-white/70 border-gray-200 hover:border-gray-300'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className="text-base">🔨</span>
+                                                        <span className="text-xs font-black uppercase text-gray-800">
+                                                            Live Bidding Auction
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-[10px] text-gray-500 font-medium">
+                                                        Traditional paddle bidding with countdown timer, increments, and hammer.
+                                                    </p>
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSwitchAuctionType('DRAFT_BOARD')}
+                                                    className={`p-3.5 rounded-xl text-left border-2 transition-all ${
+                                                        settingsForm.auctionType === 'DRAFT_BOARD'
+                                                            ? 'bg-white border-blue-600 shadow-md ring-2 ring-blue-500/20'
+                                                            : 'bg-white/70 border-gray-200 hover:border-gray-300'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className="text-base">📋</span>
+                                                        <span className="text-xs font-black uppercase text-gray-800">
+                                                            Category Draft Board
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-[10px] text-gray-500 font-medium">
+                                                        Category-wise rows and columns. Captains pick one-by-one with round timer and live SOLD stamps.
+                                                    </p>
+                                                </button>
+                                            </div>
+
+                                            <div className="mt-3 pt-3 border-t border-blue-200/50 flex flex-wrap items-center justify-between gap-2">
+                                                <p className="text-[10px] font-bold text-gray-500">
+                                                    Format updates immediately for all users in real-time.
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => window.open(`${window.location.origin}/#/auction/${id}`, '_blank')}
+                                                    className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider bg-blue-600 hover:bg-blue-700 text-white shadow-md active:scale-95 transition-all flex items-center gap-1.5"
+                                                >
+                                                    <ExternalLink className="w-3.5 h-3.5" />
+                                                    Open {settingsForm.auctionType === 'DRAFT_BOARD' ? 'Category Draft Board' : 'Live Bidding'} Now
                                                 </button>
                                             </div>
                                         </div>
@@ -5162,6 +5251,26 @@ const AuctionManage: React.FC = () => {
                                 </div>
 
                                 <div className="space-y-6">
+                                    <div className={`p-8 rounded-3xl border text-center space-y-4 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-gradient-to-b from-amber-50 to-amber-100/40 border-amber-300'}`}>
+                                        <div className="w-16 h-16 bg-gradient-to-br from-amber-400 to-amber-600 text-black rounded-2xl flex items-center justify-center mx-auto shadow-xl shadow-amber-500/20">
+                                            <Trophy className="w-8 h-8 stroke-[2.5]" />
+                                        </div>
+                                        <div>
+                                            <h4 className={`text-lg font-black uppercase tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>Auction Awards &amp; Leaderboard</h4>
+                                            <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-zinc-500' : 'text-amber-700'}`}>👑 King · 🎯 Value Pick · 💰 Smart Spender · ⚡ Fast Deal</p>
+                                        </div>
+                                        <p className="text-xs text-gray-500 leading-relaxed italic">
+                                            Automated tournament honors spotlighting the most expensive buy, top tactical value picks, smartest franchise spender, and rapid hammer deals.
+                                        </p>
+                                        <button 
+                                            onClick={() => setShowAwardsModal(true)}
+                                            className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all text-xs uppercase tracking-widest"
+                                        >
+                                            <Trophy className="w-4 h-4 stroke-[2.5]" />
+                                            View Awards &amp; Leaderboard
+                                        </button>
+                                    </div>
+
                                     <div className={`p-8 rounded-3xl border text-center space-y-4 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-amber-50/50 border-amber-200/60'}`}>
                                         <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-amber-600/10">
                                             <Sparkles className="w-8 h-8" />
@@ -5375,6 +5484,12 @@ const AuctionManage: React.FC = () => {
                                     </div>
                                     <div className={`p-6 border-t flex flex-wrap justify-between items-center gap-4 ${isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-gray-50/50 border-gray-100'}`}>
                                         <div className="flex flex-wrap gap-2">
+                                            <button 
+                                                onClick={() => setShowAwardsModal(true)}
+                                                className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-sm transition-all"
+                                            >
+                                                <Trophy className="w-4 h-4 stroke-[2.5]" /> Auction Awards
+                                            </button>
                                             <button 
                                                 onClick={() => { setModalTeamId(undefined); setShowPosterModal(true); }}
                                                 className="bg-amber-500 hover:bg-amber-400 text-black px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-sm transition-all"
@@ -6357,6 +6472,18 @@ const AuctionManage: React.FC = () => {
                 tournamentName={auction?.fullTournamentName || auction?.title || settingsForm.fullTournamentName || settingsForm.title || 'Official Championship'}
                 registrations={registrations}
                 registrationConfig={regConfig}
+                systemLogoUrl={systemBranding.logo}
+            />
+
+            {/* AUCTION AWARDS & LEADERBOARD MODAL */}
+            <AuctionAwardsModal
+                isOpen={showAwardsModal}
+                onClose={() => setShowAwardsModal(false)}
+                teams={teams}
+                allPlayers={players}
+                tournamentName={auction?.fullTournamentName || auction?.title || settingsForm.fullTournamentName || settingsForm.title || 'Official Championship'}
+                registrations={registrations}
+                auctionLog={auction?.auctionLog || []}
                 systemLogoUrl={systemBranding.logo}
             />
         </div>

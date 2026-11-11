@@ -8,6 +8,8 @@ import { Team, Player, AuctionStatus, ProjectorLayout } from '../types';
 import { getEffectiveBasePrice } from '../utils';
 import confetti from 'canvas-confetti';
 import { SpinWheelBroadcastOverlay } from '../components/SpinWheelBroadcastOverlay';
+import CategoryDraftBoard from '../components/DraftBoard/CategoryDraftBoard';
+import { getDraftTheme } from '../utils/draftThemes';
 
 interface DisplayState {
     player: Player | null;
@@ -93,8 +95,9 @@ const IplRotatingRings = () => (
 );
 
 const ProjectorScreen: React.FC = () => {
-  const { state, joinAuction } = useAuction();
-  const { id: auctionId } = useParams<{ id: string }>();
+  const { state, joinAuction, activeAuctionId, error } = useAuction();
+  const { id: paramAuctionId } = useParams<{ id: string }>();
+  const auctionId = paramAuctionId || activeAuctionId || localStorage.getItem('last_auction_id') || '';
   const [display, setDisplay] = useState<DisplayState>({ player: null, bid: 0, bidder: null, status: 'WAITING' });
   const [latestLog, setLatestLog] = useState<string>('');
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -135,7 +138,10 @@ const ProjectorScreen: React.FC = () => {
     }, [state.projectorLayout]);
 
   useEffect(() => {
-    if (auctionId) joinAuction(auctionId);
+    if (auctionId) {
+      joinAuction(auctionId);
+      try { localStorage.setItem('last_auction_id', auctionId); } catch (_) {}
+    }
   }, [auctionId]);
 
   const [showSoldOverlay, setShowSoldOverlay] = useState(false);
@@ -353,6 +359,33 @@ const ProjectorScreen: React.FC = () => {
       </div>
     );
   };
+
+  // Loading state while fetching auction data from Firestore
+  if (!state.tournamentName && state.players.length === 0 && state.teams.length === 0) {
+      return (
+          <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white font-black uppercase tracking-widest">
+              <div className="flex flex-col items-center gap-6 p-10 rounded-[2.5rem] bg-zinc-900/60 border border-amber-500/30 shadow-2xl">
+                  <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+                  <div className="text-center">
+                      <p className="text-2xl font-black text-white tracking-wider animate-pulse">Loading Projector Display...</p>
+                      <p className="text-xs text-amber-400 tracking-widest mt-1 uppercase font-bold">{auctionId ? `Auction ID: ${auctionId}` : 'Connecting...'}</p>
+                  </div>
+                  <p className="text-[10px] text-zinc-500 tracking-[0.4em] uppercase">SM SPORTS BROADCAST SYSTEM</p>
+              </div>
+          </div>
+      );
+  }
+
+  // CATEGORY DRAFT BOARD MODE: Show all players throughout the entire auction!
+  if (state.auctionType === 'DRAFT_BOARD') {
+      const themeConfig = getDraftTheme(state.draftBoardState?.broadcastTheme);
+      return (
+          <div className={`h-screen w-full relative flex flex-col overflow-hidden ${themeConfig.containerBg}`}>
+              <CategoryDraftBoard isProjectorView={true} auctionId={auctionId} />
+              <SpinWheelBroadcastOverlay target="PROJECTOR" />
+          </div>
+      );
+  }
 
   if (state.adminViewOverride && state.adminViewOverride.type !== 'NONE') {
       const { type, data } = state.adminViewOverride;
@@ -845,17 +878,7 @@ const ProjectorScreen: React.FC = () => {
   const player = activePlayer;
   const layout = state.projectorLayout || 'STANDARD';
 
-  if (!state.status && !state.tournamentName) {
-      return (
-          <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white font-black uppercase tracking-widest">
-              <div className="flex flex-col items-center gap-6">
-                  <div className="w-20 h-20 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
-                  <p className="text-2xl animate-pulse">Loading Auction Data...</p>
-                  <p className="text-[10px] text-zinc-500 tracking-[0.5em]">SM SPORTS LIVE SYSTEM</p>
-              </div>
-          </div>
-      );
-  }
+
 
   return (
       <div className="h-screen w-full relative flex flex-col overflow-hidden bg-black">

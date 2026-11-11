@@ -248,6 +248,66 @@ export interface AuctionState {
   defaultRetentionDays?: number; // Global default retention/deletion period in days
   createdAt?: number; // Date when the auction was created
   spinWheelState?: SpinWheelState | null; // Dedicated spinning wheel state for projector and OBS overlay
+  auctionType?: 'BIDDING' | 'DRAFT_BOARD'; // 'BIDDING' (Standard live bidding) or 'DRAFT_BOARD' (Category-wise turn draft)
+  draftBoardState?: DraftBoardState | null; // Dedicated draft board round, turn, timer, and pick state
+}
+
+export type AuctionType = 'BIDDING' | 'DRAFT_BOARD';
+
+export interface DraftPickHistory {
+  id: string;
+  round: number;
+  pickNumber: number;
+  teamId: string | number;
+  teamName: string;
+  teamLogo?: string;
+  playerId: string | number;
+  playerName: string;
+  playerCategory: string;
+  playerRole?: string;
+  playerPhoto?: string;
+  soldPrice: number;
+  timestamp: number;
+}
+
+export interface DraftCelebrationData {
+  playerId: string | number;
+  playerName: string;
+  playerPhoto?: string;
+  role?: string;
+  category?: string;
+  jerseyNumber?: string | number;
+  teamId: string | number;
+  teamName: string;
+  teamLogo?: string;
+  timestamp: number;
+}
+
+export interface DraftBoardState {
+  currentRound: number;
+  roundStatus: 'IDLE' | 'IN_PROGRESS' | 'ROUND_COMPLETED' | 'PAUSED' | 'COMPLETED' | 'FINISHED';
+  currentTurnIndex: number; // index in roundOrder
+  currentTeamId: string | number | null;
+  turnTimerSeconds: number; // e.g. 30, 45, 60, 90
+  timerTimeRemaining: number;
+  isTimerRunning: boolean;
+  timerStartedAt?: number;
+  roundOrder: (string | number)[]; // list of team IDs in current round
+  orderType: 'SNAKE' | 'LINEAR' | 'MANUAL';
+  displayMode?: 'GRID' | 'TABLE'; // Active layout mode for admin draft board
+  projectorLayoutMode?: 'ROWS' | 'COLUMNS' | 'GRID' | 'TABLE'; // Broadcast layout mode: ROWS (Left Category Rows), COLUMNS, GRID, TABLE
+  broadcastView?: 'PLAYERS' | 'SQUADS' | 'SUMMARY'; // Broadcast view: PLAYERS draft board vs TEAMS squad vs SUMMARY
+  broadcastCategoryFilter?: string; // 'ALL' or specific category name to show only necessary category
+  selectedTeamSquadId?: string | number | 'ALL'; // When broadcastView is SQUADS, show all teams or specific team
+  broadcastTheme?: 'DARK_OBSIDIAN' | 'IPL_NAVY' | 'ADVAYA_GOLD' | 'NEON_STADIUM' | 'CRIMSON_DYNASTY' | 'STUDIO_LIGHT'; // Multiple themes
+  isAudioMuted?: boolean; // Admin broadcast sound mute
+  selectedPlayerId?: string | number | null; // currently focused/nominated card
+  autoAllotEnabled?: boolean; // When true, clicking on a player in draft board auto-allots to the picking team
+  targetPickingTeamId?: string | number | 'CURRENT_TURN'; // Which team the player picking round is for
+  teamPickingEnabled?: boolean; // Admin toggle to allow or disable player picking in team login
+  lastSoldCelebration?: DraftCelebrationData | null; // 5-second broadcast sold celebration popup
+  history: DraftPickHistory[]; // supports undo
+  updatedAt?: number;
 }
 
 export enum UserRole {
@@ -501,6 +561,9 @@ export interface AuctionSetup {
     fullTournamentName?: string;
     unlimitedPurse?: boolean;
     autoReserveFunds?: boolean;
+    auctionLog?: AuctionLog[];
+    auctionType?: 'BIDDING' | 'DRAFT_BOARD';
+    draftBoardState?: DraftBoardState | null;
 }
 
 export type ScoreboardTheme = 'ICC_T20_2010' | 'ICC_T20_2012' | 'ICC_T20_2014' | 'ICC_T20_2016' | 'ICC_T20_2021' | 'ICC_T20_2022' | 'ICC_T20_2024' | 'CWC_2023' | 'DEFAULT';
@@ -652,4 +715,5 @@ export interface AuctionContextType {
   nextBid: number;
   repairAuctionDocument: () => Promise<boolean>;
   updateSpinWheelState: (wheelState: SpinWheelState | null) => Promise<void>;
+  updateAuctionType: (type: AuctionType) => Promise<void>;
 }

@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useAuction } from '../hooks/useAuction';
 import { useTheme } from '../contexts/ThemeContext';
-import { Gavel, Lock, AlertCircle, Users, AlertTriangle, Info } from 'lucide-react';
+import { Gavel, Lock, AlertCircle, Users, AlertTriangle, Info, Calculator } from 'lucide-react';
 import { calculateMaxBid } from '../utils';
+import TeamStrategyCalculator from './TeamStrategyCalculator';
 
 const BiddingPanel: React.FC = () => {
     const { state, userProfile, placeBid, nextBid } = useAuction();
@@ -10,6 +11,7 @@ const BiddingPanel: React.FC = () => {
     const isDark = theme === 'dark';
     const { teams, highestBidder, biddingStatus, currentBid, currentPlayerId, players, status, categories, roles, maxPlayersPerTeam, basePrice: globalBasePrice, unlimitedPurse, autoReserveFunds } = state;
     const [isBidding, setIsBidding] = useState(false);
+    const [showStrategyModal, setShowStrategyModal] = useState(false);
 
     const userTeam = teams.find(t => String(t.id) === String(userProfile?.teamId));
     const currentPlayer = currentPlayerId ? players.find(p => String(p.id) === String(currentPlayerId)) : null;
@@ -83,12 +85,21 @@ const BiddingPanel: React.FC = () => {
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-6 pb-6 border-b border-white/5">
                     <div className="w-full sm:w-auto text-center sm:text-left flex flex-row sm:flex-col justify-between sm:justify-start items-center sm:items-start px-2 sm:px-0">
                         <div className="flex flex-col gap-1">
-                            <p className={`text-[10px] md:text-xs font-black uppercase tracking-[0.3em] ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Your Purse</p>
+                            <div className="flex items-center gap-2 justify-center sm:justify-start">
+                                <p className={`text-[10px] md:text-xs font-black uppercase tracking-[0.3em] ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Your Purse</p>
+                                <button
+                                    onClick={() => setShowStrategyModal(true)}
+                                    className="px-2 py-0.5 rounded-lg bg-blue-600/10 hover:bg-blue-600/20 text-blue-500 border border-blue-500/20 text-[8px] font-black uppercase tracking-wider flex items-center gap-1 transition-all active:scale-95"
+                                    title="Open Live Strategy & Budget Calculator"
+                                >
+                                    <Calculator className="w-2.5 h-2.5" /> Strategy
+                                </button>
+                            </div>
                             <p className={`text-2xl md:text-4xl font-black tabular-nums leading-none ${isDark ? 'text-white' : 'text-gray-900'}`}>₹{userTeam.budget}</p>
                         </div>
                         {!isSquadFull && !unlimitedPurse && (
-                            <div className="flex flex-col gap-1 items-end sm:items-start">
-                                <p className={`text-[10px] md:text-xs font-black uppercase tracking-[0.3em] ${isDark ? 'text-accent/80' : 'text-blue-600/80'}`}>Max Bid On Current Player</p>
+                            <div className="flex flex-col gap-1 items-end sm:items-start mt-2">
+                                <p className={`text-[10px] md:text-xs font-black uppercase tracking-[0.3em] ${isDark ? 'text-accent/80' : 'text-blue-600/80'}`}>Max Safe Bid</p>
                                 <p className={`text-xl md:text-2xl font-black tabular-nums leading-none ${isDark ? 'text-accent' : 'text-blue-600'}`}>₹{Math.max(0, Math.floor(maxBidAllowed))}</p>
                             </div>
                         )}
@@ -185,6 +196,14 @@ const BiddingPanel: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Live Strategy & Budget Calculator Modal */}
+            <TeamStrategyCalculator
+                team={userTeam}
+                isOpen={showStrategyModal}
+                onClose={() => setShowStrategyModal(false)}
+                onPlaceBid={handleBid}
+            />
         </div>
     );
 };

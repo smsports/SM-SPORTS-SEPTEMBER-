@@ -8,6 +8,7 @@ import TeamPostAuctionView from './TeamPostAuctionView';
 import TeamPosterModal from './TeamPosterModal';
 import TeamPdfExportModal from './TeamPdfExportModal';
 import TeamPhotoPdfExportModal from './TeamPhotoPdfExportModal';
+import AuctionAwardsModal from './AuctionAwardsModal';
 import { resolveTeamSquad } from '../utils';
 import * as XLSX from 'xlsx';
 
@@ -20,6 +21,7 @@ const AdminPostAuctionView: React.FC = () => {
     const [showPosterModal, setShowPosterModal] = useState(false);
     const [showPdfModal, setShowPdfModal] = useState(false);
     const [showPhotoPdfModal, setShowPhotoPdfModal] = useState(false);
+    const [showAwardsModal, setShowAwardsModal] = useState(false);
     const [modalTeamId, setModalTeamId] = useState<string | number | undefined>(undefined);
 
     const isAdmin = userProfile?.role === UserRole.ADMIN || userProfile?.role === UserRole.SUPER_ADMIN;
@@ -251,6 +253,12 @@ const AdminPostAuctionView: React.FC = () => {
                 </h2>
                 <div className="flex flex-wrap gap-2">
                     <button
+                        onClick={() => setShowAwardsModal(true)}
+                        className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition-all"
+                    >
+                        <Trophy className="w-4 h-4 stroke-[2.5]" /> Auction Awards &amp; Leaderboard
+                    </button>
+                    <button
                         onClick={() => { setModalTeamId(undefined); setShowPosterModal(true); }}
                         className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-black px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
                     >
@@ -425,6 +433,18 @@ const AdminPostAuctionView: React.FC = () => {
                 tournamentName={state.tournamentName || 'Official Squad Photo Dossier'}
                 registrations={state.registrations}
                 registrationConfig={state.registrationConfig}
+                systemLogoUrl={state.systemLogoUrl}
+            />
+
+            {/* Auction Awards & Leaderboard Modal */}
+            <AuctionAwardsModal
+                isOpen={showAwardsModal}
+                onClose={() => setShowAwardsModal(false)}
+                teams={state.teams}
+                allPlayers={state.players}
+                tournamentName={state.tournamentName || 'Official Championship'}
+                registrations={state.registrations}
+                auctionLog={state.auctionLog}
                 systemLogoUrl={state.systemLogoUrl}
             />
         </div>

@@ -7,15 +7,17 @@ import AdminPostAuctionView from '../components/AdminPostAuctionView';
 import { useAuction } from '../hooks/useAuction';
 import { AuctionStatus, UserRole } from '../types';
 import { useNavigate, useParams } from 'react-router-dom';
-import { AlertCircle, Wallet, Users, LogOut, Trophy, Home, ShieldAlert, ArrowRightLeft, Clock, CreditCard, CheckCircle, Shuffle } from 'lucide-react';
+import { AlertCircle, Wallet, Users, LogOut, Trophy, Home, ShieldAlert, ArrowRightLeft, Clock, CreditCard, CheckCircle, Shuffle, Calculator } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SpinningWheelModal } from '../components/SpinningWheelModal';
+import TeamStrategyCalculator from '../components/TeamStrategyCalculator';
+import CategoryDraftBoard from '../components/DraftBoard/CategoryDraftBoard';
 
 import { useTheme } from '../contexts/ThemeContext';
 import ThemeToggle from '../components/ThemeToggle';
 
 const Dashboard: React.FC = () => {
-  const { state, userProfile, logout, error, joinAuction } = useAuction();
+  const { state, userProfile, logout, error, joinAuction, updateAuctionType } = useAuction();
   const getAutoDeleteRemainingDays = () => {
     if (state.isLifetime) return 'Lifetime (Never deleted)';
     const created = state.createdAt || Date.now();
@@ -58,6 +60,7 @@ const Dashboard: React.FC = () => {
   const myTeam = isTeamOwner ? state.teams.find(t => String(t.id) === String(userProfile?.teamId)) : null;
   const [view, setView] = React.useState<'AUCTION' | 'TRADE'>('AUCTION');
   const [showWheelModal, setShowWheelModal] = React.useState(false);
+  const [showStrategyModal, setShowStrategyModal] = React.useState(false);
 
   // If there is a critical error (like auction not found), show a clean error state
   if (error) {
@@ -116,18 +119,37 @@ const Dashboard: React.FC = () => {
           </div>
 
            {isTeamOwner && myTeam && state.status !== AuctionStatus.Finished && (
-               <div className={`flex items-center gap-4 md:gap-8 px-6 py-2.5 rounded-2xl border shadow-inner ml-auto mr-4 transition-colors ${isDark ? 'bg-primary/50 border-zinc-800' : 'bg-gray-50 border-gray-200'}`}>
-                   <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-3">
-                       <div className="flex items-center"><Wallet className="w-4 h-4 mr-2 text-green-500" /><span className={`hidden md:inline uppercase text-[10px] font-black tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Remaining:</span></div>
-                       <b className="text-green-500 text-xl md:text-2xl font-black tracking-tighter leading-none">₹{myTeam.budget}</b>
+               state.auctionType === 'DRAFT_BOARD' ? (
+                   <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl border shadow-inner ml-auto mr-4 transition-colors ${isDark ? 'bg-primary/50 border-zinc-800' : 'bg-gray-50 border-gray-200'}`}>
+                       <div className="flex items-center gap-2">
+                           <Users className="w-4 h-4 text-amber-400" />
+                           <span className={`uppercase text-[10px] font-black tracking-widest ${isDark ? 'text-zinc-400' : 'text-gray-500'}`}>Drafted Squad:</span>
+                           <b className={`text-lg font-black tracking-tighter leading-none ${isDark ? 'text-white' : 'text-gray-900'}`}>{myTeam.players.length}</b>
+                       </div>
                    </div>
-                   <div className={`w-px h-8 hidden md:block ${isDark ? 'bg-zinc-800' : 'bg-gray-200'}`}></div>
-                   <div className="hidden md:flex items-center gap-3">
-                       <Users className="w-4 h-4 text-blue-500" />
-                       <span className={`uppercase text-[10px] font-black tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Squad:</span>
-                       <b className={`text-xl md:text-2xl font-black tracking-tighter leading-none ${isDark ? 'text-white' : 'text-gray-900'}`}>{myTeam.players.length}</b>
+               ) : (
+                   <div className={`flex items-center gap-3 md:gap-6 px-4 md:px-6 py-2.5 rounded-2xl border shadow-inner ml-auto mr-4 transition-colors ${isDark ? 'bg-primary/50 border-zinc-800' : 'bg-gray-50 border-gray-200'}`}>
+                       <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-3">
+                           <div className="flex items-center"><Wallet className="w-4 h-4 mr-2 text-green-500" /><span className={`hidden md:inline uppercase text-[10px] font-black tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Remaining:</span></div>
+                           <b className="text-green-500 text-xl md:text-2xl font-black tracking-tighter leading-none">₹{myTeam.budget}</b>
+                       </div>
+                       <div className={`w-px h-8 hidden md:block ${isDark ? 'bg-zinc-800' : 'bg-gray-200'}`}></div>
+                       <div className="hidden md:flex items-center gap-3">
+                           <Users className="w-4 h-4 text-blue-500" />
+                           <span className={`uppercase text-[10px] font-black tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Squad:</span>
+                           <b className={`text-xl md:text-2xl font-black tracking-tighter leading-none ${isDark ? 'text-white' : 'text-gray-900'}`}>{myTeam.players.length}</b>
+                       </div>
+                       <div className={`w-px h-8 hidden sm:block ${isDark ? 'bg-zinc-800' : 'bg-gray-200'}`}></div>
+                       <button
+                           onClick={() => setShowStrategyModal(true)}
+                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-[10px] uppercase tracking-wider shadow-md transition-all active:scale-95"
+                           title="Open Live Strategy & Budget Calculator"
+                       >
+                           <Calculator className="w-3.5 h-3.5" />
+                           <span className="hidden sm:inline">Strategy Calculator</span>
+                       </button>
                    </div>
-               </div>
+               )
            )}
 
            <div className="flex items-center space-x-4">
@@ -180,7 +202,7 @@ const Dashboard: React.FC = () => {
                   {typeof getAutoDeleteRemainingDays() === 'number' ? `${getAutoDeleteRemainingDays()}d left` : 'Lifetime'}
               </span>
           </div>
-          <div className={`${isDark ? 'text-accent' : 'text-accent'}`}>{isAdmin ? 'Admin Mode' : (isTeamOwner ? 'Live Bidding Enabled' : 'Read Only')}</div>
+          <div className={`${isDark ? 'text-accent' : 'text-accent'}`}>{isAdmin ? 'Admin Mode' : (isTeamOwner ? (state.auctionType === 'DRAFT_BOARD' ? 'Draft Board Active' : 'Live Bidding Enabled') : 'Read Only')}</div>
       </div>
 
       <main className="flex-1 min-h-0 w-full px-2 sm:px-4 lg:px-5 pb-1 overflow-hidden flex flex-col">
@@ -209,35 +231,68 @@ const Dashboard: React.FC = () => {
           </div>
         ) : null}
 
-        {/* Navigation Tabs for Admins (Compact Bar) */}
+        {/* Navigation Tabs & Format Switcher for Admins (Compact Bar) */}
         {isAdmin && state.status !== AuctionStatus.Finished && (
-            <div className="flex flex-wrap items-center gap-1.5 mb-2 bg-slate-900/60 p-1 rounded-xl border border-white/5 w-fit shrink-0">
-                <button 
-                    onClick={() => setView('AUCTION')}
-                    className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${view === 'AUCTION' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-sm border border-purple-400/40' : 'text-slate-500 hover:text-slate-300'}`}
-                >
-                    <Trophy className="w-3.5 h-3.5" /> Bidding Floor
-                </button>
-                <button 
-                    onClick={() => setView('TRADE')}
-                    className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${view === 'TRADE' ? 'bg-amber-600 text-black shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-                >
-                    <ArrowRightLeft className="w-3.5 h-3.5" /> Trading Terminal
-                </button>
-                <button 
-                    type="button"
-                    onClick={() => setShowWheelModal(true)}
-                    className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${
-                      state.spinWheelState?.isActive 
-                        ? 'bg-amber-500 text-black font-black shadow-lg shadow-amber-500/25 animate-pulse' 
-                        : 'text-amber-400 hover:bg-amber-500/10 border border-amber-500/20'
-                    }`}
-                >
-                    <Shuffle className="w-3.5 h-3.5" /> Spin Wheel
-                    {state.spinWheelState?.isActive && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                    )}
-                </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-1.5 bg-slate-900/60 p-1 rounded-xl border border-white/5 w-fit">
+                    <button 
+                        onClick={() => setView('AUCTION')}
+                        className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${view === 'AUCTION' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-sm border border-purple-400/40' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        <Trophy className="w-3.5 h-3.5" /> Bidding Floor
+                    </button>
+                    <button 
+                        onClick={() => setView('TRADE')}
+                        className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${view === 'TRADE' ? 'bg-amber-600 text-black shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        <ArrowRightLeft className="w-3.5 h-3.5" /> Trading Terminal
+                    </button>
+                    <button 
+                        type="button"
+                        onClick={() => setShowWheelModal(true)}
+                        className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${
+                          state.spinWheelState?.isActive 
+                            ? 'bg-amber-500 text-black font-black shadow-lg shadow-amber-500/25 animate-pulse' 
+                            : 'text-amber-400 hover:bg-amber-500/10 border border-amber-500/20'
+                        }`}
+                    >
+                        <Shuffle className="w-3.5 h-3.5" /> Spin Wheel
+                        {state.spinWheelState?.isActive && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                        )}
+                    </button>
+                </div>
+
+                {/* Instant Auction Style Switcher for Admin */}
+                <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-white/10 shadow-lg">
+                    <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 px-2 hidden sm:inline">
+                        Mode:
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => updateAuctionType('BIDDING')}
+                        className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                            state.auctionType !== 'DRAFT_BOARD'
+                                ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-black shadow-md'
+                                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                        }`}
+                        title="Switch to Live Bidding Auction"
+                    >
+                        🔨 Live Bidding
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => updateAuctionType('DRAFT_BOARD')}
+                        className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                            state.auctionType === 'DRAFT_BOARD'
+                                ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-black shadow-md ring-1 ring-indigo-400'
+                                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                        }`}
+                        title="Switch to Category Draft Board"
+                    >
+                        📋 Category Draft Board
+                    </button>
+                </div>
             </div>
         )}
 
@@ -248,6 +303,15 @@ const Dashboard: React.FC = () => {
         ) : view === 'TRADE' ? (
           <div className="flex-1 overflow-y-auto">
             <TradingPanel />
+          </div>
+        ) : state.auctionType === 'DRAFT_BOARD' ? (
+          <div className="flex-1 min-h-0 h-full">
+            <CategoryDraftBoard
+              isAdmin={isAdmin}
+              isTeamOwner={isTeamOwner}
+              myTeam={myTeam}
+              auctionId={auctionId}
+            />
           </div>
         ) : isAdmin ? (
           <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-3 lg:gap-4 h-full">
@@ -269,6 +333,15 @@ const Dashboard: React.FC = () => {
           <SpinningWheelModal 
             isOpen={showWheelModal} 
             onClose={() => setShowWheelModal(false)} 
+          />
+        )}
+
+        {/* Strategy & Budget Calculator Modal for Team Owner (Bidding Auction Only) */}
+        {isTeamOwner && myTeam && state.auctionType !== 'DRAFT_BOARD' && (
+          <TeamStrategyCalculator
+            team={myTeam}
+            isOpen={showStrategyModal}
+            onClose={() => setShowStrategyModal(false)}
           />
         )}
       </main>

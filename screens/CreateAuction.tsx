@@ -24,7 +24,8 @@ const CreateAuction: React.FC = () => {
       purseValue: 10000,
       basePrice: 20,
       bidIncrement: 10,
-      playersPerTeam: 15
+      playersPerTeam: 15,
+      auctionType: 'BIDDING' as 'BIDDING' | 'DRAFT_BOARD'
   });
 
   useEffect(() => {
@@ -99,7 +100,8 @@ const CreateAuction: React.FC = () => {
               status: 'DRAFT',
               createdAt: Date.now(),
               createdBy: uid,
-              isPaid: false
+              isPaid: false,
+              auctionType: formData.auctionType
           };
           await db.collection('auctions').add(newAuction);
           setShowSuccessModal(true);
@@ -159,7 +161,52 @@ const CreateAuction: React.FC = () => {
                 </div>
 
                 <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">2. Auction Name <span className="text-red-500">*</span></label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-3">2. Select Auction Format / Method <span className="text-red-500">*</span></label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, auctionType: 'BIDDING' })}
+                            className={`p-4 rounded-xl text-left border-2 transition-all flex flex-col justify-between ${
+                                formData.auctionType === 'BIDDING'
+                                    ? 'bg-blue-50 border-blue-600 shadow-md'
+                                    : 'bg-white border-gray-100 hover:border-gray-200'
+                            }`}
+                        >
+                            <div className="flex items-center gap-2 mb-1">
+                                <span className="text-lg">🔨</span>
+                                <span className={`text-xs font-black uppercase ${formData.auctionType === 'BIDDING' ? 'text-blue-700' : 'text-gray-800'}`}>
+                                    Live Bidding Auction
+                                </span>
+                            </div>
+                            <p className="text-[10px] text-gray-500 font-medium">
+                                Standard paddle bidding with live auctioneer, real-time bid increments, and timer hammer.
+                            </p>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, auctionType: 'DRAFT_BOARD' })}
+                            className={`p-4 rounded-xl text-left border-2 transition-all flex flex-col justify-between ${
+                                formData.auctionType === 'DRAFT_BOARD'
+                                    ? 'bg-blue-50 border-blue-600 shadow-md'
+                                    : 'bg-white border-gray-100 hover:border-gray-200'
+                            }`}
+                        >
+                            <div className="flex items-center gap-2 mb-1">
+                                <span className="text-lg">📋</span>
+                                <span className={`text-xs font-black uppercase ${formData.auctionType === 'DRAFT_BOARD' ? 'text-blue-700' : 'text-gray-800'}`}>
+                                    Category Draft Board
+                                </span>
+                            </div>
+                            <p className="text-[10px] text-gray-500 font-medium">
+                                Turn-based pick draft. Players displayed in category rows &amp; columns with round timers and live SOLD stamps.
+                            </p>
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">3. Auction Name <span className="text-red-500">*</span></label>
                     <input type="text" name="title" required placeholder="e.g. Premier League 2026" value={formData.title} onChange={handleChange}
                         className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 px-4 text-sm font-bold text-gray-700 focus:bg-white outline-none focus:ring-2 ring-blue-500 transition-all"/>
                 </div>

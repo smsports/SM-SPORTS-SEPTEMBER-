@@ -42,7 +42,9 @@ const initialState: AuctionState = {
     globalJerseyUrl: '',
     globalJerseyOverlayUrl: '',
     defaultRetentionDays: 30,
-    spinWheelState: null
+    spinWheelState: null,
+    auctionType: 'BIDDING',
+    draftBoardState: null
 };
 
 export const AuctionContext = createContext<AuctionContextType | null>(null);
@@ -216,7 +218,9 @@ export const AuctionProvider: React.FC<{ children: React.ReactNode }> = ({ child
                             sponsorConfig: data.sponsorConfig || prev.sponsorConfig || { showOnOBS: false, showOnProjector: false, loopInterval: 5 },
                             maxPlayersPerTeam: data.playersPerTeam || 25,
                             isPaid: data.isPaid || false,
-                            createdBy: data.createdBy || ''
+                            createdBy: data.createdBy || '',
+                            auctionType: (data.auctionType as 'BIDDING' | 'DRAFT_BOARD') || prev.auctionType || 'BIDDING',
+                            draftBoardState: data.draftBoardState !== undefined ? data.draftBoardState : (prev.draftBoardState || null)
                         };
                     });
                 }
@@ -703,6 +707,17 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
         }
     };
 
+    const updateAuctionType = async (type: 'BIDDING' | 'DRAFT_BOARD') => {
+        if (!activeAuctionId) return;
+        try {
+            await db.collection('auctions').doc(activeAuctionId).update({ auctionType: type });
+            setState(prev => ({ ...prev, auctionType: type }));
+        } catch (e) {
+            console.error("AuctionContext updateAuctionType Error:", e);
+            throw e;
+        }
+    };
+
     const initiateTrade = async (trade: Omit<TradeRecord, 'processedAt' | 'processedBy'>) => {
         if (!activeAuctionId) return;
         const tradeId = db.collection('auctions').doc(activeAuctionId).collection('trades').doc().id;
@@ -880,7 +895,7 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
 
     return (
         <AuctionContext.Provider value={{
-            state: activeState, userProfile, setUserProfile, placeBid, sellPlayer, passPlayer, correctPlayerSale, initiateTrade, processTrade, startAuction, undoPlayerSelection, endAuction, resetAuction, resetCurrentPlayer, resetUnsoldPlayers, updateBiddingStatus, updateSponsorConfig, toggleSelectionMode, updateTheme, setAdminView, logout, error, joinAuction, activeAuctionId, nextBid, repairAuctionDocument, updateSpinWheelState
+            state: activeState, userProfile, setUserProfile, placeBid, sellPlayer, passPlayer, correctPlayerSale, initiateTrade, processTrade, startAuction, undoPlayerSelection, endAuction, resetAuction, resetCurrentPlayer, resetUnsoldPlayers, updateBiddingStatus, updateSponsorConfig, toggleSelectionMode, updateTheme, setAdminView, logout, error, joinAuction, activeAuctionId, nextBid, repairAuctionDocument, updateSpinWheelState, updateAuctionType
         }}>
             {children}
         </AuctionContext.Provider>
