@@ -611,7 +611,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                     <img 
                                                                         src={player.photoUrl} 
                                                                         alt={player.name}
-                                                                        className={`w-full h-full object-cover ${isSold ? 'grayscale contrast-125 opacity-30' : ''}`}
+                                                                        className="w-full h-full object-cover object-top"
                                                                     />
                                                                 ) : (
                                                                     <div className="w-full h-full flex items-center justify-center font-black text-2xl text-zinc-600 bg-zinc-900">
@@ -621,14 +621,16 @@ export const TeamDraftDashboard: React.FC<Props> = ({
 
                                                                 {/* SOLD Overlay */}
                                                                 {isSold && (
-                                                                    <div className="absolute inset-0 bg-black/80 backdrop-blur-[1px] flex flex-col items-center justify-center p-1 text-center">
-                                                                        <span className="px-2 py-0.5 rounded bg-red-600 text-white font-black text-[9px] uppercase tracking-wider shadow">
+                                                                    <>
+                                                                        <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-red-600 text-white font-black text-[8px] uppercase tracking-wider shadow z-20 whitespace-nowrap">
                                                                             SOLD
-                                                                        </span>
-                                                                        <p className="text-[10px] font-black text-amber-300 uppercase mt-1 truncate max-w-full px-1">
-                                                                            {soldTeamName}
-                                                                        </p>
-                                                                    </div>
+                                                                        </div>
+                                                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-1 px-1 flex flex-col items-center justify-center text-center z-20">
+                                                                            <p className="text-[9px] font-black text-amber-300 uppercase truncate max-w-full leading-tight">
+                                                                                {soldTeamName}
+                                                                            </p>
+                                                                        </div>
+                                                                    </>
                                                                 )}
                                                             </div>
 

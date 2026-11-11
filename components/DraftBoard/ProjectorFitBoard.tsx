@@ -101,7 +101,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
     // Theme configuration based on Admin selected broadcast theme
     const themeConfig = getDraftTheme(draftState.broadcastTheme);
 
-    // Helper: Render a Single Player Card with Large Sold and Large Text
+    // Helper: Render a Single Player Card with 100% Guaranteed Photo Visibility
     const renderPlayerCard = (player: Player) => {
         const pickInfo = draftPickMap.get(String(player.id));
         const isSold = player.status === 'SOLD' || !!pickInfo;
@@ -111,39 +111,49 @@ export const ProjectorFitBoard: React.FC<Props> = ({
         return (
             <div
                 key={player.id}
-                className={`h-full min-h-0 rounded-2xl border-2 p-1.5 md:p-2 flex flex-col justify-between overflow-hidden shadow-xl transition-all ${
+                className={`h-full min-h-0 rounded-2xl border-2 p-1 md:p-1.5 flex flex-col justify-between overflow-hidden shadow-xl transition-all ${
                     isSold
-                        ? 'bg-gradient-to-b from-red-950/95 via-zinc-950 to-black border-red-500 shadow-red-500/30 ring-2 ring-red-500/50'
+                        ? 'bg-gradient-to-b from-red-950/90 via-zinc-950 to-black border-red-500 shadow-red-500/20 ring-1 ring-red-500/40'
                         : `${themeConfig.cardBg} ${themeConfig.cardBorder} hover:border-amber-400`
                 }`}
             >
                 {/* Top Bar: Role badge & Jersey Number */}
-                <div className="flex items-center justify-between gap-1 mb-1 shrink-0">
-                    <span className={`text-[8px] md:text-[9px] font-black uppercase px-2 py-0.5 rounded-md truncate max-w-[75%] ${
+                <div className="flex items-center justify-between gap-1 mb-0.5 shrink-0">
+                    <span className={`text-[7px] md:text-[8px] font-black uppercase px-1.5 py-0.5 rounded truncate max-w-[75%] ${
                         themeConfig.isLightMode 
                             ? 'bg-blue-100 text-blue-900 border border-blue-200' 
                             : 'bg-black/80 text-amber-300 border border-amber-400/30'
                     }`}>
                         {player.role || player.category || 'PLAYER'}
                     </span>
-                    <span className={`text-[9px] md:text-[10px] font-black ${
+                    <span className={`text-[8px] md:text-[9px] font-black ${
                         themeConfig.isLightMode ? 'text-slate-700' : 'text-amber-300 drop-shadow'
                     }`}>
                         {player.jerseyNumber ? `#${player.jerseyNumber}` : `#${player.id}`}
                     </span>
                 </div>
 
-                {/* Center: Photo Area & LARGE SOLD Badge fitting Player Section */}
-                <div className={`relative flex-1 min-h-0 rounded-xl overflow-hidden my-0.5 flex items-center justify-center ${
+                {/* Center: Photo Area with 100% VISIBLE Photo & Non-Obscuring SOLD Details */}
+                <div className={`relative flex-1 min-h-[42px] w-full rounded-xl overflow-hidden my-0.5 flex items-center justify-center ${
                     themeConfig.isLightMode ? 'bg-slate-100 border border-slate-200' : 'bg-zinc-950 border border-white/5'
                 }`}>
                     {player.photoUrl ? (
                         <img 
                             src={player.photoUrl} 
                             alt={player.name} 
-                            className={`w-full h-full object-cover ${
-                                isSold ? 'grayscale contrast-125 opacity-20' : ''
-                            }`} 
+                            className="w-full h-full object-cover object-top filter contrast-105"
+                            onError={(e) => {
+                                // If image fails to load, show initials fallback
+                                const target = e.currentTarget;
+                                target.style.display = 'none';
+                                const parent = target.parentElement;
+                                if (parent && !parent.querySelector('.fallback-avatar')) {
+                                    const fallback = document.createElement('div');
+                                    fallback.className = 'fallback-avatar w-full h-full flex items-center justify-center font-black text-xl text-zinc-500';
+                                    fallback.innerText = player.name.charAt(0);
+                                    parent.appendChild(fallback);
+                                }
+                            }}
                         />
                     ) : (
                         <div className={`w-full h-full flex items-center justify-center font-black text-2xl ${
@@ -153,59 +163,59 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                         </div>
                     )}
 
-                    {/* LARGE SOLD AND TEAM NAME OVERLAY (FITS ENTIRE SECTION) */}
+                    {/* SOLD OVERLAY: Keeps player face 100% visible while making SOLD and winning franchise prominent */}
                     {isSold && (
-                        <div className="absolute inset-0 bg-black/92 flex flex-col items-center justify-center p-1 text-center animate-fade-in backdrop-blur-[2px] z-20">
-                            {/* LARGE SOLD BADGE */}
-                            <div className="px-3.5 py-1 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black text-xs md:text-sm lg:text-base uppercase tracking-widest shadow-xl shadow-red-600/70 border-2 border-red-300 drop-shadow">
+                        <>
+                            {/* Top SOLD Badge */}
+                            <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black text-[8px] md:text-[9px] uppercase tracking-widest shadow-xl border border-red-300 drop-shadow z-20 whitespace-nowrap">
                                 SOLD
                             </div>
 
-                            {/* TEAM LOGO */}
-                            {soldTeamLogo ? (
-                                <img 
-                                    src={soldTeamLogo} 
-                                    alt="" 
-                                    className="w-8 h-8 md:w-11 md:h-11 rounded-full object-contain bg-white p-0.5 my-1 shadow-lg border-2 border-amber-400 shrink-0" 
-                                />
-                            ) : (
-                                <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-blue-600 text-white font-black text-xs md:text-sm flex items-center justify-center my-1 border-2 border-amber-400 shrink-0 shadow-lg">
-                                    {soldTeamName.charAt(0) || '★'}
-                                </div>
-                            )}
-
-                            {/* LARGE WINNING TEAM NAME */}
-                            <p className="text-xs md:text-sm lg:text-base font-black text-amber-300 uppercase tracking-tight line-clamp-2 drop-shadow-[0_2px_8px_rgba(0,0,0,0.95)] px-1 leading-tight">
-                                {soldTeamName}
-                            </p>
-                        </div>
+                            {/* Bottom Winning Franchise Banner (Translucent gradient preserving player face) */}
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-1 px-1 flex flex-col items-center justify-center text-center z-20">
+                                {soldTeamLogo ? (
+                                    <img 
+                                        src={soldTeamLogo} 
+                                        alt="" 
+                                        className="w-5 h-5 md:w-6 md:h-6 rounded-full object-contain bg-white p-0.5 border border-amber-400 mb-0.5 shadow-md shrink-0" 
+                                    />
+                                ) : (
+                                    <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-blue-600 text-white font-black text-[9px] flex items-center justify-center mb-0.5 border border-amber-400 shrink-0 shadow">
+                                        {soldTeamName.charAt(0) || '★'}
+                                    </div>
+                                )}
+                                <p className="text-[8px] md:text-[9px] lg:text-[10px] font-black text-amber-300 uppercase tracking-tight truncate max-w-full leading-tight drop-shadow-[0_1px_4px_rgba(0,0,0,1)]">
+                                    {soldTeamName}
+                                </p>
+                            </div>
+                        </>
                     )}
                 </div>
 
-                {/* Bottom: Player Name (Large, Bold, High-Contrast) & Status */}
-                <div className="mt-1 shrink-0 text-center">
-                    <h4 className={`font-black uppercase tracking-tight text-xs md:text-sm lg:text-base truncate leading-tight ${
-                        themeConfig.isLightMode ? 'text-slate-900 font-extrabold' : 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]'
+                {/* Bottom: Player Name & Status */}
+                <div className="mt-0.5 shrink-0 text-center">
+                    <h4 className={`font-black uppercase tracking-tight text-[10px] md:text-xs lg:text-sm truncate leading-tight ${
+                        themeConfig.isLightMode ? 'text-slate-900 font-extrabold' : 'text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]'
                     }`}>
                         {player.name}
                     </h4>
 
-                {/* Status Pill */}
-                {isSold ? (
-                    <div className="mt-0.5 py-0.5 px-1.5 rounded-md bg-gradient-to-r from-red-600/30 via-amber-500/30 to-yellow-500/30 border border-amber-400/60 text-center">
-                        <span className="text-[9px] md:text-[10px] font-black uppercase text-amber-300 truncate drop-shadow">
-                            ★ {soldTeamName}
-                        </span>
-                    </div>
-                ) : (
-                    <div className="mt-0.5 py-0.5 px-1 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-center">
-                        <span className="text-[8px] md:text-[9px] font-black uppercase tracking-wider text-emerald-400 flex items-center justify-center gap-1">
-                            <Check className="w-2.5 h-2.5 text-emerald-400 stroke-[3]" /> Available
-                        </span>
-                    </div>
-                )}
+                    {/* Status Pill */}
+                    {isSold ? (
+                        <div className="mt-0.5 py-0.5 px-1.5 rounded-md bg-gradient-to-r from-red-600/30 via-amber-500/30 to-yellow-500/30 border border-amber-400/60 text-center">
+                            <span className="text-[8px] md:text-[9px] font-black uppercase text-amber-300 truncate drop-shadow block">
+                                ★ {soldTeamName}
+                            </span>
+                        </div>
+                    ) : (
+                        <div className="mt-0.5 py-0.5 px-1 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-center">
+                            <span className="text-[7px] md:text-[8px] font-black uppercase tracking-wider text-emerald-400 flex items-center justify-center gap-1">
+                                <Check className="w-2.5 h-2.5 text-emerald-400 stroke-[3]" /> Available
+                            </span>
+                        </div>
+                    )}
+                </div>
             </div>
-        </div>
         );
     };
 
@@ -384,9 +394,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                                                 <img 
                                                     src={player.photoUrl} 
                                                     alt="" 
-                                                    className={`w-7 h-7 rounded-md object-cover shrink-0 border border-zinc-700 ${
-                                                        isSold ? 'grayscale contrast-125 opacity-40' : ''
-                                                    }`} 
+                                                    className="w-8 h-8 rounded-lg object-cover object-top shrink-0 border border-zinc-700 shadow" 
                                                 />
                                             ) : (
                                                 <div className="w-7 h-7 rounded-md bg-zinc-800 flex items-center justify-center font-black text-xs text-zinc-400 shrink-0">

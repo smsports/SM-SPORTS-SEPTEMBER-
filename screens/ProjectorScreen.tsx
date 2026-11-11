@@ -736,7 +736,7 @@ const ProjectorScreen: React.FC = () => {
                         {unsoldPlayers.map((p, i) => (
                             <div key={i} className="bg-slate-900 border border-white/5 rounded-3xl overflow-hidden shadow-2xl hover:border-red-500/50 transition-all hover:scale-105 group">
                                 <div className="h-72 relative">
-                                    <img src={p.photoUrl} className="w-full h-full object-cover grayscale opacity-50 transition-all group-hover:grayscale-0 group-hover:opacity-100" />
+                                    <img src={p.photoUrl} className="w-full h-full object-cover object-top transition-all group-hover:scale-105" alt={p.name} />
                                     <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent"></div>
                                     <div className="absolute top-4 left-4 bg-red-600 text-white px-4 py-1 rounded-lg text-[10px] font-black uppercase tracking-[0.2em] shadow-lg">UNSOLD</div>
                                 </div>

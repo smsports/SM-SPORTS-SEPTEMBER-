@@ -1221,10 +1221,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                             <img 
                                                                 src={player.photoUrl} 
                                                                 alt={player.name}
-                                                                className={`w-full h-full object-cover transition-transform duration-300 ${
+                                                                className={`w-full h-full object-cover object-top transition-transform duration-300 ${
                                                                     !isProjectorView && !isOBSView ? 'group-hover:scale-105' : ''
-                                                                } ${
-                                                                    isSold ? 'grayscale contrast-125 opacity-40' : ''
                                                                 }`} 
                                                             />
                                                         ) : (
@@ -1233,24 +1231,21 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                             </div>
                                                         )}
 
-                                                        {/* SOLD OVERLAY STAMP WITH TEAM NAME */}
+                                                        {/* SOLD OVERLAY: Keeps face visible with top badge and bottom winning franchise gradient banner */}
                                                         {isSold && (
-                                                            <div className="absolute inset-0 bg-black/85 backdrop-blur-[2px] flex flex-col items-center justify-center p-2 text-center animate-in fade-in duration-200 z-20">
-                                                                <div className="w-full py-1 bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black text-xs md:text-sm uppercase tracking-widest shadow-xl ring-2 ring-red-400/80 rounded-md transform -rotate-2 mb-1">
+                                                            <>
+                                                                <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2.5 py-0.5 bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black text-[9px] uppercase tracking-widest shadow-xl rounded-md z-20 whitespace-nowrap border border-red-300">
                                                                     SOLD
                                                                 </div>
-                                                                {soldTeamLogo && (
-                                                                    <img src={soldTeamLogo} alt="" className="w-7 h-7 md:w-8 md:h-8 rounded-full object-contain bg-white p-0.5 my-0.5 shadow-md border" />
-                                                                )}
-                                                                <p className="text-xs md:text-sm lg:text-base font-black text-amber-300 uppercase tracking-tight line-clamp-2 leading-tight drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] px-1">
-                                                                    {soldTeamName}
-                                                                </p>
-                                                                {pickInfo?.round && (
-                                                                    <span className="text-[7px] md:text-[8px] text-zinc-300 uppercase font-bold tracking-wider mt-1 bg-black/80 px-1.5 py-0.5 rounded border border-white/10">
-                                                                        R{pickInfo.round} Pick #{pickInfo.pickNumber}
-                                                                    </span>
-                                                                )}
-                                                            </div>
+                                                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-1 px-1 flex flex-col items-center justify-center text-center z-20">
+                                                                    {soldTeamLogo && (
+                                                                        <img src={soldTeamLogo} alt="" className="w-5 h-5 rounded-full object-contain bg-white p-0.5 mb-0.5 shadow-md border border-amber-400" />
+                                                                    )}
+                                                                    <p className="text-[9px] md:text-[10px] font-black text-amber-300 uppercase tracking-tight line-clamp-1 leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
+                                                                        {soldTeamName}
+                                                                    </p>
+                                                                </div>
+                                                            </>
                                                         )}
                                                     </div>
 
