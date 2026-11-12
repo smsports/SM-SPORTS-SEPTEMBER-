@@ -1,11 +1,48 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Team, Player, DraftBoardState, DraftPickHistory, AuctionCategory } from '../../types';
 import { 
     LayoutGrid, Users, Trophy, History, Star, BookOpen, Clock, Check, 
     Search, Filter, Shield, User, ArrowRight, Sparkles, Printer, Download,
-    CheckCircle2, AlertCircle, ChevronRight, Lock
+    CheckCircle2, AlertCircle, ChevronRight, Lock, Maximize2
 } from 'lucide-react';
 import SoldCelebrationPopup from './SoldCelebrationPopup';
+
+/**
+ * Calculates optimal (rows, cols) for any number of players N to guarantee
+ * cards have a balanced portrait/near-square aspect ratio (~0.85) without
+ * squishing photos into horizontal slits or vertical slivers.
+ */
+function computeOptimalGrid(
+    count: number,
+    containerWidth: number = 1600,
+    containerHeight: number = 800,
+    targetCardAspect: number = 0.85
+): { rows: number; cols: number } {
+    if (count <= 0) return { rows: 1, cols: 1 };
+    let bestRows = 1;
+    let bestCols = count;
+    let bestScore = Infinity;
+
+    const maxRows = Math.min(count, 50);
+    for (let r = 1; r <= maxRows; r++) {
+        const c = Math.ceil(count / r);
+        const cellW = containerWidth / c;
+        const cellH = containerHeight / r;
+        const aspect = cellW / cellH;
+
+        let penalty = 0;
+        if (aspect > 1.25) penalty = (aspect - 1.25) * 8;
+        if (aspect < 0.60) penalty = (0.60 - aspect) * 6;
+
+        const score = Math.abs(aspect - targetCardAspect) + penalty;
+        if (score < bestScore) {
+            bestScore = score;
+            bestRows = r;
+            bestCols = c;
+        }
+    }
+    return { rows: bestRows, cols: bestCols };
+}
 
 interface Props {
     myTeam: Team;
@@ -39,6 +76,38 @@ export const TeamDraftDashboard: React.FC<Props> = ({
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
     const [statusFilter, setStatusFilter] = useState<'ALL' | 'AVAILABLE' | 'SOLD'>('AVAILABLE');
+    
+    // View format: 'FIT_TO_PAGE' (zero-scroll mathematically fitted) vs 'EXPANDED' (scrollable grid)
+    const [viewFormat, setViewFormat] = useState<'FIT_TO_PAGE' | 'EXPANDED'>('FIT_TO_PAGE');
+
+    // Measure live container dimensions to compute mathematical grid
+    const boardContainerRef = useRef<HTMLDivElement>(null);
+    const [boardSize, setBoardSize] = useState({
+        width: typeof window !== 'undefined' ? window.innerWidth - 32 : 1600,
+        height: typeof window !== 'undefined' ? window.innerHeight - 200 : 700
+    });
+
+    useEffect(() => {
+        const updateSize = () => {
+            if (boardContainerRef.current) {
+                const rect = boardContainerRef.current.getBoundingClientRect();
+                if (rect.width > 200 && rect.height > 150) {
+                    setBoardSize({ width: rect.width, height: rect.height });
+                    return;
+                }
+            }
+            if (typeof window !== 'undefined') {
+                setBoardSize({
+                    width: Math.max(600, window.innerWidth - 32),
+                    height: Math.max(400, window.innerHeight - 200)
+                });
+            }
+        };
+
+        updateSize();
+        window.addEventListener('resize', updateSize);
+        return () => window.removeEventListener('resize', updateSize);
+    }, [activeTab, selectedCategory]);
     
     // Target Wishlist (bookmarked player IDs stored in local state)
     const [wishlistIds, setWishlistIds] = useState<Set<string>>(() => {
@@ -396,49 +465,61 @@ export const TeamDraftDashboard: React.FC<Props> = ({
             </div>
 
             {/* TAB CONTENTS */}
-            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3 md:p-6">
+            <div className={`flex-1 min-h-0 ${
+                activeTab === 'DRAFT_BOARD' && viewFormat === 'FIT_TO_PAGE'
+                    ? 'overflow-hidden flex flex-col p-1.5 md:p-2'
+                    : 'overflow-y-auto custom-scrollbar p-3 md:p-6'
+            }`}>
                 {/* =========================================================================
                     TAB 1: FULL DRAFT BOARD
                     ========================================================================= */}
                 {activeTab === 'DRAFT_BOARD' && (
-                    <div className="space-y-4">
+                    <div className={`w-full ${
+                        viewFormat === 'FIT_TO_PAGE'
+                            ? 'flex-1 min-h-0 flex flex-col gap-2 overflow-hidden'
+                            : 'space-y-4'
+                    }`}>
                         {/* Notification when it's your turn (SOLID HIGH-CONTRAST COLORS) */}
                         {isMyTurn && (
                             canPickNow ? (
-                                <div className="p-4 md:p-5 rounded-2xl bg-emerald-600 border-4 border-emerald-300 text-white shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-pulse">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-11 h-11 rounded-xl bg-white text-emerald-800 flex items-center justify-center font-black shadow-lg shrink-0">
-                                            <Sparkles className="w-6 h-6 fill-emerald-800 text-emerald-800" />
+                                <div className={`rounded-xl bg-emerald-600 border-2 md:border-4 border-emerald-300 text-white shadow-xl flex items-center justify-between gap-3 animate-pulse shrink-0 ${
+                                    viewFormat === 'FIT_TO_PAGE' ? 'p-2 md:p-2.5 px-3' : 'p-4 md:p-5'
+                                }`}>
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                        <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-white text-emerald-800 flex items-center justify-center font-black shadow shrink-0">
+                                            <Sparkles className="w-5 h-5 fill-emerald-800 text-emerald-800" />
                                         </div>
-                                        <div>
-                                            <h3 className="text-base md:text-lg font-black uppercase text-white tracking-wider">
+                                        <div className="min-w-0">
+                                            <h3 className="text-xs md:text-sm font-black uppercase text-white tracking-wider truncate">
                                                 Captain, It is Your Turn to Pick!
                                             </h3>
-                                            <p className="text-xs md:text-sm font-bold text-emerald-100">
-                                                Click &apos;Draft Now&apos; on any available player below to draft them into {myTeam.name}.
+                                            <p className="text-[10px] md:text-xs font-bold text-emerald-100 truncate">
+                                                Click any available player below to draft them into {myTeam.name}.
                                             </p>
                                         </div>
                                     </div>
-                                    <div className="px-4 py-2 rounded-xl bg-white text-black font-mono font-black text-sm md:text-base border-2 border-black shadow">
+                                    <div className="px-3 py-1 rounded-lg bg-white text-black font-mono font-black text-xs md:text-sm border border-black shadow shrink-0 whitespace-nowrap">
                                         ⏱ {draftState.timerTimeRemaining}s REMAINING
                                     </div>
                                 </div>
                             ) : (
-                                <div className="p-4 md:p-5 rounded-2xl bg-amber-500 border-4 border-amber-200 text-black shadow-2xl flex flex-wrap items-center justify-between gap-3">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-11 h-11 rounded-xl bg-black text-amber-400 flex items-center justify-center font-black shadow-lg shrink-0">
-                                            <Lock className="w-6 h-6 text-amber-400" />
+                                <div className={`rounded-xl bg-amber-500 border-2 md:border-4 border-amber-200 text-black shadow-xl flex items-center justify-between gap-3 shrink-0 ${
+                                    viewFormat === 'FIT_TO_PAGE' ? 'p-2 md:p-2.5 px-3' : 'p-4 md:p-5'
+                                }`}>
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                        <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-black text-amber-400 flex items-center justify-center font-black shadow shrink-0">
+                                            <Lock className="w-5 h-5 text-amber-400" />
                                         </div>
-                                        <div>
-                                            <h3 className="text-base md:text-lg font-black uppercase text-black tracking-wider">
+                                        <div className="min-w-0">
+                                            <h3 className="text-xs md:text-sm font-black uppercase text-black tracking-wider truncate">
                                                 Your Turn is Active (Admin Picking Mode)
                                             </h3>
-                                            <p className="text-xs md:text-sm font-bold text-zinc-900">
-                                                Team self-picking is currently locked by Administrator. The admin will select your player from the control board.
+                                            <p className="text-[10px] md:text-xs font-bold text-zinc-900 truncate">
+                                                Team self-picking is locked by Admin. The administrator picks on your behalf.
                                             </p>
                                         </div>
                                     </div>
-                                    <div className="px-4 py-2 rounded-xl bg-black text-white font-mono font-black text-sm md:text-base border-2 border-black shadow">
+                                    <div className="px-3 py-1 rounded-lg bg-black text-white font-mono font-black text-xs md:text-sm border border-black shadow shrink-0 whitespace-nowrap">
                                         ⏱ {draftState.timerTimeRemaining}s REMAINING
                                     </div>
                                 </div>
@@ -447,36 +528,36 @@ export const TeamDraftDashboard: React.FC<Props> = ({
 
                         {/* Admin Picking Locked Notice when not your turn */}
                         {!isPickingAllowed && !isMyTurn && (
-                            <div className="p-2.5 px-4 rounded-xl bg-zinc-900 border border-zinc-700/80 flex items-center justify-between text-xs text-zinc-300">
-                                <span className="flex items-center gap-2 font-bold">
-                                    <Lock className="w-3.5 h-3.5 text-amber-400" />
-                                    <span>Team self-picking is disabled by Admin (Admin picks on behalf of teams)</span>
+                            <div className="p-1.5 px-3 rounded-lg bg-zinc-900 border border-zinc-700/80 flex items-center justify-between text-[11px] text-zinc-300 shrink-0">
+                                <span className="flex items-center gap-2 font-bold truncate">
+                                    <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+                                    <span className="truncate">Team self-picking is disabled by Admin (Admin picks on behalf of teams)</span>
                                 </span>
-                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-zinc-800 text-amber-400">
+                                <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-amber-400 shrink-0 ml-2">
                                     Admin Controlled
                                 </span>
                             </div>
                         )}
 
                         {/* Search & Category Filter Controls */}
-                        <div className="p-3 rounded-2xl bg-zinc-900/80 border border-zinc-800 flex flex-wrap items-center justify-between gap-3 shadow-md">
-                            <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-                                <Search className="w-4 h-4 text-zinc-400" />
+                        <div className="p-2 rounded-xl bg-zinc-900/90 border border-zinc-800 flex flex-wrap items-center justify-between gap-2 shadow-md shrink-0">
+                            <div className="flex items-center gap-2 flex-1 min-w-[180px]">
+                                <Search className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
                                 <input
                                     type="text"
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
-                                    placeholder="Search by player name, role, or category..."
-                                    className="w-full bg-black/50 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+                                    placeholder="Search player, role, category..."
+                                    className="w-full bg-black/60 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
                                 />
                             </div>
 
                             <div className="flex items-center gap-2 flex-wrap">
                                 {/* Status Filter */}
-                                <div className="flex items-center p-0.5 rounded-xl bg-black/60 border border-zinc-700">
+                                <div className="flex items-center p-0.5 rounded-lg bg-black/60 border border-zinc-700">
                                     <button
                                         onClick={() => setStatusFilter('AVAILABLE')}
-                                        className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition-all ${
                                             statusFilter === 'AVAILABLE' ? 'bg-emerald-600 text-white shadow' : 'text-zinc-400 hover:text-white'
                                         }`}
                                     >
@@ -484,7 +565,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                     </button>
                                     <button
                                         onClick={() => setStatusFilter('SOLD')}
-                                        className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition-all ${
                                             statusFilter === 'SOLD' ? 'bg-red-600 text-white shadow' : 'text-zinc-400 hover:text-white'
                                         }`}
                                     >
@@ -492,7 +573,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                     </button>
                                     <button
                                         onClick={() => setStatusFilter('ALL')}
-                                        className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition-all ${
                                             statusFilter === 'ALL' ? 'bg-zinc-700 text-white shadow' : 'text-zinc-400 hover:text-white'
                                         }`}
                                     >
@@ -504,58 +585,102 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                 <select
                                     value={selectedCategory}
                                     onChange={(e) => setSelectedCategory(e.target.value)}
-                                    className="bg-black/60 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none font-bold uppercase tracking-wider"
+                                    className="bg-black/60 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none font-bold uppercase tracking-wider"
                                 >
                                     <option value="ALL">★ All Categories</option>
                                     {availableCategories.map(cat => (
                                         <option key={cat} value={cat}>{cat}</option>
                                     ))}
                                 </select>
+
+                                {/* View Format Toggle: Fit to Page vs Scrollable Grid */}
+                                <div className="flex items-center p-0.5 rounded-lg bg-black/60 border border-zinc-700">
+                                    <button
+                                        onClick={() => setViewFormat('FIT_TO_PAGE')}
+                                        className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all ${
+                                            viewFormat === 'FIT_TO_PAGE'
+                                                ? 'bg-blue-600 text-white shadow-md ring-1 ring-blue-400'
+                                                : 'text-zinc-400 hover:text-white'
+                                        }`}
+                                        title="Fit all players and categories onto a single screen with zero scrolling"
+                                    >
+                                        <Maximize2 className="w-3 h-3" /> Fit to Page
+                                    </button>
+                                    <button
+                                        onClick={() => setViewFormat('EXPANDED')}
+                                        className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all ${
+                                            viewFormat === 'EXPANDED'
+                                                ? 'bg-blue-600 text-white shadow-md ring-1 ring-blue-400'
+                                                : 'text-zinc-400 hover:text-white'
+                                        }`}
+                                        title="Scrollable grid with large cards"
+                                    >
+                                        <LayoutGrid className="w-3 h-3" /> Scrollable Grid
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
-                        {/* CATEGORIES IN ROW-WISE WITH CATEGORY NAME COLUMN ON LEFT */}
-                        <div className="space-y-4">
-                            {categoryGroups.map(group => {
-                                const groupPlayers = group.players;
-                                if (groupPlayers.length === 0) return null;
+                        {/* =========================================================================
+                            FORMAT 1: FIT TO PAGE (ZERO SCROLL, MATHEMATICALLY BALANCED CARDS)
+                            ========================================================================= */}
+                        {viewFormat === 'FIT_TO_PAGE' ? (
+                            <div 
+                                ref={boardContainerRef}
+                                className="flex-1 min-h-0 w-full overflow-hidden flex flex-col gap-1.5 p-0.5"
+                            >
+                                {categoryGroups.filter(g => g.players.length > 0).map(group => {
+                                    const groupPlayers = group.players;
+                                    const activeGroupsCount = categoryGroups.filter(g => g.players.length > 0).length || 1;
+                                    
+                                    // Compute row dimensions to pass to optimal grid calculator
+                                    const rowWidth = Math.max(300, boardSize.width - 160);
+                                    const rowHeight = Math.max(70, (boardSize.height - (activeGroupsCount - 1) * 8) / activeGroupsCount);
+                                    const { rows, cols } = computeOptimalGrid(groupPlayers.length, rowWidth, rowHeight, 0.85);
 
-                                return (
-                                    <div
-                                        key={group.category}
-                                        className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3 md:p-4 flex flex-col md:flex-row items-stretch gap-3 md:gap-4 shadow-xl"
-                                    >
-                                        {/* LEFT COLUMN: CATEGORY NAME & STATS */}
-                                        <div className="w-full md:w-44 lg:w-48 shrink-0 rounded-xl bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-900 border-2 border-amber-500/40 p-3 flex flex-row md:flex-col justify-between items-center text-center shadow-md">
-                                            <div className="flex items-center md:flex-col gap-2 md:gap-1 text-left md:text-center w-full">
-                                                <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/50 mx-auto flex items-center justify-center text-amber-400 shadow shrink-0">
-                                                    <Trophy className="w-4 h-4" />
-                                                </div>
-                                                <div className="min-w-0 flex-1 md:w-full">
-                                                    <h3 className="text-xs md:text-sm font-black uppercase tracking-wider text-amber-400 truncate md:break-words leading-tight">
+                                    return (
+                                        <div
+                                            key={group.category}
+                                            className="flex-1 min-h-0 w-full rounded-xl border border-zinc-800 bg-zinc-900/60 p-1 md:p-1.5 flex flex-row items-stretch gap-1.5 md:gap-2 overflow-hidden shadow-lg"
+                                        >
+                                            {/* LEFT COLUMN: CATEGORY NAME & STATS */}
+                                            <div className="w-24 sm:w-28 md:w-32 lg:w-36 shrink-0 h-full rounded-lg bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-900 border border-amber-500/40 p-1 md:p-1.5 flex flex-col justify-between items-center text-center shadow-md select-none overflow-hidden">
+                                                <div className="flex flex-col items-center gap-0.5 w-full">
+                                                    <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 shadow shrink-0">
+                                                        <Trophy className="w-3 h-3" />
+                                                    </div>
+                                                    <h3 className="text-[10px] md:text-[11px] font-black uppercase tracking-wider text-amber-400 line-clamp-2 leading-tight w-full break-words">
                                                         {group.category}
                                                     </h3>
-                                                    <span className="text-[9px] font-bold text-zinc-400 uppercase mt-0.5 block">
-                                                        ({groupPlayers.length} Players)
+                                                    <span className="text-[8px] font-bold text-zinc-400 uppercase leading-none">
+                                                        ({groupPlayers.length} P)
                                                     </span>
                                                 </div>
+
+                                                <div className="w-full flex flex-col gap-0.5 pt-1 border-t border-white/10 shrink-0">
+                                                    <div className="py-0.2 px-1 rounded bg-emerald-500/15 border border-emerald-500/30 text-[8px] font-black text-emerald-400 uppercase flex items-center justify-between">
+                                                        <span>Avail</span>
+                                                        <span>{group.availableCount}</span>
+                                                    </div>
+                                                    <div className="py-0.2 px-1 rounded bg-red-500/15 border border-red-500/30 text-[8px] font-black text-red-400 uppercase flex items-center justify-between">
+                                                        <span>Sold</span>
+                                                        <span>{group.soldCount}</span>
+                                                    </div>
+                                                </div>
                                             </div>
 
-                                            <div className="flex md:flex-col gap-1.5 md:gap-1 md:w-full md:pt-2 md:border-t md:border-white/10 shrink-0">
-                                                <div className="py-0.5 px-2 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-[9px] font-black text-emerald-400 uppercase flex items-center justify-between gap-1">
-                                                    <span>Avail</span>
-                                                    <span>{group.availableCount}</span>
-                                                </div>
-                                                <div className="py-0.5 px-2 rounded-md bg-red-500/15 border border-red-500/30 text-[9px] font-black text-red-400 uppercase flex items-center justify-between gap-1">
-                                                    <span>Sold</span>
-                                                    <span>{group.soldCount}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* RIGHT MAIN AREA: PLAYERS IN THIS CATEGORY */}
-                                        <div className="flex-1 min-w-0">
-                                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-2.5">
+                                            {/* RIGHT MAIN AREA: MATHEMATICALLY FITTED PLAYERS IN THIS CATEGORY */}
+                                            <div 
+                                                className="flex-1 min-w-0 h-full w-full overflow-hidden"
+                                                style={{
+                                                    display: 'grid',
+                                                    gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                                                    gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+                                                    gap: '4px',
+                                                    width: '100%',
+                                                    height: '100%'
+                                                }}
+                                            >
                                                 {groupPlayers.map(player => {
                                                     const pickInfo = draftPickMap.get(String(player.id));
                                                     const isSold = player.status === 'SOLD' || !!pickInfo;
@@ -570,81 +695,81 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                     onNominatePlayer(player);
                                                                 }
                                                             }}
-                                                            className={`group relative rounded-2xl border-2 p-2 flex flex-col justify-between transition-all duration-200 overflow-hidden shadow-lg ${
+                                                            className={`group relative rounded-lg border p-1 flex flex-col justify-between overflow-hidden shadow transition-all duration-150 ${
                                                                 isSold
-                                                                    ? 'bg-gradient-to-b from-red-950/40 via-zinc-900 to-zinc-950 border-red-500/70 opacity-80 cursor-default'
+                                                                    ? 'bg-zinc-950 border-red-500/60 opacity-85 cursor-default'
                                                                     : canPickNow
-                                                                    ? 'bg-zinc-900 border-emerald-500/90 hover:border-emerald-400 hover:shadow-emerald-500/20 hover:scale-[1.02] cursor-pointer ring-2 ring-emerald-500/30'
+                                                                    ? 'bg-zinc-900 border-emerald-500 hover:border-emerald-300 hover:ring-2 hover:ring-emerald-400/50 cursor-pointer'
                                                                     : 'bg-zinc-900 border-zinc-700/80 hover:border-zinc-500 cursor-default'
                                                             }`}
+                                                            style={{ width: '100%', height: '100%' }}
                                                         >
                                                             {/* Top Bar on Card: Role, Jersey #, and Wishlist Star */}
-                                                            <div className="flex items-center justify-between gap-1 mb-1 z-10">
-                                                                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-black/80 text-amber-300 border border-amber-400/30 truncate max-w-[65%]">
+                                                            <div className="flex items-center justify-between gap-0.5 z-10 shrink-0 mb-0.5">
+                                                                <span className="text-[7px] md:text-[8px] font-black uppercase px-1 py-0.2 rounded bg-black/85 text-amber-300 border border-amber-400/30 truncate max-w-[65%] leading-tight">
                                                                     {player.role || player.category || 'PLAYER'}
                                                                 </span>
-                                                                <div className="flex items-center gap-1">
+                                                                <div className="flex items-center gap-0.5">
                                                                     <button
                                                                         type="button"
                                                                         onClick={(e) => {
                                                                             e.stopPropagation();
                                                                             toggleWishlist(player.id);
                                                                         }}
-                                                                        className={`p-1 rounded-md transition-all ${
-                                                                            isWishlisted ? 'text-yellow-400 bg-yellow-400/20' : 'text-zinc-600 hover:text-zinc-400'
+                                                                        className={`p-0.5 rounded transition-all ${
+                                                                            isWishlisted ? 'text-yellow-400 bg-yellow-400/20' : 'text-zinc-600 hover:text-zinc-300'
                                                                         }`}
                                                                         title={isWishlisted ? 'Remove from Wishlist' : 'Add to Wishlist'}
                                                                     >
-                                                                        <Star className={`w-3 h-3 ${isWishlisted ? 'fill-yellow-400' : ''}`} />
+                                                                        <Star className={`w-2.5 h-2.5 ${isWishlisted ? 'fill-yellow-400' : ''}`} />
                                                                     </button>
-                                                                    {player.jerseyNumber ? (
-                                                                        <span className="text-[8px] font-bold text-zinc-300 bg-zinc-800 px-1 rounded">
+                                                                    {player.jerseyNumber && (
+                                                                        <span className="text-[7px] font-bold text-zinc-300 bg-zinc-800 px-0.5 rounded">
                                                                             #{player.jerseyNumber}
                                                                         </span>
-                                                                    ) : null}
+                                                                    )}
                                                                 </div>
                                                             </div>
 
-                                                            {/* Player Photo & Sold Badge */}
-                                                            <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 my-1 flex items-center justify-center">
+                                                            {/* Player Photo Area */}
+                                                            <div className="flex-1 min-h-0 relative w-full rounded overflow-hidden bg-zinc-950 flex items-center justify-center">
                                                                 {player.photoUrl ? (
                                                                     <img 
                                                                         src={player.photoUrl} 
                                                                         alt={player.name}
                                                                         className="w-full h-full object-cover object-top"
+                                                                        loading="lazy"
                                                                     />
                                                                 ) : (
-                                                                    <div className="w-full h-full flex items-center justify-center font-black text-2xl text-zinc-600 bg-zinc-900">
+                                                                    <div className="w-full h-full flex items-center justify-center font-black text-xs md:text-sm text-zinc-500 bg-zinc-900">
                                                                         {player.name.charAt(0)}
                                                                     </div>
                                                                 )}
 
-                                                                {/* SOLD Overlay */}
+                                                                {/* High-Contrast SOLD Badge Overlay (Photo stays visible) */}
                                                                 {isSold && (
-                                                                    <>
-                                                                        <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-red-600 text-white font-black text-[8px] uppercase tracking-wider shadow z-20 whitespace-nowrap">
+                                                                    <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-between p-0.5 z-20 pointer-events-none">
+                                                                        <div className="px-1.5 py-0.2 rounded bg-red-600 text-white font-black text-[7px] md:text-[8px] uppercase tracking-wider shadow">
                                                                             SOLD
                                                                         </div>
-                                                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-1 px-1 flex flex-col items-center justify-center text-center z-20">
-                                                                            <p className="text-[9px] font-black text-amber-300 uppercase truncate max-w-full leading-tight">
+                                                                        <div className="w-full bg-black/85 px-0.5 py-0.2 rounded text-center">
+                                                                            <p className="text-[7.5px] md:text-[8.5px] font-black text-amber-300 uppercase truncate leading-tight">
                                                                                 {soldTeamName}
                                                                             </p>
                                                                         </div>
-                                                                    </>
+                                                                    </div>
                                                                 )}
                                                             </div>
 
-                                                            {/* Player Name */}
-                                                            <div className="text-center mt-1">
-                                                                <h4 className="text-xs font-black uppercase tracking-tight text-white truncate drop-shadow">
+                                                            {/* Player Name & Action Footer */}
+                                                            <div className="shrink-0 mt-0.5 flex flex-col gap-0.5">
+                                                                <h4 className="text-[8px] md:text-[9px] font-black uppercase text-white truncate drop-shadow text-center leading-tight">
                                                                     {player.name}
                                                                 </h4>
-                                                            </div>
 
-                                                            {/* Bottom Action: Draft Button (If My Turn & Allowed) or Status */}
-                                                            <div className="mt-2 pt-1 border-t border-white/10">
+                                                                {/* Bottom Action: Draft Button (If My Turn & Allowed) or Status */}
                                                                 {isSold ? (
-                                                                    <div className="py-0.5 text-center text-[9px] font-bold text-zinc-400 uppercase truncate">
+                                                                    <div className="py-0.2 px-0.5 rounded bg-red-950/80 border border-red-500/30 text-center text-[7px] font-bold text-red-300 uppercase truncate">
                                                                         ★ {soldTeamName}
                                                                     </div>
                                                                 ) : canPickNow ? (
@@ -654,16 +779,16 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                             e.stopPropagation();
                                                                             onNominatePlayer(player);
                                                                         }}
-                                                                        className="w-full py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider shadow-md flex items-center justify-center gap-1 active:scale-95 transition-all"
+                                                                        className="w-full py-0.5 rounded bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[8px] uppercase tracking-wider shadow flex items-center justify-center gap-0.5 active:scale-95 transition-all"
                                                                     >
-                                                                        <Check className="w-3 h-3 stroke-[3]" /> Draft Now
+                                                                        <Check className="w-2.5 h-2.5 stroke-[3]" /> Draft
                                                                     </button>
                                                                 ) : isMyTurn && !isPickingAllowed ? (
-                                                                    <div className="py-1 rounded bg-amber-500/20 border border-amber-500/40 text-center text-[8px] font-bold text-amber-300 uppercase flex items-center justify-center gap-1">
-                                                                        <Lock className="w-2.5 h-2.5" /> Admin Only
+                                                                    <div className="py-0.2 rounded bg-amber-500/20 border border-amber-500/30 text-center text-[7px] font-bold text-amber-300 uppercase flex items-center justify-center gap-0.5">
+                                                                        <Lock className="w-2 h-2" /> Admin Pick
                                                                     </div>
                                                                 ) : (
-                                                                    <div className="py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-center text-[8px] font-bold text-emerald-400 uppercase">
+                                                                    <div className="py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 text-center text-[7px] font-bold text-emerald-400 uppercase">
                                                                         Available
                                                                     </div>
                                                                 )}
@@ -673,17 +798,190 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                 })}
                                             </div>
                                         </div>
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })}
 
-                            {categoryGroups.every(g => g.players.length === 0) && (
-                                <div className="p-12 text-center rounded-3xl border border-zinc-800 bg-zinc-900/40 text-zinc-500">
-                                    <p className="text-sm font-black uppercase">No players found matching your filter</p>
-                                    <p className="text-xs text-zinc-600 mt-1">Try resetting the search query or status filter.</p>
-                                </div>
-                            )}
-                        </div>
+                                {categoryGroups.every(g => g.players.length === 0) && (
+                                    <div className="p-8 text-center rounded-2xl border border-zinc-800 bg-zinc-900/40 text-zinc-500">
+                                        <p className="text-sm font-black uppercase">No players found matching your filter</p>
+                                        <p className="text-xs text-zinc-600 mt-1">Try resetting the search query or status filter.</p>
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            /* =========================================================================
+                               FORMAT 2: SCROLLABLE EXPANDED GRID
+                               ========================================================================= */
+                            <div className="space-y-4">
+                                {categoryGroups.map(group => {
+                                    const groupPlayers = group.players;
+                                    if (groupPlayers.length === 0) return null;
+
+                                    return (
+                                        <div
+                                            key={group.category}
+                                            className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3 md:p-4 flex flex-col md:flex-row items-stretch gap-3 md:gap-4 shadow-xl"
+                                        >
+                                            {/* LEFT COLUMN: CATEGORY NAME & STATS */}
+                                            <div className="w-full md:w-44 lg:w-48 shrink-0 rounded-xl bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-900 border-2 border-amber-500/40 p-3 flex flex-row md:flex-col justify-between items-center text-center shadow-md">
+                                                <div className="flex items-center md:flex-col gap-2 md:gap-1 text-left md:text-center w-full">
+                                                    <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/50 mx-auto flex items-center justify-center text-amber-400 shadow shrink-0">
+                                                        <Trophy className="w-4 h-4" />
+                                                    </div>
+                                                    <div className="min-w-0 flex-1 md:w-full">
+                                                        <h3 className="text-xs md:text-sm font-black uppercase tracking-wider text-amber-400 truncate md:break-words leading-tight">
+                                                            {group.category}
+                                                        </h3>
+                                                        <span className="text-[9px] font-bold text-zinc-400 uppercase mt-0.5 block">
+                                                            ({groupPlayers.length} Players)
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex md:flex-col gap-1.5 md:gap-1 md:w-full md:pt-2 md:border-t md:border-white/10 shrink-0">
+                                                    <div className="py-0.5 px-2 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-[9px] font-black text-emerald-400 uppercase flex items-center justify-between gap-1">
+                                                        <span>Avail</span>
+                                                        <span>{group.availableCount}</span>
+                                                    </div>
+                                                    <div className="py-0.5 px-2 rounded-md bg-red-500/15 border border-red-500/30 text-[9px] font-black text-red-400 uppercase flex items-center justify-between gap-1">
+                                                        <span>Sold</span>
+                                                        <span>{group.soldCount}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* RIGHT MAIN AREA: PLAYERS IN THIS CATEGORY */}
+                                            <div className="flex-1 min-w-0">
+                                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-2.5">
+                                                    {groupPlayers.map(player => {
+                                                        const pickInfo = draftPickMap.get(String(player.id));
+                                                        const isSold = player.status === 'SOLD' || !!pickInfo;
+                                                        const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
+                                                        const isWishlisted = wishlistIds.has(String(player.id));
+
+                                                        return (
+                                                            <div
+                                                                key={player.id}
+                                                                onClick={() => {
+                                                                    if (!isSold && canPickNow) {
+                                                                        onNominatePlayer(player);
+                                                                    }
+                                                                }}
+                                                                className={`group relative rounded-2xl border-2 p-2 flex flex-col justify-between transition-all duration-200 overflow-hidden shadow-lg ${
+                                                                    isSold
+                                                                        ? 'bg-gradient-to-b from-red-950/40 via-zinc-900 to-zinc-950 border-red-500/70 opacity-80 cursor-default'
+                                                                        : canPickNow
+                                                                        ? 'bg-zinc-900 border-emerald-500/90 hover:border-emerald-400 hover:shadow-emerald-500/20 hover:scale-[1.02] cursor-pointer ring-2 ring-emerald-500/30'
+                                                                        : 'bg-zinc-900 border-zinc-700/80 hover:border-zinc-500 cursor-default'
+                                                                }`}
+                                                            >
+                                                                {/* Top Bar on Card: Role, Jersey #, and Wishlist Star */}
+                                                                <div className="flex items-center justify-between gap-1 mb-1 z-10">
+                                                                    <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-black/80 text-amber-300 border border-amber-400/30 truncate max-w-[65%]">
+                                                                        {player.role || player.category || 'PLAYER'}
+                                                                    </span>
+                                                                    <div className="flex items-center gap-1">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                toggleWishlist(player.id);
+                                                                            }}
+                                                                            className={`p-1 rounded-md transition-all ${
+                                                                                isWishlisted ? 'text-yellow-400 bg-yellow-400/20' : 'text-zinc-600 hover:text-zinc-400'
+                                                                            }`}
+                                                                            title={isWishlisted ? 'Remove from Wishlist' : 'Add to Wishlist'}
+                                                                        >
+                                                                            <Star className={`w-3 h-3 ${isWishlisted ? 'fill-yellow-400' : ''}`} />
+                                                                        </button>
+                                                                        {player.jerseyNumber ? (
+                                                                            <span className="text-[8px] font-bold text-zinc-300 bg-zinc-800 px-1 rounded">
+                                                                                #{player.jerseyNumber}
+                                                                            </span>
+                                                                        ) : null}
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Player Photo & Sold Badge */}
+                                                                <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 my-1 flex items-center justify-center">
+                                                                    {player.photoUrl ? (
+                                                                        <img 
+                                                                            src={player.photoUrl} 
+                                                                            alt={player.name}
+                                                                            className="w-full h-full object-cover object-top"
+                                                                        />
+                                                                    ) : (
+                                                                        <div className="w-full h-full flex items-center justify-center font-black text-2xl text-zinc-600 bg-zinc-900">
+                                                                            {player.name.charAt(0)}
+                                                                        </div>
+                                                                    )}
+
+                                                                    {/* SOLD Overlay */}
+                                                                    {isSold && (
+                                                                        <>
+                                                                            <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-red-600 text-white font-black text-[8px] uppercase tracking-wider shadow z-20 whitespace-nowrap">
+                                                                                SOLD
+                                                                            </div>
+                                                                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-1 px-1 flex flex-col items-center justify-center text-center z-20">
+                                                                                <p className="text-[9px] font-black text-amber-300 uppercase truncate max-w-full leading-tight">
+                                                                                    {soldTeamName}
+                                                                                </p>
+                                                                            </div>
+                                                                        </>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Player Name */}
+                                                                <div className="text-center mt-1">
+                                                                    <h4 className="text-xs font-black uppercase tracking-tight text-white truncate drop-shadow">
+                                                                        {player.name}
+                                                                    </h4>
+                                                                </div>
+
+                                                                {/* Bottom Action: Draft Button (If My Turn & Allowed) or Status */}
+                                                                <div className="mt-2 pt-1 border-t border-white/10">
+                                                                    {isSold ? (
+                                                                        <div className="py-0.5 text-center text-[9px] font-bold text-zinc-400 uppercase truncate">
+                                                                            ★ {soldTeamName}
+                                                                        </div>
+                                                                    ) : canPickNow ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onNominatePlayer(player);
+                                                                            }}
+                                                                            className="w-full py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider shadow-md flex items-center justify-center gap-1 active:scale-95 transition-all"
+                                                                        >
+                                                                            <Check className="w-3 h-3 stroke-[3]" /> Draft Now
+                                                                        </button>
+                                                                    ) : isMyTurn && !isPickingAllowed ? (
+                                                                        <div className="py-1 rounded bg-amber-500/20 border border-amber-500/40 text-center text-[8px] font-bold text-amber-300 uppercase flex items-center justify-center gap-1">
+                                                                            <Lock className="w-2.5 h-2.5" /> Admin Only
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-center text-[8px] font-bold text-emerald-400 uppercase">
+                                                                            Available
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+
+                                {categoryGroups.every(g => g.players.length === 0) && (
+                                    <div className="p-12 text-center rounded-3xl border border-zinc-800 bg-zinc-900/40 text-zinc-500">
+                                        <p className="text-sm font-black uppercase">No players found matching your filter</p>
+                                        <p className="text-xs text-zinc-600 mt-1">Try resetting the search query or status filter.</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
 
