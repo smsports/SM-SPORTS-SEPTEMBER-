@@ -1405,6 +1405,8 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                 celebrationData={draftState.lastSoldCelebration}
                 durationMs={Math.max(0, Number(draftState.soldPopupDurationSeconds ?? 5)) * 1000}
                 customSoldAudioUrl={draftState.customAudio?.soldMusicUrl}
+                players={players}
+                teams={teams}
             />
         </div>
     );

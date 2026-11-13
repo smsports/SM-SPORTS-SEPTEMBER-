@@ -194,7 +194,7 @@ const OBSOverlay: React.FC = () => {
   const lastPlayerIdRef = useRef<string | number | null>(null);
   const lastStatusRef = useRef<string | null>(null);
 
-  const customAudio = state.draftBoardState?.customAudio || state.customAudio;
+  const customAudio = { ...(state.customAudio || {}), ...(state.draftBoardState?.customAudio || {}) };
   const soldPopupMs = Math.max(
       0,
       Number(state.soldPopupDurationSeconds ?? state.draftBoardState?.soldPopupDurationSeconds ?? 5)
@@ -232,6 +232,8 @@ const OBSOverlay: React.FC = () => {
       }
   }, [display.status, display.player?.id, soldPopupMs]);
 
+  const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
       if (!display.player) return;
       const currentStatus = display.status;
@@ -239,11 +241,10 @@ const OBSOverlay: React.FC = () => {
 
       // Detect if we transitioned into SOLD or UNSOLD status
       const isNewTransition = currentStatus !== lastOverlayStatusRef.current || currentPlayerId !== lastOverlayPlayerIdRef.current;
+      lastOverlayStatusRef.current = currentStatus;
+      lastOverlayPlayerIdRef.current = currentPlayerId;
 
       if (isNewTransition && (currentStatus === 'SOLD' || currentStatus === 'UNSOLD')) {
-          lastOverlayStatusRef.current = currentStatus;
-          lastOverlayPlayerIdRef.current = currentPlayerId;
-
           if (currentStatus === 'SOLD') {
               playSoldSound(customAudio?.soldMusicUrl, 0.85);
           } else {
@@ -267,17 +268,26 @@ const OBSOverlay: React.FC = () => {
               price: display.bid
           });
 
+          if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
           const durationMs = currentStatus === 'SOLD' ? soldPopupMs : Math.max(soldPopupMs, 3000);
-          const timer = setTimeout(() => {
+          alertTimerRef.current = setTimeout(() => {
               setActiveAlert(prev => prev ? { ...prev, show: false } : null);
+              alertTimerRef.current = null;
           }, durationMs);
-
-          return () => clearTimeout(timer);
-      } else {
-          lastOverlayStatusRef.current = currentStatus;
-          lastOverlayPlayerIdRef.current = currentPlayerId;
+      } else if (currentStatus !== 'SOLD' && currentStatus !== 'UNSOLD') {
+          if (alertTimerRef.current) {
+              clearTimeout(alertTimerRef.current);
+              alertTimerRef.current = null;
+          }
+          setActiveAlert(null);
       }
-  }, [display, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
+  }, [display.status, display.player?.id, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
+
+  useEffect(() => {
+      return () => {
+          if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
+      };
+  }, []);
   const loopInterval = state.sponsorConfig?.loopInterval || 5;
   const sponsorsLength = state.sponsors.length;
 

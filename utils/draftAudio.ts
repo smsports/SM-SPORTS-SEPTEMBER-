@@ -73,27 +73,51 @@ export function stopCustomAudio(): void {
 }
 
 /**
- * Resolves `firestore-asset://{auctionId}/{soundKey}?v={ts}` or passes through regular URLs/DataURLs.
+ * Resolves `firestore-asset://`, `scoring-asset://`, and `draft-asset://` references
+ * or passes through regular HTTP/HTTPS URLs and Data URLs.
  */
 async function resolveAudioSourceUrl(rawUrl: string): Promise<string | null> {
     if (!rawUrl) return null;
-    if (!rawUrl.startsWith('firestore-asset://')) {
+
+    if (
+        !rawUrl.startsWith('firestore-asset://') &&
+        !rawUrl.startsWith('scoring-asset://') &&
+        !rawUrl.startsWith('draft-asset://')
+    ) {
         return rawUrl;
     }
+
     const cached = resolvedAssetCache.get(rawUrl);
     if (cached) return cached;
 
     try {
-        const clean = rawUrl.replace('firestore-asset://', '').split('?')[0];
-        const [auctionId, assetId] = clean.split('/');
-        if (!auctionId || !assetId) return null;
-        const snap = await db.collection('auctions').doc(auctionId).collection('audioAssets').doc(assetId).get();
-        if (snap.exists) {
-            const dataUrl = snap.data()?.dataUrl as string | undefined;
-            if (dataUrl) {
-                resolvedAssetCache.set(rawUrl, dataUrl);
-                return dataUrl;
+        let dataUrl: string | undefined;
+
+        if (rawUrl.startsWith('firestore-asset://')) {
+            const clean = rawUrl.replace('firestore-asset://', '').split('?')[0];
+            const [auctionId, assetId] = clean.split('/');
+            if (auctionId && assetId) {
+                const snap = await db.collection('auctions').doc(auctionId).collection('audioAssets').doc(assetId).get();
+                if (snap.exists) dataUrl = snap.data()?.dataUrl as string | undefined;
             }
+        } else if (rawUrl.startsWith('scoring-asset://')) {
+            const docId = rawUrl.replace('scoring-asset://', '').split('?')[0];
+            if (docId) {
+                const snap = await db.collection('scoringAssets').doc(docId).get();
+                if (snap.exists) dataUrl = snap.data()?.dataUrl as string | undefined;
+            }
+        } else if (rawUrl.startsWith('draft-asset://')) {
+            const clean = rawUrl.replace('draft-asset://', '').split('?')[0];
+            const [auctionId, docId] = clean.split('/');
+            if (auctionId && docId) {
+                const snap = await db.collection('auctions').doc(auctionId).collection('arrangementDrafts').doc(docId).get();
+                if (snap.exists) dataUrl = snap.data()?.dataUrl as string | undefined;
+            }
+        }
+
+        if (dataUrl) {
+            resolvedAssetCache.set(rawUrl, dataUrl);
+            return dataUrl;
         }
     } catch (err) {
         console.warn('Could not resolve custom Firestore audio asset:', err);

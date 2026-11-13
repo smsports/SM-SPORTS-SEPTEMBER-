@@ -36,6 +36,7 @@ export const DraftAdminControls: React.FC<Props> = ({
         action: () => Promise<void>;
     } | null>(null);
 
+    const [activeSection, setActiveSection] = useState<'MAIN' | 'SETTINGS'>('MAIN');
     const [isProcessing, setIsProcessing] = useState(false);
     const [copiedProjector, setCopiedProjector] = useState(false);
     const [copiedOBS, setCopiedOBS] = useState(false);
@@ -430,13 +431,21 @@ export const DraftAdminControls: React.FC<Props> = ({
             const urlField = soundKey === 'sold' ? 'soldMusicUrl' : soundKey === 'timeup' ? 'timeUpMusicUrl' : 'unsoldMusicUrl';
             const nameField = soundKey === 'sold' ? 'soldMusicName' : soundKey === 'timeup' ? 'timeUpMusicName' : 'unsoldMusicName';
 
-            await db.collection('auctions').doc(auctionId).update({
+            const updateData: Record<string, any> = {
                 [`draftBoardState.customAudio.${urlField}`]: url,
                 [`draftBoardState.customAudio.${nameField}`]: file.name,
-                [`customAudio.${urlField}`]: url,
-                [`customAudio.${nameField}`]: file.name,
                 'draftBoardState.updatedAt': Date.now()
-            });
+            };
+            // Avoid duplicating large inline data URLs onto root customAudio to protect 1 MiB limit
+            if (!url.startsWith('data:')) {
+                updateData[`customAudio.${urlField}`] = url;
+                updateData[`customAudio.${nameField}`] = file.name;
+            } else {
+                updateData[`customAudio.${urlField}`] = '';
+                updateData[`customAudio.${nameField}`] = '';
+            }
+
+            await db.collection('auctions').doc(auctionId).update(updateData);
             setAudioFeedback({ type: 'success', text: `Uploaded "${file.name}" for ${soundKey.toUpperCase()}!` });
         } catch (err: any) {
             console.error('Failed to upload custom audio:', err);
@@ -523,961 +532,1008 @@ export const DraftAdminControls: React.FC<Props> = ({
     const totalSoldPlayers = players.filter(p => p.status === 'SOLD' || (draftState.history || []).some(h => String(h.playerId) === String(p.id))).length;
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b pb-3 border-zinc-800">
-                <div className="flex items-center gap-2">
-                    <Shield className="w-5 h-5 text-blue-500" />
-                    <div>
-                        <h3 className="text-sm font-black uppercase text-white tracking-wider">
-                            Draft Admin Controls
-                        </h3>
-                        <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-widest">
-                            Round &amp; Turn Orchestration
-                        </p>
+        <div className="space-y-4">
+            {/* Header + Section Switcher */}
+            <div className="space-y-3 border-b pb-3 border-zinc-800">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <Shield className="w-5 h-5 text-blue-500" />
+                        <div>
+                            <h3 className="text-sm font-black uppercase text-white tracking-wider">
+                                Draft Admin Controls
+                            </h3>
+                            <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-widest">
+                                {activeSection === 'MAIN'
+                                    ? 'Round Selection • OBS • Projector'
+                                    : 'Audio • Automation • Order • Reset'}
+                            </p>
+                        </div>
                     </div>
+                </div>
+
+                {/* Main Page vs Separate Settings Section Navigation */}
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-black/70 border border-zinc-800">
+                    <button
+                        type="button"
+                        onClick={() => setActiveSection('MAIN')}
+                        className={`py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                            activeSection === 'MAIN'
+                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                                : 'text-zinc-400 hover:text-white'
+                        }`}
+                    >
+                        <Monitor className="w-3.5 h-3.5" />
+                        <span>Main Controls</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveSection('SETTINGS')}
+                        className={`py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                            activeSection === 'SETTINGS'
+                                ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30'
+                                : 'text-zinc-400 hover:text-white'
+                        }`}
+                    >
+                        <Settings className="w-3.5 h-3.5" />
+                        <span>Settings</span>
+                    </button>
                 </div>
             </div>
 
-            {/* BROADCAST & SCREEN DISPLAY CONTROLS */}
-            <div className="p-4 rounded-2xl border-2 border-blue-500/40 bg-gradient-to-b from-blue-950/30 to-zinc-900/90 space-y-4 shadow-xl">
-                <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
-                        <Monitor className="w-4 h-4" /> Broadcast Screen Controls
-                    </h4>
-                    <span className="text-[8px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Sync Active
-                    </span>
-                </div>
+            {activeSection === 'MAIN' ? (
+                /* =====================================================================
+                   MAIN PAGE: ONLY ROUND SELECTION, OBS SETTINGS, AND PROJECTOR SETTINGS
+                   ===================================================================== */
+                <div className="space-y-5">
+                    {/* 1. ROUND SELECTION & TURN CONTROL */}
+                    <div className="p-4 rounded-2xl border-2 border-amber-500/40 bg-gradient-to-b from-amber-950/25 to-zinc-900/90 space-y-3 shadow-xl">
+                        <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                                <Clock className="w-4 h-4 text-amber-400" /> Round Selection
+                            </h4>
+                            <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[9px] font-black uppercase">
+                                Round {draftState.currentRound} • {draftState.roundStatus === 'IN_PROGRESS' ? 'Active' : draftState.roundStatus === 'ROUND_COMPLETED' ? 'Done' : 'Ready'}
+                            </span>
+                        </div>
 
-                {/* 1. Broadcast View Toggle: Players Draft Board vs Teams Squad vs Final Summary */}
-                <div className="space-y-1.5">
-                    <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center justify-between">
-                        <span>Projector &amp; OBS View Mode:</span>
-                        <span className="text-amber-400">
-                            {draftState.broadcastView === 'SQUADS' 
-                                ? 'Team Squads' 
-                                : draftState.broadcastView === 'SUMMARY' 
-                                ? 'Final Summary' 
-                                : 'Draft Board'}
-                        </span>
-                    </label>
-                    <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-black/60 border border-white/10">
-                        <button
-                            type="button"
-                            onClick={() => handleSetBroadcastView('PLAYERS')}
-                            className={`py-2 px-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
-                                draftState.broadcastView === 'PLAYERS' || !draftState.broadcastView
-                                    ? 'bg-blue-600 text-white shadow-md'
-                                    : 'text-zinc-400 hover:text-white'
-                            }`}
-                        >
-                            <LayoutGrid className="w-3 h-3" /> Draft Board
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => handleSetBroadcastView('SQUADS')}
-                            className={`py-2 px-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
-                                draftState.broadcastView === 'SQUADS'
-                                    ? 'bg-amber-500 text-black shadow-md font-black'
-                                    : 'text-zinc-400 hover:text-white'
-                            }`}
-                        >
-                            <Users className="w-3 h-3" /> Squads
-                        </button>
-                        <button
-                            type="button"
-                            disabled={!isEligibleToComplete}
-                            onClick={() => isEligibleToComplete && handleSetBroadcastView('SUMMARY')}
-                            className={`py-2 px-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
-                                draftState.broadcastView === 'SUMMARY'
-                                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md font-black'
-                                    : isEligibleToComplete
-                                    ? 'text-zinc-400 hover:text-white'
-                                    : 'text-zinc-600 opacity-40 cursor-not-allowed'
-                            }`}
-                            title={isEligibleToComplete ? 'Broadcast Summary Screen' : 'Summary unlocks once all squads are filled or all players are sold'}
-                        >
-                            {isEligibleToComplete ? <Trophy className="w-3 h-3" /> : <Lock className="w-3 h-3 text-zinc-500" />} Summary
-                        </button>
-                    </div>
-                </div>
-
-                {/* 2. Broadcast Theme Selector ("add multiple themes") */}
-                <div className="space-y-2 pt-2 border-t border-white/5">
-                    <div className="flex items-center justify-between">
-                        <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
-                            <Palette className="w-3 h-3 text-purple-400" /> Broadcast Theme:
-                        </label>
-                        <span className="text-[9px] font-black text-amber-400 uppercase">
-                            {getDraftTheme(draftState.broadcastTheme).name}
-                        </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-1.5">
-                        {Object.values(DRAFT_THEMES).map(theme => {
-                            const isSelected = (draftState.broadcastTheme || 'DARK_OBSIDIAN') === theme.key;
-                            return (
+                        {draftState.roundStatus === 'ROUND_COMPLETED' && (
+                            <div className="p-3 rounded-xl bg-gradient-to-br from-blue-900/50 via-indigo-900/40 to-zinc-900 border border-blue-500/50 text-center space-y-2">
+                                <p className="text-[11px] font-black uppercase tracking-wider text-blue-300">
+                                    🎉 Round {draftState.currentRound} Complete!
+                                </p>
                                 <button
-                                    key={theme.key}
                                     type="button"
-                                    onClick={() => handleSetBroadcastTheme(theme.key)}
-                                    className={`p-2 rounded-xl border text-left transition-all flex flex-col justify-between gap-1 ${
-                                        isSelected
-                                            ? 'bg-gradient-to-r from-purple-950/60 to-zinc-900 border-purple-500 shadow-md ring-1 ring-purple-500/50'
-                                            : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
-                                    }`}
+                                    onClick={onStartNextRound}
+                                    className="w-full py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-widest bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
                                 >
-                                    <div className="flex items-center justify-between w-full">
-                                        <div className="flex items-center gap-1.5">
-                                            <span className={`w-3.5 h-3.5 rounded-full border ${theme.previewBorder} ${theme.previewBg} shadow-sm shrink-0`} />
-                                            <span className={`text-[9px] font-black uppercase tracking-tight truncate ${
-                                                isSelected ? 'text-white' : 'text-zinc-300'
-                                            }`}>
-                                                {theme.name}
-                                            </span>
-                                        </div>
-                                        {isSelected && (
-                                            <Check className="w-3 h-3 text-purple-400 shrink-0 stroke-[3]" />
-                                        )}
-                                    </div>
-                                    <p className="text-[7.5px] text-zinc-500 truncate leading-none">
-                                        {theme.description}
-                                    </p>
+                                    <Play className="w-3.5 h-3.5 fill-white" /> Start Round {draftState.currentRound + 1}
                                 </button>
-                            );
-                        })}
-                    </div>
-                </div>
+                            </div>
+                        )}
 
-                {/* 3. When in PLAYERS view: Layout Mode & Necessary Category Filter */}
-                {draftState.broadcastView !== 'SQUADS' && draftState.broadcastView !== 'SUMMARY' ? (
-                    <>
-                        {/* Projector Layout Mode */}
-                        <div className="space-y-1.5 pt-2 border-t border-white/5">
+                        {/* Picking Team Selector */}
+                        <div className="space-y-1.5">
                             <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center justify-between">
-                                <span>Projector Layout Style:</span>
-                                <span className="text-amber-400 font-bold">{draftState.projectorLayoutMode || 'ROWS'}</span>
+                                <span>Player Picking Round For:</span>
+                                <span className="text-amber-400 font-bold truncate max-w-[130px]">
+                                    {draftState.targetPickingTeamId && draftState.targetPickingTeamId !== 'CURRENT_TURN'
+                                        ? teams.find(t => String(t.id) === String(draftState.targetPickingTeamId))?.name || 'Selected Team'
+                                        : teams.find(t => String(t.id) === String(draftState.currentTeamId))?.name || 'Turn Order'}
+                                </span>
                             </label>
-                            <div className="grid grid-cols-2 gap-1.5">
+                            <select
+                                value={String(draftState.targetPickingTeamId || 'CURRENT_TURN')}
+                                onChange={async (e) => {
+                                    const val = e.target.value;
+                                    if (!auctionId) return;
+                                    const updatePayload: any = {
+                                        'draftBoardState.targetPickingTeamId': val,
+                                        'draftBoardState.updatedAt': Date.now()
+                                    };
+                                    if (val !== 'CURRENT_TURN') {
+                                        updatePayload['draftBoardState.currentTeamId'] = val;
+                                    }
+                                    await db.collection('auctions').doc(auctionId).update(updatePayload);
+                                }}
+                                className="w-full bg-black/80 border border-amber-500/40 rounded-xl px-3 py-2 text-xs font-black text-white focus:outline-none focus:border-amber-400 uppercase tracking-wide cursor-pointer shadow-inner"
+                            >
+                                <option value="CURRENT_TURN">
+                                    🎯 Follow Turn Order ({teams.find(t => String(t.id) === String(draftState.currentTeamId))?.name || 'Round Order'})
+                                </option>
+                                {teams.map(t => (
+                                    <option key={t.id} value={String(t.id)}>
+                                        {t.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Turn Timer Controls */}
+                        <div className="flex items-center gap-2 pt-1">
+                            <button
+                                type="button"
+                                onClick={handleToggleTimer}
+                                className={`flex-1 py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-md ${
+                                    draftState.isTimerRunning
+                                        ? 'bg-amber-500 text-black shadow-amber-500/20'
+                                        : 'bg-emerald-600 text-white shadow-emerald-600/20 hover:bg-emerald-500'
+                                }`}
+                            >
+                                {draftState.isTimerRunning ? (
+                                    <><Pause className="w-3.5 h-3.5 fill-black" /> Pause</>
+                                ) : (
+                                    <><Play className="w-3.5 h-3.5 fill-white" /> Start</>
+                                )}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={handleResetTimer}
+                                className="py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/40 flex items-center justify-center gap-1 transition-all active:scale-95 shadow-sm"
+                                title="Reset Turn Timer to default duration"
+                            >
+                                <RotateCcw className="w-3.5 h-3.5" /> Reset
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={handleSkipTurn}
+                                className="py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 flex items-center justify-center gap-1 transition-all active:scale-95"
+                                title="Skip current team's turn"
+                            >
+                                <FastForward className="w-3.5 h-3.5" /> Skip
+                            </button>
+                        </div>
+
+                        {draftState.timerTimeRemaining === 0 && (
+                            <div className="p-3 rounded-xl bg-red-600/20 border-2 border-red-500/60 text-center space-y-2 animate-pulse">
+                                <p className="text-xs font-black uppercase tracking-wider text-red-400 flex items-center justify-center gap-1.5">
+                                    <Clock className="w-4 h-4 text-red-400" /> Time&apos;s Up! Turn Expired
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleResetTimer}
+                                        className="flex-1 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider bg-amber-500 hover:bg-amber-400 text-black shadow-md flex items-center justify-center gap-1"
+                                    >
+                                        <RotateCcw className="w-3.5 h-3.5" /> Reset
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            await db.collection('auctions').doc(auctionId).update({
+                                                'draftBoardState.isTimerRunning': false,
+                                                'draftBoardState.updatedAt': Date.now()
+                                            });
+                                        }}
+                                        className="flex-1 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white shadow-md flex items-center justify-center gap-1"
+                                    >
+                                        <Check className="w-3.5 h-3.5 stroke-[3]" /> OK
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="pt-2 border-t border-white/5 flex items-center justify-between gap-2">
+                            <span className="text-[9px] font-bold uppercase text-zinc-400">Turn Secs:</span>
+                            <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+                                {timerOptions.map(sec => (
+                                    <button
+                                        key={sec}
+                                        type="button"
+                                        onClick={() => handleChangeTimerDuration(sec)}
+                                        className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${
+                                            draftState.turnTimerSeconds === sec
+                                                ? 'bg-blue-600 text-white'
+                                                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                                        }`}
+                                    >
+                                        {sec}s
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 2. OBS SETTINGS */}
+                    <div className="p-4 rounded-2xl border-2 border-purple-500/40 bg-gradient-to-b from-purple-950/30 to-zinc-900/90 space-y-3 shadow-xl">
+                        <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-black uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                                <Cast className="w-4 h-4 text-purple-400" /> OBS Settings
+                            </h4>
+                            <button
+                                type="button"
+                                onClick={handleToggleObsTransparent}
+                                className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all ${
+                                    draftState.obsTransparentBg || (draftState.obsDisplayMode && draftState.obsDisplayMode !== 'FULL_BOARD')
+                                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'
+                                }`}
+                                title="Keep background transparent so OBS video feed stays visible underneath"
+                            >
+                                {draftState.obsTransparentBg || (draftState.obsDisplayMode && draftState.obsDisplayMode !== 'FULL_BOARD')
+                                    ? 'Transparent BG: ON'
+                                    : 'Solid Theme BG'}
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-1.5">
+                            {([
+                                { id: 'CURRENT_TEAM_ONLY', label: 'Current Team Only', icon: Users },
+                                { id: 'BOTTOM_CATEGORY_STRIP', label: 'Bottom Category', icon: Layers },
+                                { id: 'TOP_HEADER_ONLY', label: 'Top Bar Only', icon: LayoutList },
+                                { id: 'FULL_BOARD', label: 'Full Board', icon: LayoutGrid },
+                                { id: 'HIDDEN', label: 'Popups Only (Clear)', icon: EyeOff }
+                            ] as const).map(opt => {
+                                const Icon = opt.icon;
+                                const activeMode = draftState.obsDisplayMode || 'FULL_BOARD';
+                                const isSelected = activeMode === opt.id;
+                                return (
+                                    <button
+                                        key={opt.id}
+                                        type="button"
+                                        onClick={() => handleSetObsDisplayMode(opt.id)}
+                                        className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all border ${
+                                            isSelected
+                                                ? 'bg-purple-600 text-white border-purple-400 shadow-md'
+                                                : 'bg-zinc-900/90 text-zinc-400 border-zinc-800 hover:text-white'
+                                        }`}
+                                    >
+                                        <Icon className="w-3.5 h-3.5 shrink-0" />
+                                        <span className="truncate">{opt.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {(draftState.obsDisplayMode === 'BOTTOM_CATEGORY_STRIP') && (
+                            <div className="space-y-1.5 pt-2 border-t border-white/10">
+                                <label className="text-[9px] font-black uppercase tracking-wider text-purple-300 flex items-center justify-between">
+                                    <span>Bottom Strip Category:</span>
+                                    <span className="text-amber-400">{draftState.obsCategoryFilter || availableCategories[0] || 'Default'}</span>
+                                </label>
+                                <select
+                                    value={draftState.obsCategoryFilter || availableCategories[0] || ''}
+                                    onChange={(e) => handleSetObsCategoryFilter(e.target.value)}
+                                    className="w-full bg-black/80 border border-purple-500/40 rounded-xl px-3 py-2 text-xs font-black text-white focus:outline-none focus:border-purple-400 uppercase"
+                                >
+                                    {availableCategories.map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
+                            <button
+                                type="button"
+                                onClick={handleOpenOBS}
+                                className="p-2 rounded-xl border border-purple-500/40 bg-purple-600/20 hover:bg-purple-600 text-white font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
+                            >
+                                <Cast className="w-3.5 h-3.5" /> Open OBS
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleCopyOBS}
+                                className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                            >
+                                {copiedOBS ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                {copiedOBS ? 'Copied' : 'Copy OBS'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 3. PROJECTOR SETTINGS */}
+                    <div className="p-4 rounded-2xl border-2 border-blue-500/40 bg-gradient-to-b from-blue-950/30 to-zinc-900/90 space-y-4 shadow-xl">
+                        <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-black uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
+                                <Monitor className="w-4 h-4" /> Projector Settings
+                            </h4>
+                            <span className="text-[8px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Sync Active
+                            </span>
+                        </div>
+
+                        {/* View Mode */}
+                        <div className="space-y-1.5">
+                            <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center justify-between">
+                                <span>Projector &amp; OBS View Mode:</span>
+                                <span className="text-amber-400">
+                                    {draftState.broadcastView === 'SQUADS' 
+                                        ? 'Team Squads' 
+                                        : draftState.broadcastView === 'SUMMARY' 
+                                        ? 'Final Summary' 
+                                        : 'Draft Board'}
+                                </span>
+                            </label>
+                            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-black/60 border border-white/10">
                                 <button
                                     type="button"
-                                    onClick={() => handleSetProjectorLayoutMode('ROWS')}
-                                    className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all border ${
-                                        (draftState.projectorLayoutMode || 'ROWS') === 'ROWS'
-                                            ? 'bg-amber-500 text-black border-amber-400 shadow-md font-black'
-                                            : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                    onClick={() => handleSetBroadcastView('PLAYERS')}
+                                    className={`py-2 px-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
+                                        draftState.broadcastView === 'PLAYERS' || !draftState.broadcastView
+                                            ? 'bg-blue-600 text-white shadow-md'
+                                            : 'text-zinc-400 hover:text-white'
                                     }`}
-                                    title="Categories shown on Left in Rows Wise (User Requested)"
                                 >
-                                    <LayoutList className="w-3.5 h-3.5" /> Left Category Rows
+                                    <LayoutGrid className="w-3 h-3" /> Draft Board
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => handleSetProjectorLayoutMode('COLUMNS')}
-                                    className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all border ${
-                                        draftState.projectorLayoutMode === 'COLUMNS'
-                                            ? 'bg-amber-500 text-black border-amber-400 shadow-md font-black'
-                                            : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                    onClick={() => handleSetBroadcastView('SQUADS')}
+                                    className={`py-2 px-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
+                                        draftState.broadcastView === 'SQUADS'
+                                            ? 'bg-amber-500 text-black shadow-md font-black'
+                                            : 'text-zinc-400 hover:text-white'
                                     }`}
                                 >
-                                    <Columns className="w-3.5 h-3.5" /> Category Columns
+                                    <Users className="w-3 h-3" /> Squads
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => handleSetProjectorLayoutMode('GRID')}
-                                    className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all border ${
-                                        draftState.projectorLayoutMode === 'GRID'
-                                            ? 'bg-amber-500 text-black border-amber-400 shadow-md font-black'
-                                            : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                    disabled={!isEligibleToComplete}
+                                    onClick={() => isEligibleToComplete && handleSetBroadcastView('SUMMARY')}
+                                    className={`py-2 px-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all ${
+                                        draftState.broadcastView === 'SUMMARY'
+                                            ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md font-black'
+                                            : isEligibleToComplete
+                                            ? 'text-zinc-400 hover:text-white'
+                                            : 'text-zinc-600 opacity-40 cursor-not-allowed'
                                     }`}
+                                    title={isEligibleToComplete ? 'Broadcast Summary Screen' : 'Summary unlocks once all squads are filled or all players are sold'}
                                 >
-                                    <LayoutGrid className="w-3.5 h-3.5" /> Auto Grid
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleSetProjectorLayoutMode('TABLE')}
-                                    className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all border ${
-                                        draftState.projectorLayoutMode === 'TABLE'
-                                            ? 'bg-amber-500 text-black border-amber-400 shadow-md font-black'
-                                            : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
-                                    }`}
-                                >
-                                    <TableIcon className="w-3.5 h-3.5" /> Multi Table
+                                    {isEligibleToComplete ? <Trophy className="w-3 h-3" /> : <Lock className="w-3 h-3 text-zinc-500" />} Summary
                                 </button>
                             </div>
                         </div>
 
-                        {/* Necessary Category Broadcast Filter ("Keep option to show only necessary category") */}
+                        {/* Broadcast Theme */}
                         <div className="space-y-2 pt-2 border-t border-white/5">
                             <div className="flex items-center justify-between">
                                 <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
-                                    <Filter className="w-3 h-3 text-amber-500" /> Necessary Category Filter:
+                                    <Palette className="w-3 h-3 text-purple-400" /> Broadcast Theme:
                                 </label>
                                 <span className="text-[9px] font-black text-amber-400 uppercase">
-                                    {draftState.broadcastCategoryFilter || 'ALL'}
+                                    {getDraftTheme(draftState.broadcastTheme).name}
                                 </span>
                             </div>
 
-                            <div className="flex flex-wrap gap-1">
-                                <button
-                                    type="button"
-                                    onClick={() => handleSetBroadcastCategoryFilter('ALL')}
-                                    className={`py-1 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border ${
-                                        (!draftState.broadcastCategoryFilter || draftState.broadcastCategoryFilter === 'ALL')
-                                            ? 'bg-blue-600 text-white border-blue-400 shadow-sm'
-                                            : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
-                                    }`}
-                                >
-                                    ★ All Categories ({players.length})
-                                </button>
-                                {availableCategories.map(cat => {
-                                    const catCount = players.filter(p => (p.category || p.role || '').toLowerCase() === cat.toLowerCase()).length;
-                                    const isSelected = draftState.broadcastCategoryFilter?.toLowerCase() === cat.toLowerCase();
-
+                            <div className="grid grid-cols-2 gap-1.5">
+                                {Object.values(DRAFT_THEMES).map(theme => {
+                                    const isSelected = (draftState.broadcastTheme || 'DARK_OBSIDIAN') === theme.key;
                                     return (
                                         <button
-                                            key={cat}
+                                            key={theme.key}
                                             type="button"
-                                            onClick={() => handleSetBroadcastCategoryFilter(cat)}
-                                            className={`py-1 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border ${
+                                            onClick={() => handleSetBroadcastTheme(theme.key)}
+                                            className={`p-2 rounded-xl border text-left transition-all flex flex-col justify-between gap-1 ${
                                                 isSelected
-                                                    ? 'bg-amber-500 text-black border-amber-400 shadow-sm font-black'
-                                                    : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                                    ? 'bg-gradient-to-r from-purple-950/60 to-zinc-900 border-purple-500 shadow-md ring-1 ring-purple-500/50'
+                                                    : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
                                             }`}
                                         >
-                                            {cat} ({catCount})
+                                            <div className="flex items-center justify-between w-full">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className={`w-3.5 h-3.5 rounded-full border ${theme.previewBorder} ${theme.previewBg} shadow-sm shrink-0`} />
+                                                    <span className={`text-[9px] font-black uppercase tracking-tight truncate ${
+                                                        isSelected ? 'text-white' : 'text-zinc-300'
+                                                    }`}>
+                                                        {theme.name}
+                                                    </span>
+                                                </div>
+                                                {isSelected && (
+                                                    <Check className="w-3 h-3 text-purple-400 shrink-0 stroke-[3]" />
+                                                )}
+                                            </div>
+                                            <p className="text-[7.5px] text-zinc-500 truncate leading-none">
+                                                {theme.description}
+                                            </p>
                                         </button>
                                     );
                                 })}
                             </div>
                         </div>
-                    </>
-                ) : (
-                    /* 3. When in SQUADS view: Select All Teams or Specific Team to Showcase */
-                    <div className="space-y-2 pt-2 border-t border-white/5">
-                        <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center justify-between">
-                            <span>Showcase Team on Big Screen:</span>
-                            <span className="text-amber-400">
-                                {draftState.selectedTeamSquadId && draftState.selectedTeamSquadId !== 'ALL'
-                                    ? teams.find(t => String(t.id) === String(draftState.selectedTeamSquadId))?.name || 'Selected'
-                                    : 'All Teams Overview'}
-                            </span>
-                        </label>
-                        <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto custom-scrollbar">
-                            <button
-                                type="button"
-                                onClick={() => handleSetSelectedTeamSquad('ALL')}
-                                className={`py-1 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border ${
-                                    (!draftState.selectedTeamSquadId || draftState.selectedTeamSquadId === 'ALL')
-                                        ? 'bg-amber-500 text-black border-amber-400 font-black shadow-sm'
-                                        : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
-                                }`}
-                            >
-                                🏆 All Teams Overview
-                            </button>
-                            {teams.map(t => {
-                                const isSelected = String(draftState.selectedTeamSquadId) === String(t.id);
-                                return (
+
+                        {/* Layout Style / Category Filter OR Team Squad Showcase */}
+                        {draftState.broadcastView !== 'SQUADS' && draftState.broadcastView !== 'SUMMARY' ? (
+                            <>
+                                <div className="space-y-1.5 pt-2 border-t border-white/5">
+                                    <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center justify-between">
+                                        <span>Projector Layout Style:</span>
+                                        <span className="text-amber-400 font-bold">{draftState.projectorLayoutMode || 'ROWS'}</span>
+                                    </label>
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSetProjectorLayoutMode('ROWS')}
+                                            className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all border ${
+                                                (draftState.projectorLayoutMode || 'ROWS') === 'ROWS'
+                                                    ? 'bg-amber-500 text-black border-amber-400 shadow-md font-black'
+                                                    : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                            }`}
+                                        >
+                                            <LayoutList className="w-3.5 h-3.5" /> Left Category Rows
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSetProjectorLayoutMode('COLUMNS')}
+                                            className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all border ${
+                                                draftState.projectorLayoutMode === 'COLUMNS'
+                                                    ? 'bg-amber-500 text-black border-amber-400 shadow-md font-black'
+                                                    : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                            }`}
+                                        >
+                                            <Columns className="w-3.5 h-3.5" /> Category Columns
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSetProjectorLayoutMode('GRID')}
+                                            className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all border ${
+                                                draftState.projectorLayoutMode === 'GRID'
+                                                    ? 'bg-amber-500 text-black border-amber-400 shadow-md font-black'
+                                                    : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                            }`}
+                                        >
+                                            <LayoutGrid className="w-3.5 h-3.5" /> Auto Grid
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSetProjectorLayoutMode('TABLE')}
+                                            className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 transition-all border ${
+                                                draftState.projectorLayoutMode === 'TABLE'
+                                                    ? 'bg-amber-500 text-black border-amber-400 shadow-md font-black'
+                                                    : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                            }`}
+                                        >
+                                            <TableIcon className="w-3.5 h-3.5" /> Multi Table
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2 pt-2 border-t border-white/5">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+                                            <Filter className="w-3 h-3 text-amber-500" /> Necessary Category Filter:
+                                        </label>
+                                        <span className="text-[9px] font-black text-amber-400 uppercase">
+                                            {draftState.broadcastCategoryFilter || 'ALL'}
+                                        </span>
+                                    </div>
+
+                                    <div className="flex flex-wrap gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSetBroadcastCategoryFilter('ALL')}
+                                            className={`py-1 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border ${
+                                                (!draftState.broadcastCategoryFilter || draftState.broadcastCategoryFilter === 'ALL')
+                                                    ? 'bg-blue-600 text-white border-blue-400 shadow-sm'
+                                                    : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                            }`}
+                                        >
+                                            ★ All Categories ({players.length})
+                                        </button>
+                                        {availableCategories.map(cat => {
+                                            const catCount = players.filter(p => (p.category || p.role || '').toLowerCase() === cat.toLowerCase()).length;
+                                            const isSelected = draftState.broadcastCategoryFilter?.toLowerCase() === cat.toLowerCase();
+
+                                            return (
+                                                <button
+                                                    key={cat}
+                                                    type="button"
+                                                    onClick={() => handleSetBroadcastCategoryFilter(cat)}
+                                                    className={`py-1 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border ${
+                                                        isSelected
+                                                            ? 'bg-amber-500 text-black border-amber-400 shadow-sm font-black'
+                                                            : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                                    }`}
+                                                >
+                                                    {cat} ({catCount})
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="space-y-2 pt-2 border-t border-white/5">
+                                <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center justify-between">
+                                    <span>Showcase Team on Big Screen:</span>
+                                    <span className="text-amber-400">
+                                        {draftState.selectedTeamSquadId && draftState.selectedTeamSquadId !== 'ALL'
+                                            ? teams.find(t => String(t.id) === String(draftState.selectedTeamSquadId))?.name || 'Selected'
+                                            : 'All Teams Overview'}
+                                    </span>
+                                </label>
+                                <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto custom-scrollbar">
                                     <button
-                                        key={t.id}
                                         type="button"
-                                        onClick={() => handleSetSelectedTeamSquad(t.id)}
-                                        className={`py-1 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all border ${
-                                            isSelected
+                                        onClick={() => handleSetSelectedTeamSquad('ALL')}
+                                        className={`py-1 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border ${
+                                            (!draftState.selectedTeamSquadId || draftState.selectedTeamSquadId === 'ALL')
                                                 ? 'bg-amber-500 text-black border-amber-400 font-black shadow-sm'
                                                 : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
                                         }`}
                                     >
-                                        {t.logoUrl ? (
-                                            <img src={t.logoUrl} alt="" className="w-3.5 h-3.5 rounded-full object-contain bg-white" />
-                                        ) : null}
-                                        <span className="truncate max-w-[100px]">{t.name}</span>
+                                        🏆 All Teams Overview
                                     </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                )}
-
-                {/* Quick Screen Launch Buttons */}
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
-                    <button
-                        onClick={handleOpenProjector}
-                        className="p-2 rounded-xl border border-blue-500/40 bg-blue-600/20 hover:bg-blue-600 text-white font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
-                    >
-                        <Monitor className="w-3.5 h-3.5" /> Open Projector
-                    </button>
-                    <button
-                        onClick={handleOpenOBS}
-                        className="p-2 rounded-xl border border-purple-500/40 bg-purple-600/20 hover:bg-purple-600 text-white font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
-                    >
-                        <Cast className="w-3.5 h-3.5" /> Open OBS
-                    </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                    <button
-                        onClick={handleCopyProjector}
-                        className="py-1 px-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 transition-all active:scale-95"
-                    >
-                        {copiedProjector ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                        {copiedProjector ? 'Projector Copied' : 'Copy Projector Link'}
-                    </button>
-                    <button
-                        onClick={handleCopyOBS}
-                        className="py-1 px-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 transition-all active:scale-95"
-                    >
-                        {copiedOBS ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                        {copiedOBS ? 'OBS Copied' : 'Copy OBS Link'}
-                    </button>
-                </div>
-            </div>
-
-            {/* AUTO-ALLOT & ACTIVE PICKING TEAM CONTROLS */}
-            <div className="p-4 rounded-2xl border-2 border-amber-500/40 bg-gradient-to-b from-amber-950/30 to-zinc-900/90 space-y-3 shadow-xl">
-                <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                        <Zap className="w-4 h-4 text-amber-400" /> 1-Click Auto-Allot Mode
-                    </h4>
-                    <button
-                        type="button"
-                        onClick={async () => {
-                            if (!auctionId) return;
-                            await db.collection('auctions').doc(auctionId).update({
-                                'draftBoardState.autoAllotEnabled': !draftState.autoAllotEnabled,
-                                'draftBoardState.updatedAt': Date.now()
-                            });
-                        }}
-                        className={`px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition-all ${
-                            draftState.autoAllotEnabled
-                                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/30 font-black'
-                                : 'bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700'
-                        }`}
-                    >
-                        <Zap className="w-3 h-3 fill-current" />
-                        {draftState.autoAllotEnabled ? 'ACTIVE' : 'DISABLED'}
-                    </button>
-                </div>
-
-                {/* Picking Team Selector */}
-                <div className="space-y-1.5">
-                    <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center justify-between">
-                        <span>Player Picking Round For:</span>
-                        <span className="text-amber-400 font-bold truncate max-w-[130px]">
-                            {draftState.targetPickingTeamId && draftState.targetPickingTeamId !== 'CURRENT_TURN'
-                                ? teams.find(t => String(t.id) === String(draftState.targetPickingTeamId))?.name || 'Selected Team'
-                                : 'Turn Order Follower'}
-                        </span>
-                    </label>
-                    <select
-                        value={String(draftState.targetPickingTeamId || 'CURRENT_TURN')}
-                        onChange={async (e) => {
-                            const val = e.target.value;
-                            if (!auctionId) return;
-                            const updatePayload: any = {
-                                'draftBoardState.targetPickingTeamId': val,
-                                'draftBoardState.updatedAt': Date.now()
-                            };
-                            if (val !== 'CURRENT_TURN') {
-                                updatePayload['draftBoardState.currentTeamId'] = val;
-                            }
-                            await db.collection('auctions').doc(auctionId).update(updatePayload);
-                        }}
-                        className="w-full bg-black/80 border border-amber-500/40 rounded-xl px-3 py-2 text-xs font-black text-white focus:outline-none focus:border-amber-400 uppercase tracking-wide cursor-pointer shadow-inner"
-                    >
-                        <option value="CURRENT_TURN">
-                            🎯 Follow Turn Order (Current: {teams.find(t => String(t.id) === String(draftState.currentTeamId))?.name || 'Round Order'})
-                        </option>
-                        {teams.map(t => (
-                            <option key={t.id} value={String(t.id)}>
-                                {t.name}
-                            </option>
-                        ))}
-                    </select>
-                    <p className="text-[8px] text-zinc-400 leading-tight">
-                        {draftState.autoAllotEnabled 
-                            ? '⚡ Clicking any player in the draft board will immediately allot them to this team!' 
-                            : 'Enable Auto-Allot above to assign players to this team in 1 click without popup modals.'}
-                    </p>
-                </div>
-            </div>
-
-            {/* TEAM SELF-PICKING PERMISSION CONTROL */}
-            <div className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-2.5 shadow-md">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <h4 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
-                            {draftState.teamPickingEnabled !== false ? (
-                                <Users className="w-4 h-4 text-emerald-400" />
-                            ) : (
-                                <Lock className="w-4 h-4 text-red-400" />
-                            )}
-                            Team Login Picking
-                        </h4>
-                        <p className="text-[9px] text-zinc-400 mt-0.5">
-                            {draftState.teamPickingEnabled !== false
-                                ? 'Captains can draft players during their turn'
-                                : 'Picking locked in team portal (Admin picks only)'}
-                        </p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={async () => {
-                            if (!auctionId) return;
-                            const nextState = draftState.teamPickingEnabled === false ? true : false;
-                            await db.collection('auctions').doc(auctionId).update({
-                                'draftBoardState.teamPickingEnabled': nextState,
-                                'draftBoardState.updatedAt': Date.now()
-                            });
-                        }}
-                        className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md active:scale-95 ${
-                            draftState.teamPickingEnabled !== false
-                                ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30 border border-emerald-400'
-                                : 'bg-red-600/20 text-red-400 hover:bg-red-600/30 border border-red-500/50'
-                        }`}
-                        title="Toggle whether teams can pick in their login portal"
-                    >
-                        {draftState.teamPickingEnabled !== false ? (
-                            <>
-                                <Check className="w-3.5 h-3.5 stroke-[3]" />
-                                <span>ENABLED</span>
-                            </>
-                        ) : (
-                            <>
-                                <Lock className="w-3.5 h-3.5" />
-                                <span>LOCKED</span>
-                            </>
-                        )}
-                    </button>
-                </div>
-            </div>
-
-            {/* OBS LIVE VIDEO OVERLAY CONTROLS (MINIMAL / TRANSPARENT MODES) */}
-            <div className="p-4 rounded-2xl border-2 border-purple-500/40 bg-gradient-to-b from-purple-950/30 to-zinc-900/90 space-y-3 shadow-xl">
-                <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
-                        <Cast className="w-4 h-4 text-purple-400" /> OBS Live Video Overlay
-                    </h4>
-                    <button
-                        type="button"
-                        onClick={handleToggleObsTransparent}
-                        className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all ${
-                            draftState.obsTransparentBg || (draftState.obsDisplayMode && draftState.obsDisplayMode !== 'FULL_BOARD')
-                                ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
-                                : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'
-                        }`}
-                        title="Keep background transparent so OBS video feed stays visible underneath"
-                    >
-                        {draftState.obsTransparentBg || (draftState.obsDisplayMode && draftState.obsDisplayMode !== 'FULL_BOARD')
-                            ? 'Transparent BG: ON'
-                            : 'Solid Theme BG'}
-                    </button>
-                </div>
-
-                <p className="text-[9px] text-zinc-400 leading-snug">
-                    Choose a minimal overlay when live camera/match video is active underneath in OBS so the video is never covered.
-                </p>
-
-                <div className="grid grid-cols-2 gap-1.5">
-                    {([
-                        { id: 'CURRENT_TEAM_ONLY', label: 'Current Team Only', icon: Users },
-                        { id: 'BOTTOM_CATEGORY_STRIP', label: 'Bottom Category', icon: Layers },
-                        { id: 'TOP_HEADER_ONLY', label: 'Top Bar Only', icon: LayoutList },
-                        { id: 'FULL_BOARD', label: 'Full Board', icon: LayoutGrid },
-                        { id: 'HIDDEN', label: 'Popups Only (Clear)', icon: EyeOff }
-                    ] as const).map(opt => {
-                        const Icon = opt.icon;
-                        const activeMode = draftState.obsDisplayMode || 'FULL_BOARD';
-                        const isSelected = activeMode === opt.id;
-                        return (
-                            <button
-                                key={opt.id}
-                                type="button"
-                                onClick={() => handleSetObsDisplayMode(opt.id)}
-                                className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all border ${
-                                    isSelected
-                                        ? 'bg-purple-600 text-white border-purple-400 shadow-md'
-                                        : 'bg-zinc-900/90 text-zinc-400 border-zinc-800 hover:text-white'
-                                }`}
-                            >
-                                <Icon className="w-3.5 h-3.5 shrink-0" />
-                                <span className="truncate">{opt.label}</span>
-                            </button>
-                        );
-                    })}
-                </div>
-
-                {(draftState.obsDisplayMode === 'BOTTOM_CATEGORY_STRIP') && (
-                    <div className="space-y-1.5 pt-2 border-t border-white/10">
-                        <label className="text-[9px] font-black uppercase tracking-wider text-purple-300 flex items-center justify-between">
-                            <span>Bottom Strip Category:</span>
-                            <span className="text-amber-400">{draftState.obsCategoryFilter || availableCategories[0] || 'Default'}</span>
-                        </label>
-                        <select
-                            value={draftState.obsCategoryFilter || availableCategories[0] || ''}
-                            onChange={(e) => handleSetObsCategoryFilter(e.target.value)}
-                            className="w-full bg-black/80 border border-purple-500/40 rounded-xl px-3 py-2 text-xs font-black text-white focus:outline-none focus:border-purple-400 uppercase"
-                        >
-                            {availableCategories.map(cat => (
-                                <option key={cat} value={cat}>{cat}</option>
-                            ))}
-                        </select>
-                    </div>
-                )}
-            </div>
-
-            {/* SOLD POPUP TIMING & CUSTOM MUSIC (SOLD / TIME UP / UNSOLD) */}
-            <div className="p-4 rounded-2xl border-2 border-emerald-500/35 bg-gradient-to-b from-emerald-950/25 to-zinc-900/90 space-y-4 shadow-xl">
-                <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                        <Music className="w-4 h-4" /> Audio &amp; Sold Popup Timing
-                    </h4>
-                    <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
-                        {Number(draftState.soldPopupDurationSeconds ?? 5) === 0 ? 'Popup Off' : `${draftState.soldPopupDurationSeconds ?? 5}s Popup`}
-                    </span>
-                </div>
-
-                {/* Sold Popup Timing Controls */}
-                <div className="space-y-2">
-                    <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
-                        <Timer className="w-3 h-3 text-amber-400" /> Sold Popup Display Time (Seconds):
-                    </label>
-                    <div className="flex flex-wrap gap-1">
-                        {[0, 2, 3, 5, 8, 10, 15].map(sec => {
-                            const currentSec = Number(draftState.soldPopupDurationSeconds ?? 5);
-                            const active = currentSec === sec;
-                            return (
-                                <button
-                                    key={sec}
-                                    type="button"
-                                    onClick={() => handleSetSoldPopupDuration(sec)}
-                                    className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase border transition-all ${
-                                        active
-                                            ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
-                                            : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
-                                    }`}
-                                >
-                                    {sec === 0 ? 'Off' : `${sec}s`}
-                                </button>
-                            );
-                        })}
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="number"
-                            min={0}
-                            max={60}
-                            value={customPopupSec}
-                            onChange={(e) => setCustomPopupSec(e.target.value)}
-                            className="w-20 bg-black/70 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs font-black text-white focus:outline-none focus:border-amber-400"
-                        />
-                        <button
-                            type="button"
-                            onClick={() => handleSetSoldPopupDuration(Number(customPopupSec) || 0)}
-                            className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider"
-                        >
-                            Set Sec
-                        </button>
-                        <span className="text-[9px] text-zinc-500">Applies to Projector, OBS &amp; Portal</span>
-                    </div>
-                </div>
-
-                {/* Custom Music Uploaders */}
-                <div className="space-y-2.5 pt-2 border-t border-white/10">
-                    <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">
-                        Upload Custom Event Music (MP3 / WAV / OGG):
-                    </p>
-                    {([
-                        {
-                            key: 'sold' as const,
-                            label: 'Sold Music',
-                            url: draftState.customAudio?.soldMusicUrl,
-                            name: draftState.customAudio?.soldMusicName
-                        },
-                        {
-                            key: 'timeup' as const,
-                            label: 'Time Up Music',
-                            url: draftState.customAudio?.timeUpMusicUrl,
-                            name: draftState.customAudio?.timeUpMusicName
-                        },
-                        {
-                            key: 'unsold' as const,
-                            label: 'Unsold Music',
-                            url: draftState.customAudio?.unsoldMusicUrl,
-                            name: draftState.customAudio?.unsoldMusicName
-                        }
-                    ]).map(item => (
-                        <div key={item.key} className="p-2.5 rounded-xl bg-black/50 border border-zinc-800 space-y-1.5">
-                            <div className="flex items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                    <p className="text-[10px] font-black uppercase text-white">{item.label}</p>
-                                    <p className="text-[8.5px] text-zinc-400 truncate max-w-[170px]">
-                                        {item.name ? item.name : (item.url ? 'Custom audio uploaded' : 'Default Stadium Synth')}
-                                    </p>
-                                </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                    <button
-                                        type="button"
-                                        onClick={() => previewAudioSound(item.key, item.url)}
-                                        className="p-1.5 rounded-lg bg-zinc-800 hover:bg-emerald-600 text-emerald-400 hover:text-white transition-all"
-                                        title={`Play ${item.label}`}
-                                    >
-                                        <Volume2 className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => stopCustomAudio()}
-                                        className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-all"
-                                        title="Stop Audio"
-                                    >
-                                        <Square className="w-3 h-3" />
-                                    </button>
-                                    {item.url && (
-                                        <button
-                                            type="button"
-                                            onClick={() => handleClearCustomAudio(item.key)}
-                                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-red-600 text-red-400 hover:text-white transition-all"
-                                            title={`Reset ${item.label}`}
-                                        >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
-                                    )}
+                                    {teams.map(t => {
+                                        const isSelected = String(draftState.selectedTeamSquadId) === String(t.id);
+                                        return (
+                                            <button
+                                                key={t.id}
+                                                type="button"
+                                                onClick={() => handleSetSelectedTeamSquad(t.id)}
+                                                className={`py-1 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all border ${
+                                                    isSelected
+                                                        ? 'bg-amber-500 text-black border-amber-400 font-black shadow-sm'
+                                                        : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                                }`}
+                                            >
+                                                {t.logoUrl ? (
+                                                    <img src={t.logoUrl} alt="" className="w-3.5 h-3.5 rounded-full object-contain bg-white" />
+                                                ) : null}
+                                                <span className="truncate max-w-[100px]">{t.name}</span>
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
+                        )}
 
-                            <label className={`w-full py-1.5 px-2.5 rounded-lg border border-dashed text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                                uploadingSoundKey === item.key
-                                    ? 'bg-amber-500/20 border-amber-400 text-amber-300'
-                                    : 'bg-zinc-900/90 hover:bg-zinc-800 border-zinc-700 text-zinc-300'
-                            }`}>
-                                <Upload className="w-3 h-3" />
-                                <span>{uploadingSoundKey === item.key ? 'Uploading...' : `Upload ${item.label}`}</span>
-                                <input
-                                    type="file"
-                                    accept="audio/*"
-                                    disabled={uploadingSoundKey !== null}
-                                    className="hidden"
-                                    onChange={(e) => {
-                                        const file = e.target.files?.[0];
-                                        if (file) {
-                                            handleUploadCustomAudio(item.key, file);
-                                            e.target.value = '';
-                                        }
-                                    }}
-                                />
-                            </label>
-                        </div>
-                    ))}
-                </div>
-
-                {/* Manual Unsold Announcement Trigger for Draft Board */}
-                <div className="pt-2 border-t border-white/10 space-y-1.5">
-                    <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
-                        <Ban className="w-3 h-3 text-red-400" /> Broadcast Unsold &amp; Play Unsold Music:
-                    </label>
-                    <div className="flex items-center gap-1.5">
-                        <select
-                            value={unsoldPlayerId}
-                            onChange={(e) => setUnsoldPlayerId(e.target.value)}
-                            className="flex-1 min-w-0 bg-black/70 border border-zinc-700 rounded-lg px-2 py-1.5 text-[10px] font-bold text-white focus:outline-none"
-                        >
-                            <option value="">General Pass (No specific player)</option>
-                            {players.filter(p => p.status !== 'SOLD').map(p => (
-                                <option key={p.id} value={String(p.id)}>{p.name} ({p.category || p.role})</option>
-                            ))}
-                        </select>
-                        <button
-                            type="button"
-                            onClick={handleTriggerUnsoldEvent}
-                            className="px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
-                        >
-                            <Ban className="w-3 h-3" /> Unsold
-                        </button>
-                    </div>
-                </div>
-
-                {audioFeedback && (
-                    <div className={`px-3 py-2 rounded-xl text-[10px] font-bold border ${
-                        audioFeedback.type === 'error'
-                            ? 'bg-red-950/80 border-red-500/60 text-red-200'
-                            : 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200'
-                    }`}>
-                        {audioFeedback.text}
-                    </div>
-                )}
-            </div>
-
-            {/* COMPLETE AUCTION & FINAL SUMMARY BANNER (VISIBLE ONLY AFTER SQUADS ARE FILLED OR ALL PLAYERS ARE SOLD) */}
-            {isEligibleToComplete ? (
-                <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-950/70 via-teal-950/50 to-zinc-900 border-2 border-emerald-500/50 space-y-3 shadow-xl">
-                    <div className="flex items-center justify-between">
-                        <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                            <Trophy className="w-4 h-4 text-emerald-400" /> Tournament Draft Conclusion
-                        </h4>
-                        <span className="text-[9px] font-black text-emerald-300 bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 rounded-full uppercase">
-                            {allPlayersSold ? 'All Players Sold' : 'All Squads Filled'}
-                        </span>
-                    </div>
-                    <p className="text-[10px] text-zinc-300 leading-relaxed">
-                        All squads are filled or all players have been sold! Click below to conclude the auction and broadcast the Final Summary celebration page with squads, stats, and Excel export.
-                    </p>
-                    <div className="flex items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setConfirmAction({
-                                    title: 'COMPLETE DRAFT AUCTION?',
-                                    message: 'This will finish the tournament draft and display the Final Summary celebration screen on the Projector, OBS Overlay, and Admin dashboard.',
-                                    action: handleCompleteAuction
-                                });
-                            }}
-                            className="flex-1 py-3 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all"
-                        >
-                            <Trophy className="w-4 h-4" /> Complete Auction &amp; View Summary
-                        </button>
-                        {(draftState.roundStatus === 'COMPLETED' || draftState.roundStatus === 'FINISHED' || draftState.broadcastView === 'SUMMARY') && (
+                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
                             <button
                                 type="button"
-                                onClick={handleReopenDraftAuction}
-                                className="py-3 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/40 shadow-sm flex items-center justify-center gap-1 active:scale-95 transition-all"
-                                title="Reopen draft and continue drafting players"
+                                onClick={handleOpenProjector}
+                                className="p-2 rounded-xl border border-blue-500/40 bg-blue-600/20 hover:bg-blue-600 text-white font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
                             >
-                                <RefreshCw className="w-4 h-4" /> Resume Draft
+                                <Monitor className="w-3.5 h-3.5" /> Open Projector
                             </button>
-                        )}
+                            <button
+                                type="button"
+                                onClick={handleCopyProjector}
+                                className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                            >
+                                {copiedProjector ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                {copiedProjector ? 'Copied' : 'Copy Projector'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             ) : (
-                <div className="p-3.5 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-2">
-                    <div className="flex items-center justify-between text-[10px] font-bold">
-                        <span className="text-zinc-400 flex items-center gap-1">
-                            <Lock className="w-3 h-3 text-amber-500" /> Complete Option &amp; Summary
-                        </span>
-                        <span className="text-amber-400 font-mono">
-                            {totalSoldPlayers}/{players.length} Sold
-                        </span>
-                    </div>
-                    <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
-                        <div 
-                            className="bg-gradient-to-r from-amber-500 to-yellow-400 h-full rounded-full transition-all duration-300"
-                            style={{ 
-                                width: `${Math.round((totalSoldPlayers / Math.max(1, players.length)) * 100)}%` 
-                            }}
-                        />
-                    </div>
-                    <p className="text-[8.5px] text-zinc-500 uppercase tracking-wider leading-tight">
-                        Complete option and generate summary will be visible only after squads are filled or all players are sold.
-                    </p>
-                </div>
-            )}
-
-            {/* ROUND STATUS & NEXT ROUND BUTTON */}
-            {draftState.roundStatus === 'ROUND_COMPLETED' ? (
-                <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-900/40 via-indigo-900/30 to-zinc-900 border border-blue-500/40 text-center space-y-3">
-                    <p className="text-xs font-black uppercase tracking-wider text-blue-400">
-                        🎉 Round {draftState.currentRound} Complete!
-                    </p>
-                    <p className="text-[11px] text-zinc-300">
-                        All teams have completed their draft selections for this round.
-                    </p>
-                    <button
-                        onClick={onStartNextRound}
-                        className="w-full py-3.5 px-4 rounded-xl font-black text-xs uppercase tracking-widest bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-xl shadow-blue-600/20 active:scale-95 transition-all flex items-center justify-center gap-2"
-                    >
-                        <Play className="w-4 h-4 fill-white" /> Start Round {draftState.currentRound + 1}
-                    </button>
-                </div>
-            ) : null}
-
-            {/* TIMER & TURN CONTROLS */}
-            <div className="p-4 rounded-2xl border border-zinc-800 bg-zinc-900/80 space-y-3">
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-400 flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-amber-500" /> Turn Timer Control
-                </h4>
-
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={handleToggleTimer}
-                        className={`flex-1 py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-95 shadow-md ${
-                            draftState.isTimerRunning
-                                ? 'bg-amber-500 text-black shadow-amber-500/20'
-                                : 'bg-emerald-600 text-white shadow-emerald-600/20 hover:bg-emerald-500'
-                        }`}
-                    >
-                        {draftState.isTimerRunning ? (
-                            <><Pause className="w-4 h-4 fill-black" /> Pause</>
-                        ) : (
-                            <><Play className="w-4 h-4 fill-white" /> Start / Resume</>
-                        )}
-                    </button>
-
-                    <button
-                        onClick={handleResetTimer}
-                        className="py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/40 flex items-center justify-center gap-1 transition-all active:scale-95 shadow-sm"
-                        title="Reset Turn Timer to default duration"
-                    >
-                        <RotateCcw className="w-4 h-4" /> Reset
-                    </button>
-
-                    <button
-                        onClick={handleSkipTurn}
-                        className="py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 flex items-center justify-center gap-1 transition-all active:scale-95"
-                        title="Skip current team's turn"
-                    >
-                        <FastForward className="w-4 h-4" /> Skip
-                    </button>
-                </div>
-
-                {/* TIME'S UP ALERT WITH RESET AND OK BUTTON */}
-                {draftState.timerTimeRemaining === 0 && (
-                    <div className="p-3.5 rounded-2xl bg-red-600/20 border-2 border-red-500/60 text-center space-y-2.5 animate-pulse">
-                        <p className="text-xs font-black uppercase tracking-wider text-red-400 flex items-center justify-center gap-1.5">
-                            <Clock className="w-4 h-4 text-red-400" /> Time&apos;s Up! Turn Expired
-                        </p>
-                        <div className="flex items-center gap-2">
+                /* =====================================================================
+                   SEPARATE SETTINGS SECTION: ALL OTHER SETTINGS & ADMIN CONFIGURATION
+                   ===================================================================== */
+                <div className="space-y-5">
+                    {/* 1. 1-CLICK AUTO-ALLOT MODE */}
+                    <div className="p-4 rounded-2xl border-2 border-amber-500/40 bg-gradient-to-b from-amber-950/30 to-zinc-900/90 space-y-3 shadow-xl">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h4 className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                                    <Zap className="w-4 h-4 text-amber-400" /> 1-Click Auto-Allot Mode
+                                </h4>
+                                <p className="text-[9px] text-zinc-400 mt-0.5">
+                                    {draftState.autoAllotEnabled
+                                        ? 'Clicking any player on the board instantly assigns them.'
+                                        : 'Assign players directly without confirmation modals.'}
+                                </p>
+                            </div>
                             <button
-                                onClick={handleResetTimer}
-                                className="flex-1 py-2 rounded-xl font-black text-xs uppercase tracking-wider bg-amber-500 hover:bg-amber-400 text-black shadow-md flex items-center justify-center gap-1 transition-all active:scale-95"
-                            >
-                                <RotateCcw className="w-3.5 h-3.5" /> Reset
-                            </button>
-                            <button
+                                type="button"
                                 onClick={async () => {
+                                    if (!auctionId) return;
                                     await db.collection('auctions').doc(auctionId).update({
-                                        'draftBoardState.isTimerRunning': false,
+                                        'draftBoardState.autoAllotEnabled': !draftState.autoAllotEnabled,
                                         'draftBoardState.updatedAt': Date.now()
                                     });
                                 }}
-                                className="flex-1 py-2 rounded-xl font-black text-xs uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white shadow-md flex items-center justify-center gap-1 transition-all active:scale-95"
+                                className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition-all shrink-0 ${
+                                    draftState.autoAllotEnabled
+                                        ? 'bg-amber-500 text-black shadow-md shadow-amber-500/30 font-black'
+                                        : 'bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700'
+                                }`}
                             >
-                                <Check className="w-3.5 h-3.5 stroke-[3]" /> OK
+                                <Zap className="w-3 h-3 fill-current" />
+                                {draftState.autoAllotEnabled ? 'ACTIVE' : 'DISABLED'}
                             </button>
                         </div>
                     </div>
-                )}
 
-                {/* Preset Timer Dropdown / Pills */}
-                <div className="pt-2 border-t border-zinc-800 flex items-center justify-between gap-2">
-                    <span className="text-[9px] font-bold uppercase text-zinc-500">Duration:</span>
-                    <div className="flex items-center gap-1 overflow-x-auto pb-1">
-                        {timerOptions.map(sec => (
+                    {/* 2. TEAM SELF-PICKING PERMISSION CONTROL */}
+                    <div className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-2.5 shadow-md">
+                        <div className="flex items-center justify-between gap-2">
+                            <div>
+                                <h4 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
+                                    {draftState.teamPickingEnabled !== false ? (
+                                        <Users className="w-4 h-4 text-emerald-400" />
+                                    ) : (
+                                        <Lock className="w-4 h-4 text-red-400" />
+                                    )}
+                                    Team Login Picking
+                                </h4>
+                                <p className="text-[9px] text-zinc-400 mt-0.5">
+                                    {draftState.teamPickingEnabled !== false
+                                        ? 'Captains can draft players during their turn'
+                                        : 'Picking locked in team portal (Admin picks only)'}
+                                </p>
+                            </div>
                             <button
-                                key={sec}
-                                onClick={() => handleChangeTimerDuration(sec)}
-                                className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${
-                                    draftState.turnTimerSeconds === sec
-                                        ? 'bg-blue-600 text-white'
-                                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                                type="button"
+                                onClick={async () => {
+                                    if (!auctionId) return;
+                                    const nextState = draftState.teamPickingEnabled === false ? true : false;
+                                    await db.collection('auctions').doc(auctionId).update({
+                                        'draftBoardState.teamPickingEnabled': nextState,
+                                        'draftBoardState.updatedAt': Date.now()
+                                    });
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md active:scale-95 shrink-0 ${
+                                    draftState.teamPickingEnabled !== false
+                                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30 border border-emerald-400'
+                                        : 'bg-red-600/20 text-red-400 hover:bg-red-600/30 border border-red-500/50'
+                                }`}
+                                title="Toggle whether teams can pick in their login portal"
+                            >
+                                {draftState.teamPickingEnabled !== false ? (
+                                    <>
+                                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                        <span>ENABLED</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Lock className="w-3.5 h-3.5" />
+                                        <span>LOCKED</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 3. SOLD POPUP TIMING & CUSTOM MUSIC (SOLD / TIME UP / UNSOLD) */}
+                    <div className="p-4 rounded-2xl border-2 border-emerald-500/35 bg-gradient-to-b from-emerald-950/25 to-zinc-900/90 space-y-4 shadow-xl">
+                        <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                                <Music className="w-4 h-4" /> Audio &amp; Sold Popup Timing
+                            </h4>
+                            <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                                {Number(draftState.soldPopupDurationSeconds ?? 5) === 0 ? 'Popup Off' : `${draftState.soldPopupDurationSeconds ?? 5}s Popup`}
+                            </span>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+                                <Timer className="w-3 h-3 text-amber-400" /> Sold Popup Display Time (Seconds):
+                            </label>
+                            <div className="flex flex-wrap gap-1">
+                                {[0, 2, 3, 5, 8, 10, 15].map(sec => {
+                                    const currentSec = Number(draftState.soldPopupDurationSeconds ?? 5);
+                                    const active = currentSec === sec;
+                                    return (
+                                        <button
+                                            key={sec}
+                                            type="button"
+                                            onClick={() => handleSetSoldPopupDuration(sec)}
+                                            className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase border transition-all ${
+                                                active
+                                                    ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
+                                                    : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                            }`}
+                                        >
+                                            {sec === 0 ? 'Off' : `${sec}s`}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="number"
+                                    min={0}
+                                    max={60}
+                                    value={customPopupSec}
+                                    onChange={(e) => setCustomPopupSec(e.target.value)}
+                                    className="w-20 bg-black/70 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs font-black text-white focus:outline-none focus:border-amber-400"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => handleSetSoldPopupDuration(Number(customPopupSec) || 0)}
+                                    className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider"
+                                >
+                                    Set Sec
+                                </button>
+                                <span className="text-[9px] text-zinc-500">Applies to All Screens</span>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2.5 pt-2 border-t border-white/10">
+                            <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">
+                                Upload Custom Event Music (MP3 / WAV / OGG):
+                            </p>
+                            {([
+                                {
+                                    key: 'sold' as const,
+                                    label: 'Sold Music',
+                                    url: draftState.customAudio?.soldMusicUrl,
+                                    name: draftState.customAudio?.soldMusicName
+                                },
+                                {
+                                    key: 'timeup' as const,
+                                    label: 'Time Up Music',
+                                    url: draftState.customAudio?.timeUpMusicUrl,
+                                    name: draftState.customAudio?.timeUpMusicName
+                                },
+                                {
+                                    key: 'unsold' as const,
+                                    label: 'Unsold Music',
+                                    url: draftState.customAudio?.unsoldMusicUrl,
+                                    name: draftState.customAudio?.unsoldMusicName
+                                }
+                            ]).map(item => (
+                                <div key={item.key} className="p-2.5 rounded-xl bg-black/50 border border-zinc-800 space-y-1.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                            <p className="text-[10px] font-black uppercase text-white">{item.label}</p>
+                                            <p className="text-[8.5px] text-zinc-400 truncate max-w-[170px]">
+                                                {item.name ? item.name : (item.url ? 'Custom audio uploaded' : 'Default Stadium Synth')}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            <button
+                                                type="button"
+                                                onClick={() => previewAudioSound(item.key, item.url)}
+                                                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-emerald-600 text-emerald-400 hover:text-white transition-all"
+                                                title={`Play ${item.label}`}
+                                            >
+                                                <Volume2 className="w-3.5 h-3.5" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => stopCustomAudio()}
+                                                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-all"
+                                                title="Stop Audio"
+                                            >
+                                                <Square className="w-3 h-3" />
+                                            </button>
+                                            {item.url && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleClearCustomAudio(item.key)}
+                                                    className="p-1.5 rounded-lg bg-zinc-800 hover:bg-red-600 text-red-400 hover:text-white transition-all"
+                                                    title={`Reset ${item.label}`}
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <label className={`w-full py-1.5 px-2.5 rounded-lg border border-dashed text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                                        uploadingSoundKey === item.key
+                                            ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                                            : 'bg-zinc-900/90 hover:bg-zinc-800 border-zinc-700 text-zinc-300'
+                                    }`}>
+                                        <Upload className="w-3 h-3" />
+                                        <span>{uploadingSoundKey === item.key ? 'Uploading...' : `Upload ${item.label}`}</span>
+                                        <input
+                                            type="file"
+                                            accept="audio/*"
+                                            disabled={uploadingSoundKey !== null}
+                                            className="hidden"
+                                            onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                    handleUploadCustomAudio(item.key, file);
+                                                    e.target.value = '';
+                                                }
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="pt-2 border-t border-white/10 space-y-1.5">
+                            <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+                                <Ban className="w-3 h-3 text-red-400" /> Broadcast Unsold &amp; Play Unsold Music:
+                            </label>
+                            <div className="flex items-center gap-1.5">
+                                <select
+                                    value={unsoldPlayerId}
+                                    onChange={(e) => setUnsoldPlayerId(e.target.value)}
+                                    className="flex-1 min-w-0 bg-black/70 border border-zinc-700 rounded-lg px-2 py-1.5 text-[10px] font-bold text-white focus:outline-none"
+                                >
+                                    <option value="">General Pass (No specific player)</option>
+                                    {players.filter(p => p.status !== 'SOLD').map(p => (
+                                        <option key={p.id} value={String(p.id)}>{p.name} ({p.category || p.role})</option>
+                                    ))}
+                                </select>
+                                <button
+                                    type="button"
+                                    onClick={handleTriggerUnsoldEvent}
+                                    className="px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
+                                >
+                                    <Ban className="w-3 h-3" /> Unsold
+                                </button>
+                            </div>
+                        </div>
+
+                        {audioFeedback && (
+                            <div className={`px-3 py-2 rounded-xl text-[10px] font-bold border ${
+                                audioFeedback.type === 'error'
+                                    ? 'bg-red-950/80 border-red-500/60 text-red-200'
+                                    : 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200'
+                            }`}>
+                                {audioFeedback.text}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 4. DRAFT ORDER METHOD (SNAKE VS LINEAR) */}
+                    <div className="p-4 rounded-2xl border border-zinc-800 bg-zinc-900/80 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-400 flex items-center gap-1.5">
+                                <Shuffle className="w-3.5 h-3.5 text-blue-500" /> Draft Order Method
+                            </h4>
+                            <span className="text-[9px] font-black text-blue-400 uppercase">
+                                {draftState.orderType || 'SNAKE'}
+                            </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    await db.collection('auctions').doc(auctionId).update({
+                                        'draftBoardState.orderType': 'SNAKE',
+                                        'draftBoardState.updatedAt': Date.now()
+                                    });
+                                }}
+                                className={`p-2.5 rounded-xl border text-center transition-all ${
+                                    draftState.orderType === 'SNAKE'
+                                        ? 'bg-blue-600/20 border-blue-500 text-blue-400 font-black'
+                                        : 'bg-zinc-800/60 border-zinc-700 text-zinc-400 font-bold'
                                 }`}
                             >
-                                {sec}s
+                                <p className="text-[10px] uppercase">Snake Draft</p>
+                                <p className="text-[8px] opacity-70">1&rarr;N then N&rarr;1</p>
                             </button>
-                        ))}
+
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    await db.collection('auctions').doc(auctionId).update({
+                                        'draftBoardState.orderType': 'LINEAR',
+                                        'draftBoardState.updatedAt': Date.now()
+                                    });
+                                }}
+                                className={`p-2.5 rounded-xl border text-center transition-all ${
+                                    draftState.orderType === 'LINEAR'
+                                        ? 'bg-blue-600/20 border-blue-500 text-blue-400 font-black'
+                                        : 'bg-zinc-800/60 border-zinc-700 text-zinc-400 font-bold'
+                                }`}
+                            >
+                                <p className="text-[10px] uppercase">Linear Draft</p>
+                                <p className="text-[8px] opacity-70">1&rarr;N each round</p>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 5. COMPLETE AUCTION & FINAL SUMMARY */}
+                    {isEligibleToComplete ? (
+                        <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-950/70 via-teal-950/50 to-zinc-900 border-2 border-emerald-500/50 space-y-3 shadow-xl">
+                            <div className="flex items-center justify-between">
+                                <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                                    <Trophy className="w-4 h-4 text-emerald-400" /> Tournament Draft Conclusion
+                                </h4>
+                                <span className="text-[9px] font-black text-emerald-300 bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 rounded-full uppercase">
+                                    {allPlayersSold ? 'All Players Sold' : 'All Squads Filled'}
+                                </span>
+                            </div>
+                            <p className="text-[10px] text-zinc-300 leading-relaxed">
+                                All squads are filled or all players have been sold! Click below to conclude the auction and broadcast the Final Summary celebration page with squads, stats, and Excel export.
+                            </p>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setConfirmAction({
+                                            title: 'COMPLETE DRAFT AUCTION?',
+                                            message: 'This will finish the tournament draft and display the Final Summary celebration screen on the Projector, OBS Overlay, and Admin dashboard.',
+                                            action: handleCompleteAuction
+                                        });
+                                    }}
+                                    className="flex-1 py-3 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                                >
+                                    <Trophy className="w-4 h-4" /> Complete Auction &amp; View Summary
+                                </button>
+                                {(draftState.roundStatus === 'COMPLETED' || draftState.roundStatus === 'FINISHED' || draftState.broadcastView === 'SUMMARY') && (
+                                    <button
+                                        type="button"
+                                        onClick={handleReopenDraftAuction}
+                                        className="py-3 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/40 shadow-sm flex items-center justify-center gap-1 active:scale-95 transition-all"
+                                        title="Reopen draft and continue drafting players"
+                                    >
+                                        <RefreshCw className="w-4 h-4" /> Resume Draft
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="p-3.5 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-2">
+                            <div className="flex items-center justify-between text-[10px] font-bold">
+                                <span className="text-zinc-400 flex items-center gap-1">
+                                    <Lock className="w-3 h-3 text-amber-500" /> Complete Option &amp; Summary
+                                </span>
+                                <span className="text-amber-400 font-mono">
+                                    {totalSoldPlayers}/{players.length} Sold
+                                </span>
+                            </div>
+                            <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                                <div 
+                                    className="bg-gradient-to-r from-amber-500 to-yellow-400 h-full rounded-full transition-all duration-300"
+                                    style={{ 
+                                        width: `${Math.round((totalSoldPlayers / Math.max(1, players.length)) * 100)}%` 
+                                    }}
+                                />
+                            </div>
+                            <p className="text-[8.5px] text-zinc-500 uppercase tracking-wider leading-tight">
+                                Complete option and generate summary will be visible only after squads are filled or all players are sold.
+                            </p>
+                        </div>
+                    )}
+
+                    {/* 6. SAFETY & ROLLBACK CONTROLS */}
+                    <div className="space-y-2 pt-2 border-t border-zinc-800">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
+                            Safety &amp; Rollback Controls
+                        </h4>
+
+                        <button
+                            type="button"
+                            disabled={(draftState.history || []).length === 0 || isProcessing}
+                            onClick={() => {
+                                const lastPick = draftState.history[draftState.history.length - 1];
+                                setConfirmAction({
+                                    title: `Undo Last Pick: ${lastPick.playerName}?`,
+                                    message: `This will mark ${lastPick.playerName} as UNSOLD, return them to the draft pool, and restore the turn to ${lastPick.teamName}.`,
+                                    action: handleUndoLastPick
+                                });
+                            }}
+                            className="w-full py-2.5 px-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40"
+                        >
+                            <Undo2 className="w-4 h-4 text-amber-400" /> Undo Last Pick
+                        </button>
+
+                        <button
+                            type="button"
+                            disabled={isProcessing}
+                            onClick={() => {
+                                setConfirmAction({
+                                    title: `Reset Round ${draftState.currentRound}?`,
+                                    message: `This will revert ALL players drafted during Round ${draftState.currentRound} back to UNSOLD and restore them to the draft pool.`,
+                                    action: handleResetCurrentRound
+                                });
+                            }}
+                            className="w-full py-2.5 px-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40"
+                        >
+                            <RotateCcw className="w-4 h-4" /> Reset Current Round
+                        </button>
+
+                        <button
+                            type="button"
+                            disabled={isProcessing}
+                            onClick={() => {
+                                setConfirmAction({
+                                    title: 'RESET ENTIRE DRAFT AUCTION?',
+                                    message: 'WARNING: This will reset all rounds, set all drafted players back to UNSOLD, and reset team squads. This cannot be undone.',
+                                    action: handleResetFullDraft
+                                });
+                            }}
+                            className="w-full py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40"
+                        >
+                            <AlertTriangle className="w-4 h-4" /> Reset Full Draft
+                        </button>
                     </div>
                 </div>
-            </div>
-
-            {/* DRAFT ORDER SETTINGS (SNAKE VS LINEAR) */}
-            <div className="p-4 rounded-2xl border border-zinc-800 bg-zinc-900/80 space-y-3">
-                <div className="flex items-center justify-between">
-                    <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-400 flex items-center gap-1.5">
-                        <Shuffle className="w-3.5 h-3.5 text-blue-500" /> Draft Order Method
-                    </h4>
-                    <span className="text-[9px] font-black text-blue-400 uppercase">
-                        {draftState.orderType || 'SNAKE'}
-                    </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                    <button
-                        onClick={async () => {
-                            await db.collection('auctions').doc(auctionId).update({
-                                'draftBoardState.orderType': 'SNAKE',
-                                'draftBoardState.updatedAt': Date.now()
-                            });
-                        }}
-                        className={`p-2.5 rounded-xl border text-center transition-all ${
-                            draftState.orderType === 'SNAKE'
-                                ? 'bg-blue-600/20 border-blue-500 text-blue-400 font-black'
-                                : 'bg-zinc-800/60 border-zinc-700 text-zinc-400 font-bold'
-                        }`}
-                    >
-                        <p className="text-[10px] uppercase">Snake Draft</p>
-                        <p className="text-[8px] opacity-70">1&rarr;N then N&rarr;1</p>
-                    </button>
-
-                    <button
-                        onClick={async () => {
-                            await db.collection('auctions').doc(auctionId).update({
-                                'draftBoardState.orderType': 'LINEAR',
-                                'draftBoardState.updatedAt': Date.now()
-                            });
-                        }}
-                        className={`p-2.5 rounded-xl border text-center transition-all ${
-                            draftState.orderType === 'LINEAR'
-                                ? 'bg-blue-600/20 border-blue-500 text-blue-400 font-black'
-                                : 'bg-zinc-800/60 border-zinc-700 text-zinc-400 font-bold'
-                        }`}
-                    >
-                        <p className="text-[10px] uppercase">Linear Draft</p>
-                        <p className="text-[8px] opacity-70">1&rarr;N each round</p>
-                    </button>
-                </div>
-            </div>
-
-            {/* CRITICAL ACTIONS: UNDO, CANCEL ROUND, RESET FULL */}
-            <div className="space-y-2 pt-2 border-t border-zinc-800">
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
-                    Safety &amp; Rollback Controls
-                </h4>
-
-                {/* 1. Undo Last Pick */}
-                <button
-                    disabled={(draftState.history || []).length === 0 || isProcessing}
-                    onClick={() => {
-                        const lastPick = draftState.history[draftState.history.length - 1];
-                        setConfirmAction({
-                            title: `Undo Last Pick: ${lastPick.playerName}?`,
-                            message: `This will mark ${lastPick.playerName} as UNSOLD, return them to the draft pool, and restore the turn to ${lastPick.teamName}.`,
-                            action: handleUndoLastPick
-                        });
-                    }}
-                    className="w-full py-2.5 px-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40"
-                >
-                    <Undo2 className="w-4 h-4 text-amber-400" /> Undo Last Pick
-                </button>
-
-                {/* 2. Cancel / Reset Current Round */}
-                <button
-                    disabled={isProcessing}
-                    onClick={() => {
-                        setConfirmAction({
-                            title: `Reset Round ${draftState.currentRound}?`,
-                            message: `This will revert ALL players drafted during Round ${draftState.currentRound} back to UNSOLD and restore them to the draft pool.`,
-                            action: handleResetCurrentRound
-                        });
-                    }}
-                    className="w-full py-2.5 px-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40"
-                >
-                    <RotateCcw className="w-4 h-4" /> Reset Current Round
-                </button>
-
-                {/* 3. Reset Full Draft */}
-                <button
-                    disabled={isProcessing}
-                    onClick={() => {
-                        setConfirmAction({
-                            title: 'RESET ENTIRE DRAFT AUCTION?',
-                            message: 'WARNING: This will reset all rounds, set all drafted players back to UNSOLD, and reset team squads. This cannot be undone.',
-                            action: handleResetFullDraft
-                        });
-                    }}
-                    className="w-full py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40"
-                >
-                    <AlertTriangle className="w-4 h-4" /> Reset Full Draft
-                </button>
-            </div>
+            )}
 
             {/* CONFIRMATION MODAL */}
             {confirmAction && (

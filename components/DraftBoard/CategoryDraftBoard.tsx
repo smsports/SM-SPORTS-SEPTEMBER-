@@ -92,7 +92,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     } | null>(null);
     const prevUnsoldTsRef = useRef<number>(Number(draftState.lastUnsoldEvent?.timestamp || 0));
 
-    const customAudio = draftState.customAudio || state.customAudio;
+    const customAudio = { ...(state.customAudio || {}), ...(draftState.customAudio || {}) };
     const soldPopupSeconds = Number(draftState.soldPopupDurationSeconds ?? state.soldPopupDurationSeconds ?? 5);
     const soldPopupDurationMs = Math.max(0, isNaN(soldPopupSeconds) ? 5 : soldPopupSeconds) * 1000;
 
@@ -438,6 +438,14 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 players: JSON.parse(JSON.stringify(updatedTeamPlayers))
             });
 
+            // Compact media helper: keep HTTPS URLs (<1000 chars), drop raw Base64 blobs from root auction doc
+            // so draftBoardState.history & lastSoldCelebration never trigger Firestore's 1 MiB document limit.
+            const compactMediaRef = (url?: string): string => {
+                if (!url) return '';
+                if (url.startsWith('data:') && url.length > 1000) return '';
+                return url;
+            };
+
             // 3. Record draft pick in history with guaranteed non-undefined values
             const newPick: DraftPickHistory = {
                 id: `pick_${Date.now()}`,
@@ -445,17 +453,22 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 pickNumber: Number(draftState.history?.length || 0) + 1,
                 teamId: targetTeam.id,
                 teamName: targetTeam.name || '',
-                teamLogo: targetTeam.logoUrl || '',
+                teamLogo: compactMediaRef(targetTeam.logoUrl),
                 playerId: player.id,
                 playerName: player.name || '',
                 playerCategory: player.category || player.role || 'Player',
                 playerRole: player.role || 'Player',
-                playerPhoto: player.photoUrl || '',
+                playerPhoto: compactMediaRef(player.photoUrl),
                 soldPrice: effectivePrice,
                 timestamp: Date.now()
             };
 
-            const updatedHistory = [...(draftState.history || []), newPick];
+            const sanitizedPriorHistory = (draftState.history || []).map(h => ({
+                ...h,
+                teamLogo: compactMediaRef(h.teamLogo),
+                playerPhoto: compactMediaRef(h.playerPhoto)
+            }));
+            const updatedHistory = [...sanitizedPriorHistory, newPick];
 
             // 4. Advance turn to next team in round order
             const currentOrder = (draftState.roundOrder && draftState.roundOrder.length > 0)
@@ -474,13 +487,13 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             const celebrationData: DraftCelebrationData = {
                 playerId: player.id,
                 playerName: player.name || '',
-                playerPhoto: player.photoUrl || '',
+                playerPhoto: compactMediaRef(player.photoUrl),
                 role: player.role || player.category || 'Player',
                 category: player.category || 'General',
                 jerseyNumber: player.jerseyNumber || '',
                 teamId: targetTeam.id,
                 teamName: targetTeam.name || '',
-                teamLogo: targetTeam.logoUrl || '',
+                teamLogo: compactMediaRef(targetTeam.logoUrl),
                 timestamp: Date.now()
             };
 
@@ -616,28 +629,37 @@ export const CategoryDraftBoard: React.FC<Props> = ({
 
     if (isAuctionFinished) {
         return (
-            <DraftAuctionSummary
-                tournamentName={state.tournamentName}
-                auctionLogoUrl={state.auctionLogoUrl}
-                systemLogoUrl={state.systemLogoUrl}
-                teams={teams}
-                players={players}
-                draftPickMap={draftPickMap}
-                draftState={draftState}
-                isAdmin={isAdmin}
-                isProjectorView={isProjectorView}
-                isOBSView={isOBSView}
-                auctionId={auctionId}
-                onReopenDraft={async () => {
-                    if (!auctionId) return;
-                    await db.collection('auctions').doc(auctionId).update({
-                        status: 'ACTIVE',
-                        'draftBoardState.roundStatus': 'IN_PROGRESS',
-                        'draftBoardState.broadcastView': 'PLAYERS',
-                        'draftBoardState.updatedAt': Date.now()
-                    });
-                }}
-            />
+            <>
+                <DraftAuctionSummary
+                    tournamentName={state.tournamentName}
+                    auctionLogoUrl={state.auctionLogoUrl}
+                    systemLogoUrl={state.systemLogoUrl}
+                    teams={teams}
+                    players={players}
+                    draftPickMap={draftPickMap}
+                    draftState={draftState}
+                    isAdmin={isAdmin}
+                    isProjectorView={isProjectorView}
+                    isOBSView={isOBSView}
+                    auctionId={auctionId}
+                    onReopenDraft={async () => {
+                        if (!auctionId) return;
+                        await db.collection('auctions').doc(auctionId).update({
+                            status: 'ACTIVE',
+                            'draftBoardState.roundStatus': 'IN_PROGRESS',
+                            'draftBoardState.broadcastView': 'PLAYERS',
+                            'draftBoardState.updatedAt': Date.now()
+                        });
+                    }}
+                />
+                <SoldCelebrationPopup
+                    celebrationData={draftState.lastSoldCelebration}
+                    durationMs={soldPopupDurationMs}
+                    customSoldAudioUrl={customAudio?.soldMusicUrl}
+                    players={players}
+                    teams={teams}
+                />
+            </>
         );
     }
 
@@ -755,6 +777,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         celebrationData={draftState.lastSoldCelebration}
                         durationMs={soldPopupDurationMs}
                         customSoldAudioUrl={customAudio?.soldMusicUrl}
+                        players={players}
+                        teams={teams}
                     />
                 </div>
             );
@@ -807,6 +831,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         celebrationData={draftState.lastSoldCelebration}
                         durationMs={soldPopupDurationMs}
                         customSoldAudioUrl={customAudio?.soldMusicUrl}
+                        players={players}
+                        teams={teams}
                     />
                 </div>
             );
@@ -911,6 +937,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         celebrationData={draftState.lastSoldCelebration}
                         durationMs={soldPopupDurationMs}
                         customSoldAudioUrl={customAudio?.soldMusicUrl}
+                        players={players}
+                        teams={teams}
                     />
                 </div>
             );
@@ -1312,103 +1340,12 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                 </button>
                             </div>
                         )}
-                        {/* ADMIN 1-CLICK AUTO-ALLOT CONTROL BAR */}
-                        {isAdmin && !isProjectorView && !isOBSView && (
-                            <div className={`p-3.5 rounded-2xl border-2 flex flex-wrap items-center justify-between gap-3 shadow-xl transition-all ${
-                                draftState.autoAllotEnabled 
-                                    ? 'bg-gradient-to-r from-amber-950/90 via-yellow-950/70 to-zinc-900 border-amber-500 ring-2 ring-amber-500/30' 
-                                    : 'bg-zinc-900/90 border-zinc-800'
-                            }`}>
-                                <div className="flex items-center gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={async () => {
-                                            if (!auctionId) return;
-                                            await db.collection('auctions').doc(auctionId).update({
-                                                'draftBoardState.autoAllotEnabled': !draftState.autoAllotEnabled,
-                                                'draftBoardState.updatedAt': Date.now()
-                                            });
-                                        }}
-                                        className={`px-3 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md active:scale-95 ${
-                                            draftState.autoAllotEnabled
-                                                ? 'bg-amber-500 text-black shadow-amber-500/30 font-black'
-                                                : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700'
-                                        }`}
-                                    >
-                                        <Zap className="w-4 h-4 fill-current" />
-                                        <span>{draftState.autoAllotEnabled ? '⚡ Auto-Allot: ACTIVE' : '⚡ 1-Click Auto-Allot: OFF'}</span>
-                                    </button>
-                                    <span className="text-[10px] text-zinc-300 font-bold hidden sm:inline">
-                                        {draftState.autoAllotEnabled 
-                                            ? `Clicking any player card will automatically allot them to ${activePickingTeamName}!` 
-                                            : 'Turn ON to allot players with a single click without opening popup modals.'}
-                                    </span>
-                                </div>
-
-                                {/* Active Picking Team Selector */}
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[9px] font-black uppercase text-amber-400 flex items-center gap-1">
-                                        <Users className="w-3.5 h-3.5" /> Picking Round For:
-                                    </span>
-                                    <select
-                                        value={String(draftState.targetPickingTeamId || 'CURRENT_TURN')}
-                                        onChange={async (e) => {
-                                            const val = e.target.value;
-                                            if (!auctionId) return;
-                                            const updatePayload: any = {
-                                                'draftBoardState.targetPickingTeamId': val,
-                                                'draftBoardState.updatedAt': Date.now()
-                                            };
-                                            if (val !== 'CURRENT_TURN') {
-                                                updatePayload['draftBoardState.currentTeamId'] = val;
-                                            }
-                                            await db.collection('auctions').doc(auctionId).update(updatePayload);
-                                        }}
-                                        className="bg-black/90 border border-amber-500/50 rounded-xl px-3 py-1.5 text-xs font-black text-white focus:outline-none focus:border-amber-400 uppercase tracking-wide cursor-pointer shadow-inner"
-                                    >
-                                        <option value="CURRENT_TURN">
-                                            🎯 Follow Turn Order ({currentTurnTeam?.name || 'Round Order'})
-                                        </option>
-                                        {teams.map(t => (
-                                            <option key={t.id} value={String(t.id)}>
-                                                {t.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                {/* Team Login Picking Toggle */}
-                                <div className="flex items-center gap-1.5 pl-2 border-l border-zinc-700">
-                                    <button
-                                        type="button"
-                                        onClick={async () => {
-                                            if (!auctionId) return;
-                                            const nextState = draftState.teamPickingEnabled === false ? true : false;
-                                            await db.collection('auctions').doc(auctionId).update({
-                                                'draftBoardState.teamPickingEnabled': nextState,
-                                                'draftBoardState.updatedAt': Date.now()
-                                            });
-                                        }}
-                                        className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md active:scale-95 ${
-                                            draftState.teamPickingEnabled !== false
-                                                ? 'bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400'
-                                                : 'bg-red-950/80 text-red-400 border border-red-500/60'
-                                        }`}
-                                        title="Toggle whether teams can pick from their login portal"
-                                    >
-                                        {draftState.teamPickingEnabled !== false ? (
-                                            <>
-                                                <Users className="w-3.5 h-3.5" />
-                                                <span>Team Picking: ALLOWED</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Lock className="w-3.5 h-3.5" />
-                                                <span>Team Picking: LOCKED</span>
-                                            </>
-                                        )}
-                                    </button>
-                                </div>
+                        {isAdmin && !isProjectorView && !isOBSView && draftState.autoAllotEnabled && (
+                            <div className="px-3.5 py-2 rounded-xl border border-amber-500/60 bg-amber-950/40 flex items-center justify-between gap-2 text-xs">
+                                <span className="font-black text-amber-300 uppercase flex items-center gap-1.5">
+                                    <Zap className="w-3.5 h-3.5 fill-current" /> 1-Click Auto-Allot Active &rarr; {activePickingTeamName}
+                                </span>
+                                <span className="text-[10px] text-amber-200/80 font-bold">Manage in Settings</span>
                             </div>
                         )}
 
@@ -1744,6 +1681,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 celebrationData={draftState.lastSoldCelebration}
                 durationMs={soldPopupDurationMs}
                 customSoldAudioUrl={customAudio?.soldMusicUrl}
+                players={players}
+                teams={teams}
             />
         </div>
     );

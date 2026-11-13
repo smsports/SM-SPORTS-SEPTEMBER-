@@ -150,7 +150,7 @@ const ProjectorScreen: React.FC = () => {
   const prevProjectorStatusRef = useRef<string | null>(null);
   const prevProjectorPlayerIdRef = useRef<string | number | null>(null);
 
-  const customAudio = state.draftBoardState?.customAudio || state.customAudio;
+  const customAudio = { ...(state.customAudio || {}), ...(state.draftBoardState?.customAudio || {}) };
   const soldPopupMs = Math.max(
       0,
       Number(state.soldPopupDurationSeconds ?? state.draftBoardState?.soldPopupDurationSeconds ?? 4)
@@ -164,6 +164,8 @@ const ProjectorScreen: React.FC = () => {
     }
   }, [state.currentPlayerId, state.status]);
 
+  const soldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     const currentStatus = display.status;
     const currentPlayerId = display.player?.id ?? null;
@@ -175,35 +177,57 @@ const ProjectorScreen: React.FC = () => {
     prevProjectorPlayerIdRef.current = currentPlayerId;
 
     if (currentStatus === 'UNSOLD' && isNewTransition) {
+        if (soldTimerRef.current) {
+            clearTimeout(soldTimerRef.current);
+            soldTimerRef.current = null;
+        }
+        setShowSoldOverlay(false);
         playUnsoldSoundTrack(customAudio?.unsoldMusicUrl, 0.85);
         return;
     }
 
     if (currentStatus === 'SOLD' && display.player) {
-        if (isNewTransition) {
-            playSoldSound(customAudio?.soldMusicUrl, 0.85);
-        }
+        setSoldAnimationPlayer({ player: display.player, bid: display.bid, bidder: display.bidder });
 
         if (soldPopupMs <= 0) {
+            if (isNewTransition) {
+                playSoldSound(customAudio?.soldMusicUrl, 0.85);
+            }
             setShowSoldOverlay(false);
             return;
         }
 
-        setSoldAnimationPlayer({ player: display.player, bid: display.bid, bidder: display.bidder });
-        if (!showSoldOverlay) {
+        if (isNewTransition) {
+            playSoldSound(customAudio?.soldMusicUrl, 0.85);
             confetti({
                 particleCount: 180,
                 spread: 90,
                 origin: { y: 0.65 }
             });
+            setShowSoldOverlay(true);
+            if (soldTimerRef.current) clearTimeout(soldTimerRef.current);
+            soldTimerRef.current = setTimeout(() => {
+                setShowSoldOverlay(false);
+                soldTimerRef.current = null;
+            }, soldPopupMs);
         }
-        setShowSoldOverlay(true);
-        const timer = setTimeout(() => {
-            setShowSoldOverlay(false);
-        }, soldPopupMs);
-        return () => clearTimeout(timer);
+        return;
     }
-  }, [display.status, display.player, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
+
+    if (currentStatus !== 'SOLD') {
+        if (soldTimerRef.current) {
+            clearTimeout(soldTimerRef.current);
+            soldTimerRef.current = null;
+        }
+        setShowSoldOverlay(false);
+    }
+  }, [display.status, display.player?.id, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
+
+  useEffect(() => {
+      return () => {
+          if (soldTimerRef.current) clearTimeout(soldTimerRef.current);
+      };
+  }, []);
 
   useEffect(() => {
       const { currentPlayerId, players, currentBid, highestBidder, status, teams, auctionLog } = state;
