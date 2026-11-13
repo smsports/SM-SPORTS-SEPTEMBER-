@@ -21,7 +21,7 @@ import TeamDraftDashboard from './TeamDraftDashboard';
 import SoldCelebrationPopup from './SoldCelebrationPopup';
 import { getDraftTheme } from '../../utils/draftThemes';
 import confetti from 'canvas-confetti';
-import { playCountdownTickSound, playHeartbeatSound, playTimeUpSound, playUnsoldSoundTrack, isDraftAudioMuted, setDraftAudioMuted } from '../../utils/draftAudio';
+import { playCountdownTickSound, playHeartbeatSound, playTimeUpSound, playUnsoldSoundTrack, isDraftAudioMuted, setDraftAudioMuted, mergeCustomAudioConfig } from '../../utils/draftAudio';
 
 interface Props {
     isAdmin?: boolean;
@@ -92,7 +92,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     } | null>(null);
     const prevUnsoldTsRef = useRef<number>(Number(draftState.lastUnsoldEvent?.timestamp || 0));
 
-    const customAudio = { ...(state.customAudio || {}), ...(draftState.customAudio || {}) };
+    const customAudio = mergeCustomAudioConfig(state.customAudio, draftState.customAudio);
     const soldPopupSeconds = Number(draftState.soldPopupDurationSeconds ?? state.soldPopupDurationSeconds ?? 5);
     const soldPopupDurationMs = Math.max(0, isNaN(soldPopupSeconds) ? 5 : soldPopupSeconds) * 1000;
 
@@ -687,6 +687,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     draftPickMap={draftPickMap}
                     auctionId={auctionId || ''}
                     globalBasePrice={globalBasePrice}
+                    customSoldAudioUrl={customAudio.soldMusicUrl}
                     onNominatePlayer={(p) => {
                         setPickError(null);
                         setActivePlayerForModal(p);
@@ -1557,6 +1558,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         <div className="w-full lg:w-96 shrink-0 border-t lg:border-t-0 lg:border-l p-4 overflow-y-auto custom-scrollbar border-zinc-800 bg-zinc-900/50">
                             <DraftAdminControls
                                 draftState={draftState}
+                                customAudio={customAudio}
                                 teams={teams}
                                 players={players}
                                 categories={categories}

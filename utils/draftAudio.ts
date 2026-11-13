@@ -1,4 +1,5 @@
 import { db } from '../firebase';
+import { CustomAudioConfig } from '../types';
 
 /**
  * Web Audio API synthesizer + Custom Audio URL player for Auction & Draft Board.
@@ -10,7 +11,26 @@ import { db } from '../firebase';
 let audioCtx: AudioContext | null = null;
 let isMuted: boolean = typeof window !== 'undefined' ? localStorage.getItem('draft_sound_muted') === 'true' : false;
 let currentCustomAudio: HTMLAudioElement | null = null;
+let playbackToken: number = 0;
 const resolvedAssetCache = new Map<string, string>();
+
+/**
+ * Merges root `customAudio` and `draftBoardState.customAudio` field-by-field,
+ * keeping non-empty values so an empty string in one field never masks a valid URL in the other.
+ */
+export function mergeCustomAudioConfig(
+    rootAudio?: CustomAudioConfig | null,
+    draftAudio?: CustomAudioConfig | null
+): CustomAudioConfig {
+    return {
+        soldMusicUrl: (draftAudio?.soldMusicUrl?.trim() || rootAudio?.soldMusicUrl?.trim() || ''),
+        soldMusicName: (draftAudio?.soldMusicName?.trim() || rootAudio?.soldMusicName?.trim() || ''),
+        timeUpMusicUrl: (draftAudio?.timeUpMusicUrl?.trim() || rootAudio?.timeUpMusicUrl?.trim() || ''),
+        timeUpMusicName: (draftAudio?.timeUpMusicName?.trim() || rootAudio?.timeUpMusicName?.trim() || ''),
+        unsoldMusicUrl: (draftAudio?.unsoldMusicUrl?.trim() || rootAudio?.unsoldMusicUrl?.trim() || ''),
+        unsoldMusicName: (draftAudio?.unsoldMusicName?.trim() || rootAudio?.unsoldMusicName?.trim() || '')
+    };
+}
 
 function getAudioContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -61,6 +81,7 @@ export function setDraftAudioMuted(muted: boolean): void {
 }
 
 export function stopCustomAudio(): void {
+    playbackToken++;
     if (currentCustomAudio) {
         try {
             currentCustomAudio.pause();
@@ -126,7 +147,9 @@ async function resolveAudioSourceUrl(rawUrl: string): Promise<string | null> {
 }
 
 /**
- * Plays a custom uploaded audio track with graceful fallback callback if unavailable/blocked.
+ * Plays a custom uploaded audio track when present.
+ * When a custom sound is uploaded (`rawUrl` non-empty), the default synth sound is completely disabled
+ * and will NEVER play even if playback is interrupted or blocked.
  */
 async function playCustomAudioUrl(
     rawUrl: string | undefined,
@@ -134,19 +157,34 @@ async function playCustomAudioUrl(
     fallbackSynth: () => void
 ): Promise<boolean> {
     if (isMuted) return false;
-    if (!rawUrl || !rawUrl.trim()) {
+    const trimmedUrl = rawUrl?.trim();
+    if (!trimmedUrl) {
         fallbackSynth();
         return false;
     }
 
+    const myToken = ++playbackToken;
+
     try {
-        const resolvedUrl = await resolveAudioSourceUrl(rawUrl.trim());
+        const resolvedUrl = await resolveAudioSourceUrl(trimmedUrl);
+        if (myToken !== playbackToken) {
+            return false;
+        }
         if (!resolvedUrl) {
-            fallbackSynth();
+            console.warn('Custom audio asset could not be resolved; default sound stays disabled.');
             return false;
         }
 
-        stopCustomAudio();
+        if (currentCustomAudio) {
+            try {
+                currentCustomAudio.pause();
+                currentCustomAudio.currentTime = 0;
+            } catch {
+                // ignore
+            }
+            currentCustomAudio = null;
+        }
+
         const audio = new Audio(resolvedUrl);
         audio.volume = Math.max(0, Math.min(1, volume));
         currentCustomAudio = audio;
@@ -160,8 +198,7 @@ async function playCustomAudioUrl(
         await audio.play();
         return true;
     } catch (err) {
-        console.warn('Custom audio playback fallback to synth:', err);
-        fallbackSynth();
+        console.warn('Custom audio playback did not complete; default sound stays disabled:', err);
         return false;
     }
 }

@@ -8,7 +8,7 @@ import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { uploadAudioOrFallback } from '../utils';
-import { previewAudioSound, stopCustomAudio } from '../utils/draftAudio';
+import { previewAudioSound, stopCustomAudio, mergeCustomAudioConfig } from '../utils/draftAudio';
 
 const LiveAdminPanel: React.FC = () => {
     const { state, sellPlayer, passPlayer, startAuction, undoPlayerSelection, endAuction, resetAuction, resetCurrentPlayer, resetUnsoldPlayers, updateBiddingStatus, toggleSelectionMode, updateTheme, activeAuctionId, placeBid, nextBid, updateSponsorConfig, correctPlayerSale, setAdminView } = useAuction();
@@ -236,13 +236,19 @@ const LiveAdminPanel: React.FC = () => {
           const url = await uploadAudioOrFallback(file, activeAuctionId, soundKey);
           const urlField = soundKey === 'sold' ? 'soldMusicUrl' : soundKey === 'timeup' ? 'timeUpMusicUrl' : 'unsoldMusicUrl';
           const nameField = soundKey === 'sold' ? 'soldMusicName' : soundKey === 'timeup' ? 'timeUpMusicName' : 'unsoldMusicName';
-          await db.collection('auctions').doc(activeAuctionId).update({
+          const updateData: Record<string, any> = {
               [`customAudio.${urlField}`]: url,
-              [`customAudio.${nameField}`]: file.name,
-              [`draftBoardState.customAudio.${urlField}`]: url,
-              [`draftBoardState.customAudio.${nameField}`]: file.name
-          });
-          setAudioStatusMsg({ type: 'success', text: `Saved ${soundKey.toUpperCase()} audio: ${file.name}` });
+              [`customAudio.${nameField}`]: file.name
+          };
+          if (!url.startsWith('data:')) {
+              updateData[`draftBoardState.customAudio.${urlField}`] = url;
+              updateData[`draftBoardState.customAudio.${nameField}`] = file.name;
+          } else {
+              updateData[`draftBoardState.customAudio.${urlField}`] = '';
+              updateData[`draftBoardState.customAudio.${nameField}`] = '';
+          }
+          await db.collection('auctions').doc(activeAuctionId).update(updateData);
+          setAudioStatusMsg({ type: 'success', text: `Saved ${soundKey.toUpperCase()} audio: ${file.name} (default sound removed)` });
       } catch (err: any) {
           setAudioStatusMsg({ type: 'error', text: err?.message || 'Audio upload failed.' });
       } finally {
@@ -931,47 +937,58 @@ const LiveAdminPanel: React.FC = () => {
                           </div>
 
                           <div className="space-y-1.5">
-                              {([
-                                  { key: 'sold' as const, label: 'Sold Music', url: state.customAudio?.soldMusicUrl, name: state.customAudio?.soldMusicName },
-                                  { key: 'timeup' as const, label: 'Time Up Music', url: state.customAudio?.timeUpMusicUrl, name: state.customAudio?.timeUpMusicName },
-                                  { key: 'unsold' as const, label: 'Unsold Music', url: state.customAudio?.unsoldMusicUrl, name: state.customAudio?.unsoldMusicName }
-                              ]).map(item => (
-                                  <div key={item.key} className="flex items-center justify-between gap-2 bg-zinc-900/80 border border-zinc-800 rounded-lg px-2 py-1.5">
-                                      <div className="min-w-0">
-                                          <p className="text-[9px] font-black uppercase text-white">{item.label}</p>
-                                          <p className="text-[8px] text-gray-400 truncate max-w-[120px]">{item.name || (item.url ? 'Custom Uploaded' : 'Default')}</p>
-                                      </div>
-                                      <div className="flex items-center gap-1 shrink-0">
-                                          <label className="px-2 py-1 rounded bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white text-[8px] font-black uppercase cursor-pointer flex items-center gap-1 border border-blue-500/30">
-                                              <Upload className="w-2.5 h-2.5" />
-                                              {uploadingAudioKey === item.key ? '...' : 'Upload'}
-                                              <input
-                                                  type="file"
-                                                  accept="audio/*"
-                                                  className="hidden"
-                                                  onChange={(e) => {
-                                                      const file = e.target.files?.[0];
-                                                      if (file) {
-                                                          handleUploadLiveAudio(item.key, file);
-                                                          e.target.value = '';
-                                                      }
-                                                  }}
-                                              />
-                                          </label>
-                                          <button type="button" onClick={() => previewAudioSound(item.key, item.url)} className="p-1 rounded bg-zinc-800 text-emerald-400 hover:bg-emerald-600 hover:text-white" title="Play">
-                                              <Volume2 className="w-3 h-3" />
-                                          </button>
-                                          <button type="button" onClick={() => stopCustomAudio()} className="p-1 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700" title="Stop">
-                                              <Square className="w-2.5 h-2.5" />
-                                          </button>
-                                          {item.url && (
-                                              <button type="button" onClick={() => handleClearLiveAudio(item.key)} className="p-1 rounded bg-zinc-800 text-red-400 hover:bg-red-600 hover:text-white" title="Reset">
-                                                  <Trash2 className="w-3 h-3" />
+                              {(() => {
+                                  const resolvedAudio = mergeCustomAudioConfig(state.customAudio, state.draftBoardState?.customAudio);
+                                  return ([
+                                      { key: 'sold' as const, label: 'Sold Music', url: resolvedAudio.soldMusicUrl, name: resolvedAudio.soldMusicName },
+                                      { key: 'timeup' as const, label: 'Time Up Music', url: resolvedAudio.timeUpMusicUrl, name: resolvedAudio.timeUpMusicName },
+                                      { key: 'unsold' as const, label: 'Unsold Music', url: resolvedAudio.unsoldMusicUrl, name: resolvedAudio.unsoldMusicName }
+                                  ]).map(item => {
+                                      const hasCustom = Boolean(item.url && item.url.trim());
+                                      return (
+                                      <div key={item.key} className="flex items-center justify-between gap-2 bg-zinc-900/80 border border-zinc-800 rounded-lg px-2 py-1.5">
+                                          <div className="min-w-0">
+                                              <p className="text-[9px] font-black uppercase text-white flex items-center gap-1">
+                                                  <span>{item.label}</span>
+                                                  {hasCustom && <span className="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[7px]">CUSTOM</span>}
+                                              </p>
+                                              <p className="text-[8px] text-gray-400 truncate max-w-[140px]">
+                                                  {hasCustom ? `${item.name || 'Custom track'} (Default off)` : 'Default Sound'}
+                                              </p>
+                                          </div>
+                                          <div className="flex items-center gap-1 shrink-0">
+                                              <label className="px-2 py-1 rounded bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white text-[8px] font-black uppercase cursor-pointer flex items-center gap-1 border border-blue-500/30">
+                                                  <Upload className="w-2.5 h-2.5" />
+                                                  {uploadingAudioKey === item.key ? '...' : 'Upload'}
+                                                  <input
+                                                      type="file"
+                                                      accept="audio/*"
+                                                      className="hidden"
+                                                      onChange={(e) => {
+                                                          const file = e.target.files?.[0];
+                                                          if (file) {
+                                                              handleUploadLiveAudio(item.key, file);
+                                                              e.target.value = '';
+                                                          }
+                                                      }}
+                                                  />
+                                              </label>
+                                              <button type="button" onClick={() => previewAudioSound(item.key, item.url)} className="p-1 rounded bg-zinc-800 text-emerald-400 hover:bg-emerald-600 hover:text-white" title="Play">
+                                                  <Volume2 className="w-3 h-3" />
                                               </button>
-                                          )}
+                                              <button type="button" onClick={() => stopCustomAudio()} className="p-1 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700" title="Stop">
+                                                  <Square className="w-2.5 h-2.5" />
+                                              </button>
+                                              {hasCustom && (
+                                                  <button type="button" onClick={() => handleClearLiveAudio(item.key)} className="p-1 rounded bg-zinc-800 text-red-400 hover:bg-red-600 hover:text-white" title="Remove Custom">
+                                                      <Trash2 className="w-3 h-3" />
+                                                  </button>
+                                              )}
+                                          </div>
                                       </div>
-                                  </div>
-                              ))}
+                                      );
+                                  });
+                              })()}
                           </div>
 
                           {audioStatusMsg && (

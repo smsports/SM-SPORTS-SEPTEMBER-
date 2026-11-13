@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory, ObsDraftDisplayMode } from '../../types';
+import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory, ObsDraftDisplayMode, CustomAudioConfig } from '../../types';
 import { db } from '../../firebase';
 import { uploadAudioOrFallback } from '../../utils';
-import { previewAudioSound, stopCustomAudio } from '../../utils/draftAudio';
+import { previewAudioSound, stopCustomAudio, mergeCustomAudioConfig } from '../../utils/draftAudio';
 import { 
     Play, Pause, FastForward, Undo2, RotateCcw, AlertTriangle, 
     Clock, Settings, Shield, RefreshCw, ChevronRight, CheckCircle2,
@@ -15,6 +15,7 @@ import { DRAFT_THEMES, DraftThemeKey, getDraftTheme } from '../../utils/draftThe
 
 interface Props {
     draftState: DraftBoardState;
+    customAudio?: CustomAudioConfig;
     teams: Team[];
     players: Player[];
     categories?: AuctionCategory[];
@@ -24,6 +25,7 @@ interface Props {
 
 export const DraftAdminControls: React.FC<Props> = ({
     draftState,
+    customAudio,
     teams,
     players,
     categories = [],
@@ -1244,66 +1246,84 @@ export const DraftAdminControls: React.FC<Props> = ({
                         </div>
 
                         <div className="space-y-2.5 pt-2 border-t border-white/10">
-                            <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">
-                                Upload Custom Event Music (MP3 / WAV / OGG):
-                            </p>
-                            {([
-                                {
-                                    key: 'sold' as const,
-                                    label: 'Sold Music',
-                                    url: draftState.customAudio?.soldMusicUrl,
-                                    name: draftState.customAudio?.soldMusicName
-                                },
-                                {
-                                    key: 'timeup' as const,
-                                    label: 'Time Up Music',
-                                    url: draftState.customAudio?.timeUpMusicUrl,
-                                    name: draftState.customAudio?.timeUpMusicName
-                                },
-                                {
-                                    key: 'unsold' as const,
-                                    label: 'Unsold Music',
-                                    url: draftState.customAudio?.unsoldMusicUrl,
-                                    name: draftState.customAudio?.unsoldMusicName
-                                }
-                            ]).map(item => (
-                                <div key={item.key} className="p-2.5 rounded-xl bg-black/50 border border-zinc-800 space-y-1.5">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="min-w-0">
-                                            <p className="text-[10px] font-black uppercase text-white">{item.label}</p>
-                                            <p className="text-[8.5px] text-zinc-400 truncate max-w-[170px]">
-                                                {item.name ? item.name : (item.url ? 'Custom audio uploaded' : 'Default Stadium Synth')}
-                                            </p>
-                                        </div>
-                                        <div className="flex items-center gap-1 shrink-0">
-                                            <button
-                                                type="button"
-                                                onClick={() => previewAudioSound(item.key, item.url)}
-                                                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-emerald-600 text-emerald-400 hover:text-white transition-all"
-                                                title={`Play ${item.label}`}
-                                            >
-                                                <Volume2 className="w-3.5 h-3.5" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => stopCustomAudio()}
-                                                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-all"
-                                                title="Stop Audio"
-                                            >
-                                                <Square className="w-3 h-3" />
-                                            </button>
-                                            {item.url && (
+                            <div className="flex items-center justify-between gap-2">
+                                <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">
+                                    Upload Custom Event Music (MP3 / WAV / OGG):
+                                </p>
+                                <span className="text-[8px] font-bold text-emerald-400 uppercase">
+                                    Replaces Default Sound
+                                </span>
+                            </div>
+                            {(() => {
+                                const resolvedAudio = mergeCustomAudioConfig(customAudio, draftState.customAudio);
+                                return ([
+                                    {
+                                        key: 'sold' as const,
+                                        label: 'Sold Music',
+                                        url: resolvedAudio.soldMusicUrl,
+                                        name: resolvedAudio.soldMusicName
+                                    },
+                                    {
+                                        key: 'timeup' as const,
+                                        label: 'Time Up Music',
+                                        url: resolvedAudio.timeUpMusicUrl,
+                                        name: resolvedAudio.timeUpMusicName
+                                    },
+                                    {
+                                        key: 'unsold' as const,
+                                        label: 'Unsold Music',
+                                        url: resolvedAudio.unsoldMusicUrl,
+                                        name: resolvedAudio.unsoldMusicName
+                                    }
+                                ]).map(item => {
+                                    const hasCustom = Boolean(item.url && item.url.trim());
+                                    return (
+                                    <div key={item.key} className="p-2.5 rounded-xl bg-black/50 border border-zinc-800 space-y-1.5">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-1.5">
+                                                    <p className="text-[10px] font-black uppercase text-white">{item.label}</p>
+                                                    {hasCustom && (
+                                                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[7.5px] font-black uppercase tracking-wider">
+                                                            Custom Active
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="text-[8.5px] text-zinc-400 truncate max-w-[180px]">
+                                                    {hasCustom
+                                                        ? `${item.name || 'Custom track'} • Default removed`
+                                                        : 'Default Sound (No custom track)'}
+                                                </p>
+                                            </div>
+                                            <div className="flex items-center gap-1 shrink-0">
                                                 <button
                                                     type="button"
-                                                    onClick={() => handleClearCustomAudio(item.key)}
-                                                    className="p-1.5 rounded-lg bg-zinc-800 hover:bg-red-600 text-red-400 hover:text-white transition-all"
-                                                    title={`Reset ${item.label}`}
+                                                    onClick={() => previewAudioSound(item.key, item.url)}
+                                                    className="p-1.5 rounded-lg bg-zinc-800 hover:bg-emerald-600 text-emerald-400 hover:text-white transition-all"
+                                                    title={hasCustom ? `Play Custom ${item.label}` : `Play Default ${item.label}`}
                                                 >
-                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                    <Volume2 className="w-3.5 h-3.5" />
                                                 </button>
-                                            )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => stopCustomAudio()}
+                                                    className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-all"
+                                                    title="Stop Audio"
+                                                >
+                                                    <Square className="w-3 h-3" />
+                                                </button>
+                                                {hasCustom && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleClearCustomAudio(item.key)}
+                                                        className="p-1.5 rounded-lg bg-zinc-800 hover:bg-red-600 text-red-400 hover:text-white transition-all"
+                                                        title={`Remove Custom ${item.label}`}
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
 
                                     <label className={`w-full py-1.5 px-2.5 rounded-lg border border-dashed text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
                                         uploadingSoundKey === item.key
@@ -1327,7 +1347,9 @@ export const DraftAdminControls: React.FC<Props> = ({
                                         />
                                     </label>
                                 </div>
-                            ))}
+                                );
+                            });
+                            })()}
                         </div>
 
                         <div className="pt-2 border-t border-white/10 space-y-1.5">

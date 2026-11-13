@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { SpinWheelBroadcastOverlay } from '../components/SpinWheelBroadcastOverlay';
 import CategoryDraftBoard from '../components/DraftBoard/CategoryDraftBoard';
 import { getDraftTheme } from '../utils/draftThemes';
-import { playSoldSound, playUnsoldSoundTrack } from '../utils/draftAudio';
+import { playSoldSound, playUnsoldSoundTrack, mergeCustomAudioConfig } from '../utils/draftAudio';
 
 interface OverlayState {
     player: Player | null;
@@ -194,7 +194,7 @@ const OBSOverlay: React.FC = () => {
   const lastPlayerIdRef = useRef<string | number | null>(null);
   const lastStatusRef = useRef<string | null>(null);
 
-  const customAudio = { ...(state.customAudio || {}), ...(state.draftBoardState?.customAudio || {}) };
+  const customAudio = mergeCustomAudioConfig(state.customAudio, state.draftBoardState?.customAudio);
   const soldPopupMs = Math.max(
       0,
       Number(state.soldPopupDurationSeconds ?? state.draftBoardState?.soldPopupDurationSeconds ?? 5)
@@ -235,7 +235,7 @@ const OBSOverlay: React.FC = () => {
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-      if (!display.player) return;
+      if (state.auctionType === 'DRAFT_BOARD' || !display.player) return;
       const currentStatus = display.status;
       const currentPlayerId = display.player.id;
 
@@ -281,7 +281,7 @@ const OBSOverlay: React.FC = () => {
           }
           setActiveAlert(null);
       }
-  }, [display.status, display.player?.id, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
+  }, [state.auctionType, display.status, display.player?.id, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
 
   useEffect(() => {
       return () => {

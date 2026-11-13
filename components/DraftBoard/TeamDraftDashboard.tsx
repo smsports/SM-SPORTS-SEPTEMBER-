@@ -53,6 +53,7 @@ interface Props {
     draftPickMap: Map<string, DraftPickHistory>;
     auctionId: string;
     globalBasePrice?: number;
+    customSoldAudioUrl?: string;
     onNominatePlayer: (player: Player) => void;
     isDark?: boolean;
 }
@@ -66,6 +67,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
     draftPickMap,
     auctionId,
     globalBasePrice = 100,
+    customSoldAudioUrl,
     onNominatePlayer,
     isDark = true
 }) => {
@@ -1404,7 +1406,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
             <SoldCelebrationPopup
                 celebrationData={draftState.lastSoldCelebration}
                 durationMs={Math.max(0, Number(draftState.soldPopupDurationSeconds ?? 5)) * 1000}
-                customSoldAudioUrl={draftState.customAudio?.soldMusicUrl}
+                customSoldAudioUrl={customSoldAudioUrl ?? draftState.customAudio?.soldMusicUrl}
                 players={players}
                 teams={teams}
             />

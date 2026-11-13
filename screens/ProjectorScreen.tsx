@@ -10,7 +10,7 @@ import confetti from 'canvas-confetti';
 import { SpinWheelBroadcastOverlay } from '../components/SpinWheelBroadcastOverlay';
 import CategoryDraftBoard from '../components/DraftBoard/CategoryDraftBoard';
 import { getDraftTheme } from '../utils/draftThemes';
-import { playSoldSound, playUnsoldSoundTrack } from '../utils/draftAudio';
+import { playSoldSound, playUnsoldSoundTrack, mergeCustomAudioConfig } from '../utils/draftAudio';
 
 interface DisplayState {
     player: Player | null;
@@ -150,7 +150,7 @@ const ProjectorScreen: React.FC = () => {
   const prevProjectorStatusRef = useRef<string | null>(null);
   const prevProjectorPlayerIdRef = useRef<string | number | null>(null);
 
-  const customAudio = { ...(state.customAudio || {}), ...(state.draftBoardState?.customAudio || {}) };
+  const customAudio = mergeCustomAudioConfig(state.customAudio, state.draftBoardState?.customAudio);
   const soldPopupMs = Math.max(
       0,
       Number(state.soldPopupDurationSeconds ?? state.draftBoardState?.soldPopupDurationSeconds ?? 4)
@@ -167,6 +167,7 @@ const ProjectorScreen: React.FC = () => {
   const soldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (state.auctionType === 'DRAFT_BOARD') return;
     const currentStatus = display.status;
     const currentPlayerId = display.player?.id ?? null;
     const isNewTransition =
@@ -221,7 +222,7 @@ const ProjectorScreen: React.FC = () => {
         }
         setShowSoldOverlay(false);
     }
-  }, [display.status, display.player?.id, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
+  }, [state.auctionType, display.status, display.player?.id, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
 
   useEffect(() => {
       return () => {
