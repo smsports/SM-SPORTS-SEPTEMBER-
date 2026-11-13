@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { SpinWheelBroadcastOverlay } from '../components/SpinWheelBroadcastOverlay';
 import CategoryDraftBoard from '../components/DraftBoard/CategoryDraftBoard';
 import { getDraftTheme } from '../utils/draftThemes';
+import { playSoldSound, playUnsoldSoundTrack } from '../utils/draftAudio';
 
 interface OverlayState {
     player: Player | null;
@@ -193,6 +194,12 @@ const OBSOverlay: React.FC = () => {
   const lastPlayerIdRef = useRef<string | number | null>(null);
   const lastStatusRef = useRef<string | null>(null);
 
+  const customAudio = state.draftBoardState?.customAudio || state.customAudio;
+  const soldPopupMs = Math.max(
+      0,
+      Number(state.soldPopupDurationSeconds ?? state.draftBoardState?.soldPopupDurationSeconds ?? 5)
+  ) * 1000;
+
   useEffect(() => {
       const currentPlayerId = display.player?.id;
       const currentStatus = display.status;
@@ -211,10 +218,11 @@ const OBSOverlay: React.FC = () => {
       // Handle transition to SOLD/UNSOLD
       if (currentStatus !== lastStatusRef.current) {
           if (currentStatus === 'SOLD' || currentStatus === 'UNSOLD') {
-              setHideBottomOverlay(false); // make sure it's shown at the beginning of the 5s
+              setHideBottomOverlay(false);
+              const hideAfterMs = currentStatus === 'SOLD' && soldPopupMs > 0 ? soldPopupMs : 5000;
               const timer = setTimeout(() => {
                   setHideBottomOverlay(true);
-              }, 5000);
+              }, hideAfterMs);
               lastStatusRef.current = currentStatus;
               return () => clearTimeout(timer);
           } else {
@@ -222,7 +230,7 @@ const OBSOverlay: React.FC = () => {
           }
           lastStatusRef.current = currentStatus;
       }
-  }, [display.status, display.player?.id]);
+  }, [display.status, display.player?.id, soldPopupMs]);
 
   useEffect(() => {
       if (!display.player) return;
@@ -233,6 +241,20 @@ const OBSOverlay: React.FC = () => {
       const isNewTransition = currentStatus !== lastOverlayStatusRef.current || currentPlayerId !== lastOverlayPlayerIdRef.current;
 
       if (isNewTransition && (currentStatus === 'SOLD' || currentStatus === 'UNSOLD')) {
+          lastOverlayStatusRef.current = currentStatus;
+          lastOverlayPlayerIdRef.current = currentPlayerId;
+
+          if (currentStatus === 'SOLD') {
+              playSoldSound(customAudio?.soldMusicUrl, 0.85);
+          } else {
+              playUnsoldSoundTrack(customAudio?.unsoldMusicUrl, 0.85);
+          }
+
+          if (currentStatus === 'SOLD' && soldPopupMs <= 0) {
+              setActiveAlert(null);
+              return;
+          }
+
           setActiveAlert({
               show: true,
               type: currentStatus,
@@ -245,20 +267,17 @@ const OBSOverlay: React.FC = () => {
               price: display.bid
           });
 
-          // Auto close after 3 seconds (3000ms)
+          const durationMs = currentStatus === 'SOLD' ? soldPopupMs : Math.max(soldPopupMs, 3000);
           const timer = setTimeout(() => {
               setActiveAlert(prev => prev ? { ...prev, show: false } : null);
-          }, 3000);
-
-          lastOverlayStatusRef.current = currentStatus;
-          lastOverlayPlayerIdRef.current = currentPlayerId;
+          }, durationMs);
 
           return () => clearTimeout(timer);
       } else {
           lastOverlayStatusRef.current = currentStatus;
           lastOverlayPlayerIdRef.current = currentPlayerId;
       }
-  }, [display]);
+  }, [display, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
   const loopInterval = state.sponsorConfig?.loopInterval || 5;
   const sponsorsLength = state.sponsors.length;
 
@@ -355,11 +374,13 @@ const OBSOverlay: React.FC = () => {
       );
   }
 
-  // CATEGORY DRAFT BOARD MODE: Show all players throughout the entire auction on OBS!
+  // CATEGORY DRAFT BOARD MODE: Show all players or minimal transparent overlay for live video feed
   if (state.auctionType === 'DRAFT_BOARD') {
+      const obsMode = state.draftBoardState?.obsDisplayMode || 'FULL_BOARD';
+      const isTransparent = obsMode !== 'FULL_BOARD' || !!state.draftBoardState?.obsTransparentBg;
       const themeConfig = getDraftTheme(state.draftBoardState?.broadcastTheme);
       return (
-          <div className={`h-screen w-full relative flex flex-col overflow-hidden ${themeConfig.containerBg}`}>
+          <div className={`h-screen w-full relative flex flex-col overflow-hidden ${isTransparent ? 'bg-transparent' : themeConfig.containerBg}`}>
               <CategoryDraftBoard isOBSView={true} auctionId={auctionId} />
               <SpinWheelBroadcastOverlay target="OBS" />
           </div>

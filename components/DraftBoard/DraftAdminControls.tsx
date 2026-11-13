@@ -1,12 +1,15 @@
-import React, { useState, useMemo } from 'react';
-import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory } from '../../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory, ObsDraftDisplayMode } from '../../types';
 import { db } from '../../firebase';
+import { uploadAudioOrFallback } from '../../utils';
+import { previewAudioSound, stopCustomAudio } from '../../utils/draftAudio';
 import { 
     Play, Pause, FastForward, Undo2, RotateCcw, AlertTriangle, 
     Clock, Settings, Shield, RefreshCw, ChevronRight, CheckCircle2,
     Users, Shuffle, ArrowRight, Monitor, Cast, ExternalLink, Copy, Check,
     LayoutGrid, Columns, Table as TableIcon, LayoutList, Eye, Filter,
-    Trophy, Palette, Sparkles, Zap, Lock
+    Trophy, Palette, Sparkles, Zap, Lock, Music, Upload, Volume2, Square,
+    Trash2, Timer, Layers, EyeOff, Ban
 } from 'lucide-react';
 import { DRAFT_THEMES, DraftThemeKey, getDraftTheme } from '../../utils/draftThemes';
 
@@ -36,6 +39,16 @@ export const DraftAdminControls: React.FC<Props> = ({
     const [isProcessing, setIsProcessing] = useState(false);
     const [copiedProjector, setCopiedProjector] = useState(false);
     const [copiedOBS, setCopiedOBS] = useState(false);
+    const [uploadingSoundKey, setUploadingSoundKey] = useState<'sold' | 'timeup' | 'unsold' | null>(null);
+    const [audioFeedback, setAudioFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+    const [customPopupSec, setCustomPopupSec] = useState<string>(String(draftState.soldPopupDurationSeconds ?? 5));
+    const [unsoldPlayerId, setUnsoldPlayerId] = useState<string>('');
+
+    useEffect(() => {
+        if (draftState.soldPopupDurationSeconds !== undefined) {
+            setCustomPopupSec(String(draftState.soldPopupDurationSeconds));
+        }
+    }, [draftState.soldPopupDurationSeconds]);
 
     const getBaseUrl = () => {
         const { protocol, host, pathname } = window.location;
@@ -368,6 +381,112 @@ export const DraftAdminControls: React.FC<Props> = ({
             'draftBoardState.selectedTeamSquadId': teamId,
             'draftBoardState.updatedAt': Date.now()
         }).catch(console.error);
+    };
+
+    // OBS Overlay Display Controls (Video-safe minimal overlays)
+    const handleSetObsDisplayMode = async (mode: ObsDraftDisplayMode) => {
+        if (!auctionId) return;
+        await db.collection('auctions').doc(auctionId).update({
+            'draftBoardState.obsDisplayMode': mode,
+            'draftBoardState.updatedAt': Date.now()
+        }).catch(console.error);
+    };
+
+    const handleSetObsCategoryFilter = async (categoryName: string) => {
+        if (!auctionId) return;
+        await db.collection('auctions').doc(auctionId).update({
+            'draftBoardState.obsCategoryFilter': categoryName,
+            'draftBoardState.updatedAt': Date.now()
+        }).catch(console.error);
+    };
+
+    const handleToggleObsTransparent = async () => {
+        if (!auctionId) return;
+        await db.collection('auctions').doc(auctionId).update({
+            'draftBoardState.obsTransparentBg': !draftState.obsTransparentBg,
+            'draftBoardState.updatedAt': Date.now()
+        }).catch(console.error);
+    };
+
+    // Sold Popup Duration Control (0 = Off, else seconds)
+    const handleSetSoldPopupDuration = async (seconds: number) => {
+        if (!auctionId) return;
+        const clamped = Math.max(0, Math.min(60, Math.round(seconds)));
+        setCustomPopupSec(String(clamped));
+        await db.collection('auctions').doc(auctionId).update({
+            'draftBoardState.soldPopupDurationSeconds': clamped,
+            soldPopupDurationSeconds: clamped,
+            'draftBoardState.updatedAt': Date.now()
+        }).catch(console.error);
+    };
+
+    // Upload Custom Audio (Sold / Time Up / Unsold)
+    const handleUploadCustomAudio = async (soundKey: 'sold' | 'timeup' | 'unsold', file: File) => {
+        if (!auctionId || !file) return;
+        setUploadingSoundKey(soundKey);
+        setAudioFeedback(null);
+        try {
+            const url = await uploadAudioOrFallback(file, auctionId, soundKey);
+            const urlField = soundKey === 'sold' ? 'soldMusicUrl' : soundKey === 'timeup' ? 'timeUpMusicUrl' : 'unsoldMusicUrl';
+            const nameField = soundKey === 'sold' ? 'soldMusicName' : soundKey === 'timeup' ? 'timeUpMusicName' : 'unsoldMusicName';
+
+            await db.collection('auctions').doc(auctionId).update({
+                [`draftBoardState.customAudio.${urlField}`]: url,
+                [`draftBoardState.customAudio.${nameField}`]: file.name,
+                [`customAudio.${urlField}`]: url,
+                [`customAudio.${nameField}`]: file.name,
+                'draftBoardState.updatedAt': Date.now()
+            });
+            setAudioFeedback({ type: 'success', text: `Uploaded "${file.name}" for ${soundKey.toUpperCase()}!` });
+        } catch (err: any) {
+            console.error('Failed to upload custom audio:', err);
+            setAudioFeedback({ type: 'error', text: err?.message || 'Audio upload failed.' });
+        } finally {
+            setUploadingSoundKey(null);
+        }
+    };
+
+    // Clear Custom Audio back to default synthesized sound
+    const handleClearCustomAudio = async (soundKey: 'sold' | 'timeup' | 'unsold') => {
+        if (!auctionId) return;
+        setAudioFeedback(null);
+        const urlField = soundKey === 'sold' ? 'soldMusicUrl' : soundKey === 'timeup' ? 'timeUpMusicUrl' : 'unsoldMusicUrl';
+        const nameField = soundKey === 'sold' ? 'soldMusicName' : soundKey === 'timeup' ? 'timeUpMusicName' : 'unsoldMusicName';
+        await db.collection('auctions').doc(auctionId).update({
+            [`draftBoardState.customAudio.${urlField}`]: '',
+            [`draftBoardState.customAudio.${nameField}`]: '',
+            [`customAudio.${urlField}`]: '',
+            [`customAudio.${nameField}`]: '',
+            'draftBoardState.updatedAt': Date.now()
+        }).catch(console.error);
+        setAudioFeedback({ type: 'success', text: `Reset ${soundKey.toUpperCase()} sound to default.` });
+    };
+
+    // Trigger Unsold Event + Unsold Music across displays
+    const handleTriggerUnsoldEvent = async () => {
+        if (!auctionId) return;
+        const selectedP = unsoldPlayerId ? players.find(p => String(p.id) === String(unsoldPlayerId)) : null;
+        try {
+            if (selectedP && selectedP.status !== 'SOLD') {
+                await db.collection('auctions').doc(auctionId).collection('players').doc(String(selectedP.id)).update({
+                    status: 'UNSOLD'
+                }).catch(() => {});
+            }
+            await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+                'draftBoardState.lastUnsoldEvent': {
+                    playerId: selectedP?.id || '',
+                    playerName: selectedP?.name || 'Lot Passed (Unsold)',
+                    playerPhoto: selectedP?.photoUrl || '',
+                    role: selectedP?.role || '',
+                    category: selectedP?.category || '',
+                    timestamp: Date.now()
+                },
+                'draftBoardState.updatedAt': Date.now()
+            })));
+            setAudioFeedback({ type: 'success', text: `Broadcast UNSOLD & played Unsold Music${selectedP ? ` for ${selectedP.name}` : ''}.` });
+        } catch (err: any) {
+            setAudioFeedback({ type: 'error', text: err?.message || 'Failed to trigger Unsold event.' });
+        }
     };
 
     // 1. Check if all players in the pool are sold
@@ -832,6 +951,261 @@ export const DraftAdminControls: React.FC<Props> = ({
                         )}
                     </button>
                 </div>
+            </div>
+
+            {/* OBS LIVE VIDEO OVERLAY CONTROLS (MINIMAL / TRANSPARENT MODES) */}
+            <div className="p-4 rounded-2xl border-2 border-purple-500/40 bg-gradient-to-b from-purple-950/30 to-zinc-900/90 space-y-3 shadow-xl">
+                <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                        <Cast className="w-4 h-4 text-purple-400" /> OBS Live Video Overlay
+                    </h4>
+                    <button
+                        type="button"
+                        onClick={handleToggleObsTransparent}
+                        className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all ${
+                            draftState.obsTransparentBg || (draftState.obsDisplayMode && draftState.obsDisplayMode !== 'FULL_BOARD')
+                                ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                                : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'
+                        }`}
+                        title="Keep background transparent so OBS video feed stays visible underneath"
+                    >
+                        {draftState.obsTransparentBg || (draftState.obsDisplayMode && draftState.obsDisplayMode !== 'FULL_BOARD')
+                            ? 'Transparent BG: ON'
+                            : 'Solid Theme BG'}
+                    </button>
+                </div>
+
+                <p className="text-[9px] text-zinc-400 leading-snug">
+                    Choose a minimal overlay when live camera/match video is active underneath in OBS so the video is never covered.
+                </p>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                    {([
+                        { id: 'CURRENT_TEAM_ONLY', label: 'Current Team Only', icon: Users },
+                        { id: 'BOTTOM_CATEGORY_STRIP', label: 'Bottom Category', icon: Layers },
+                        { id: 'TOP_HEADER_ONLY', label: 'Top Bar Only', icon: LayoutList },
+                        { id: 'FULL_BOARD', label: 'Full Board', icon: LayoutGrid },
+                        { id: 'HIDDEN', label: 'Popups Only (Clear)', icon: EyeOff }
+                    ] as const).map(opt => {
+                        const Icon = opt.icon;
+                        const activeMode = draftState.obsDisplayMode || 'FULL_BOARD';
+                        const isSelected = activeMode === opt.id;
+                        return (
+                            <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => handleSetObsDisplayMode(opt.id)}
+                                className={`py-2 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all border ${
+                                    isSelected
+                                        ? 'bg-purple-600 text-white border-purple-400 shadow-md'
+                                        : 'bg-zinc-900/90 text-zinc-400 border-zinc-800 hover:text-white'
+                                }`}
+                            >
+                                <Icon className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">{opt.label}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {(draftState.obsDisplayMode === 'BOTTOM_CATEGORY_STRIP') && (
+                    <div className="space-y-1.5 pt-2 border-t border-white/10">
+                        <label className="text-[9px] font-black uppercase tracking-wider text-purple-300 flex items-center justify-between">
+                            <span>Bottom Strip Category:</span>
+                            <span className="text-amber-400">{draftState.obsCategoryFilter || availableCategories[0] || 'Default'}</span>
+                        </label>
+                        <select
+                            value={draftState.obsCategoryFilter || availableCategories[0] || ''}
+                            onChange={(e) => handleSetObsCategoryFilter(e.target.value)}
+                            className="w-full bg-black/80 border border-purple-500/40 rounded-xl px-3 py-2 text-xs font-black text-white focus:outline-none focus:border-purple-400 uppercase"
+                        >
+                            {availableCategories.map(cat => (
+                                <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+            </div>
+
+            {/* SOLD POPUP TIMING & CUSTOM MUSIC (SOLD / TIME UP / UNSOLD) */}
+            <div className="p-4 rounded-2xl border-2 border-emerald-500/35 bg-gradient-to-b from-emerald-950/25 to-zinc-900/90 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                        <Music className="w-4 h-4" /> Audio &amp; Sold Popup Timing
+                    </h4>
+                    <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                        {Number(draftState.soldPopupDurationSeconds ?? 5) === 0 ? 'Popup Off' : `${draftState.soldPopupDurationSeconds ?? 5}s Popup`}
+                    </span>
+                </div>
+
+                {/* Sold Popup Timing Controls */}
+                <div className="space-y-2">
+                    <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+                        <Timer className="w-3 h-3 text-amber-400" /> Sold Popup Display Time (Seconds):
+                    </label>
+                    <div className="flex flex-wrap gap-1">
+                        {[0, 2, 3, 5, 8, 10, 15].map(sec => {
+                            const currentSec = Number(draftState.soldPopupDurationSeconds ?? 5);
+                            const active = currentSec === sec;
+                            return (
+                                <button
+                                    key={sec}
+                                    type="button"
+                                    onClick={() => handleSetSoldPopupDuration(sec)}
+                                    className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase border transition-all ${
+                                        active
+                                            ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
+                                            : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                                    }`}
+                                >
+                                    {sec === 0 ? 'Off' : `${sec}s`}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="number"
+                            min={0}
+                            max={60}
+                            value={customPopupSec}
+                            onChange={(e) => setCustomPopupSec(e.target.value)}
+                            className="w-20 bg-black/70 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs font-black text-white focus:outline-none focus:border-amber-400"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => handleSetSoldPopupDuration(Number(customPopupSec) || 0)}
+                            className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider"
+                        >
+                            Set Sec
+                        </button>
+                        <span className="text-[9px] text-zinc-500">Applies to Projector, OBS &amp; Portal</span>
+                    </div>
+                </div>
+
+                {/* Custom Music Uploaders */}
+                <div className="space-y-2.5 pt-2 border-t border-white/10">
+                    <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">
+                        Upload Custom Event Music (MP3 / WAV / OGG):
+                    </p>
+                    {([
+                        {
+                            key: 'sold' as const,
+                            label: 'Sold Music',
+                            url: draftState.customAudio?.soldMusicUrl,
+                            name: draftState.customAudio?.soldMusicName
+                        },
+                        {
+                            key: 'timeup' as const,
+                            label: 'Time Up Music',
+                            url: draftState.customAudio?.timeUpMusicUrl,
+                            name: draftState.customAudio?.timeUpMusicName
+                        },
+                        {
+                            key: 'unsold' as const,
+                            label: 'Unsold Music',
+                            url: draftState.customAudio?.unsoldMusicUrl,
+                            name: draftState.customAudio?.unsoldMusicName
+                        }
+                    ]).map(item => (
+                        <div key={item.key} className="p-2.5 rounded-xl bg-black/50 border border-zinc-800 space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                    <p className="text-[10px] font-black uppercase text-white">{item.label}</p>
+                                    <p className="text-[8.5px] text-zinc-400 truncate max-w-[170px]">
+                                        {item.name ? item.name : (item.url ? 'Custom audio uploaded' : 'Default Stadium Synth')}
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                        type="button"
+                                        onClick={() => previewAudioSound(item.key, item.url)}
+                                        className="p-1.5 rounded-lg bg-zinc-800 hover:bg-emerald-600 text-emerald-400 hover:text-white transition-all"
+                                        title={`Play ${item.label}`}
+                                    >
+                                        <Volume2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => stopCustomAudio()}
+                                        className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-all"
+                                        title="Stop Audio"
+                                    >
+                                        <Square className="w-3 h-3" />
+                                    </button>
+                                    {item.url && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleClearCustomAudio(item.key)}
+                                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-red-600 text-red-400 hover:text-white transition-all"
+                                            title={`Reset ${item.label}`}
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <label className={`w-full py-1.5 px-2.5 rounded-lg border border-dashed text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                                uploadingSoundKey === item.key
+                                    ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                                    : 'bg-zinc-900/90 hover:bg-zinc-800 border-zinc-700 text-zinc-300'
+                            }`}>
+                                <Upload className="w-3 h-3" />
+                                <span>{uploadingSoundKey === item.key ? 'Uploading...' : `Upload ${item.label}`}</span>
+                                <input
+                                    type="file"
+                                    accept="audio/*"
+                                    disabled={uploadingSoundKey !== null}
+                                    className="hidden"
+                                    onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) {
+                                            handleUploadCustomAudio(item.key, file);
+                                            e.target.value = '';
+                                        }
+                                    }}
+                                />
+                            </label>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Manual Unsold Announcement Trigger for Draft Board */}
+                <div className="pt-2 border-t border-white/10 space-y-1.5">
+                    <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+                        <Ban className="w-3 h-3 text-red-400" /> Broadcast Unsold &amp; Play Unsold Music:
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                        <select
+                            value={unsoldPlayerId}
+                            onChange={(e) => setUnsoldPlayerId(e.target.value)}
+                            className="flex-1 min-w-0 bg-black/70 border border-zinc-700 rounded-lg px-2 py-1.5 text-[10px] font-bold text-white focus:outline-none"
+                        >
+                            <option value="">General Pass (No specific player)</option>
+                            {players.filter(p => p.status !== 'SOLD').map(p => (
+                                <option key={p.id} value={String(p.id)}>{p.name} ({p.category || p.role})</option>
+                            ))}
+                        </select>
+                        <button
+                            type="button"
+                            onClick={handleTriggerUnsoldEvent}
+                            className="px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
+                        >
+                            <Ban className="w-3 h-3" /> Unsold
+                        </button>
+                    </div>
+                </div>
+
+                {audioFeedback && (
+                    <div className={`px-3 py-2 rounded-xl text-[10px] font-bold border ${
+                        audioFeedback.type === 'error'
+                            ? 'bg-red-950/80 border-red-500/60 text-red-200'
+                            : 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200'
+                    }`}>
+                        {audioFeedback.text}
+                    </div>
+                )}
             </div>
 
             {/* COMPLETE AUCTION & FINAL SUMMARY BANNER (VISIBLE ONLY AFTER SQUADS ARE FILLED OR ALL PLAYERS ARE SOLD) */}

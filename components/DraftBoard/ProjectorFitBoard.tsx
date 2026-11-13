@@ -18,6 +18,7 @@ interface Props {
     layoutMode?: 'ROWS' | 'COLUMNS' | 'GRID' | 'TABLE';
     categoryFilter?: string;
     isDark?: boolean;
+    transparentBg?: boolean;
 }
 
 /**
@@ -69,7 +70,8 @@ export const ProjectorFitBoard: React.FC<Props> = ({
     categoryGroups,
     layoutMode,
     categoryFilter,
-    isDark = true
+    isDark = true,
+    transparentBg = false
 }) => {
     // Determine effective layout mode (synced with admin Firestore control, default to ROWS)
     const effectiveLayoutMode: 'ROWS' | 'COLUMNS' | 'GRID' | 'TABLE' = 
@@ -158,6 +160,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
 
     // Theme configuration based on Admin selected broadcast theme
     const themeConfig = getDraftTheme(draftState.broadcastTheme);
+    const outerBgClass = transparentBg ? 'bg-transparent' : themeConfig.containerBg;
 
     // =========================================================================
     // UNIVERSAL BULLETPROOF PLAYER CARD (PROPER PHOTO, NAME, ROLE)
@@ -283,7 +286,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
         return (
             <div 
                 ref={containerRef}
-                className={`w-full h-full min-h-0 flex flex-col gap-2 p-1 overflow-hidden select-none ${themeConfig.containerBg}`}
+                className={`w-full h-full min-h-0 flex flex-col gap-2 p-1 overflow-hidden select-none ${outerBgClass}`}
             >
                 {displayedGroups.map(group => {
                     const groupCount = group.players.length;
@@ -361,7 +364,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
         return (
             <div 
                 ref={containerRef}
-                className={`w-full h-full min-h-0 flex flex-row gap-2 p-1 overflow-hidden select-none ${themeConfig.containerBg}`}
+                className={`w-full h-full min-h-0 flex flex-row gap-2 p-1 overflow-hidden select-none ${outerBgClass}`}
             >
                 {displayedGroups.map(group => {
                     const groupCount = group.players.length;
@@ -419,7 +422,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
         return (
             <div 
                 ref={containerRef}
-                className={`w-full h-full min-h-0 p-1 overflow-hidden select-none ${themeConfig.containerBg}`}
+                className={`w-full h-full min-h-0 p-1 overflow-hidden select-none ${outerBgClass}`}
             >
                 <div 
                     style={{
@@ -444,7 +447,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
     return (
         <div 
             ref={containerRef}
-            className={`w-full h-full min-h-0 flex flex-row gap-2.5 p-1 overflow-hidden select-none ${themeConfig.containerBg}`}
+            className={`w-full h-full min-h-0 flex flex-row gap-2.5 p-1 overflow-hidden select-none ${outerBgClass}`}
         >
             {tablePanes.map((panePlayers, paneIdx) => {
                 const offsetIdx = tablePanes.slice(0, paneIdx).reduce((acc, p) => acc + p.length, 0);

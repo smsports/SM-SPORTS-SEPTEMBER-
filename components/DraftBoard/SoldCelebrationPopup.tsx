@@ -2,17 +2,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import { DraftCelebrationData } from '../../types';
 import { Trophy, Sparkles, X, CheckCircle, Shield } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { playSoldFanfareSound } from '../../utils/draftAudio';
+import { playSoldSound } from '../../utils/draftAudio';
 
 interface Props {
     celebrationData?: DraftCelebrationData | null;
-    durationMs?: number; // default 5000ms
+    durationMs?: number; // default 5000ms (0 = audio only, no popup)
+    customSoldAudioUrl?: string;
     onClose?: () => void;
 }
 
 export const SoldCelebrationPopup: React.FC<Props> = ({
     celebrationData,
     durationMs = 5000,
+    customSoldAudioUrl,
     onClose
 }) => {
     const [isVisible, setIsVisible] = useState(false);
@@ -29,15 +31,27 @@ export const SoldCelebrationPopup: React.FC<Props> = ({
         const now = Date.now();
         const elapsed = now - celebrationData.timestamp;
 
-        // Only show if the pick happened within the last 5.5 seconds
-        if (elapsed < durationMs && celebrationData.timestamp !== lastTimestampRef.current) {
+        // If durationMs <= 0 (Popup Disabled), still play Sold audio for newly triggered picks
+        if (durationMs <= 0) {
+            setIsVisible(false);
+            if (elapsed < 4000 && celebrationData.timestamp !== lastTimestampRef.current) {
+                lastTimestampRef.current = celebrationData.timestamp;
+                playSoldSound(customSoldAudioUrl, 0.85);
+            }
+            return;
+        }
+
+        const effectiveWindowMs = Math.max(durationMs + 500, 1500);
+
+        // Only show if the pick happened within the active popup window
+        if (elapsed < effectiveWindowMs && celebrationData.timestamp !== lastTimestampRef.current) {
             lastTimestampRef.current = celebrationData.timestamp;
             setIsVisible(true);
             const remaining = Math.max(100, durationMs - elapsed);
             setTimeLeftMs(remaining);
 
-            // Audio fanfare
-            playSoldFanfareSound(0.75);
+            // Audio fanfare or uploaded Sold Music
+            playSoldSound(customSoldAudioUrl, 0.85);
 
             // Confetti celebration burst
             try {
@@ -85,7 +99,7 @@ export const SoldCelebrationPopup: React.FC<Props> = ({
             };
 
             animFrameRef.current = requestAnimationFrame(updateTimer);
-        } else if (elapsed >= durationMs) {
+        } else if (elapsed >= effectiveWindowMs) {
             setIsVisible(false);
         }
 
@@ -94,11 +108,11 @@ export const SoldCelebrationPopup: React.FC<Props> = ({
                 cancelAnimationFrame(animFrameRef.current);
             }
         };
-    }, [celebrationData, durationMs, onClose]);
+    }, [celebrationData, durationMs, customSoldAudioUrl, onClose]);
 
-    if (!isVisible || !celebrationData) return null;
+    if (!isVisible || !celebrationData || durationMs <= 0) return null;
 
-    const progressPercent = Math.max(0, Math.min(100, (timeLeftMs / durationMs) * 100));
+    const progressPercent = Math.max(0, Math.min(100, (timeLeftMs / Math.max(1, durationMs)) * 100));
     const secondsRemainingFormatted = (timeLeftMs / 1000).toFixed(1);
 
     return (

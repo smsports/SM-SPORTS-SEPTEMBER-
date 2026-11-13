@@ -1400,10 +1400,11 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                 )}
             </div>
 
-            {/* 5-SECOND LARGE SOLD CELEBRATION POPUP */}
+            {/* CONFIGURABLE SOLD CELEBRATION POPUP */}
             <SoldCelebrationPopup
                 celebrationData={draftState.lastSoldCelebration}
-                durationMs={5000}
+                durationMs={Math.max(0, Number(draftState.soldPopupDurationSeconds ?? 5)) * 1000}
+                customSoldAudioUrl={draftState.customAudio?.soldMusicUrl}
             />
         </div>
     );

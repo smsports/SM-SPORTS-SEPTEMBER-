@@ -169,6 +169,10 @@
       "schema": "RecollectionForm",
       "description": "Data collection forms for this auction"
     },
+    "/auctions/{auctionId}/audioAssets/{assetId}": {
+      "schema": { "type": "object" },
+      "description": "Custom uploaded broadcast audio tracks (sold, timeup, unsold)"
+    },
     "/recollectionResponses/{responseId}": {
       "schema": "RecollectionResponse",
       "description": "Global collection of form responses"

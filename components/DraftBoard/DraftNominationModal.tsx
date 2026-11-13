@@ -2,15 +2,17 @@ import React, { useState } from 'react';
 import { Player, Team } from '../../types';
 import { 
     X, Check, Shield, Wallet, Trophy, User, CheckCircle2, 
-    Crown, Sparkles, AlertCircle, Tag, Undo2
+    Crown, Sparkles, AlertCircle, Tag, Undo2, Lock
 } from 'lucide-react';
 
 interface Props {
     player: Player;
     teams: Team[];
     currentTurnTeam: Team | null;
+    myTeam?: Team | null;
     isAdmin: boolean;
     isMyTurn: boolean;
+    isPickingAllowed?: boolean;
     onClose: () => void;
     onAssign: (player: Player, teamId: string | number, price: number) => void;
     onUndoPlayer?: (player: Player) => void;
@@ -20,15 +22,17 @@ export const DraftNominationModal: React.FC<Props> = ({
     player,
     teams,
     currentTurnTeam,
+    myTeam,
     isAdmin,
     isMyTurn,
+    isPickingAllowed = true,
     onClose,
     onAssign,
     onUndoPlayer
 }) => {
     const isSold = player.status === 'SOLD';
-    const defaultTeamId = currentTurnTeam ? currentTurnTeam.id : teams[0]?.id;
-    const [selectedTeamId, setSelectedTeamId] = useState<string | number>(defaultTeamId || '');
+    const defaultTeamId = currentTurnTeam?.id ?? myTeam?.id ?? teams[0]?.id ?? '';
+    const [selectedTeamId, setSelectedTeamId] = useState<string | number>(defaultTeamId);
 
     const selectedTeam = teams.find(t => String(t.id) === String(selectedTeamId));
 
@@ -157,21 +161,32 @@ export const DraftNominationModal: React.FC<Props> = ({
                             </button>
                         </div>
                     ) : isMyTurn ? (
-                        /* Captain Nomination Prompt */
-                        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-3">
-                            <p className="text-xs font-black uppercase text-amber-400">
-                                ★ It is your team&apos;s turn to pick!
-                            </p>
-                            <p className="text-[11px] text-zinc-300">
-                                Request this player to be drafted to your squad:
-                            </p>
-                            <button
-                                onClick={() => onAssign(player, selectedTeamId, 0)}
-                                className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all"
-                            >
-                                Pick for {currentTurnTeam?.name}
-                            </button>
-                        </div>
+                        isPickingAllowed ? (
+                            /* Captain Nomination Prompt */
+                            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-3">
+                                <p className="text-xs font-black uppercase text-amber-400">
+                                    ★ It is your team&apos;s turn to pick!
+                                </p>
+                                <p className="text-[11px] text-zinc-300">
+                                    Draft this player directly to your squad:
+                                </p>
+                                <button
+                                    onClick={() => onAssign(player, myTeam?.id ?? currentTurnTeam?.id ?? selectedTeamId, 0)}
+                                    className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all"
+                                >
+                                    Pick for {currentTurnTeam?.name || myTeam?.name}
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="p-4 rounded-2xl bg-red-950/40 border border-red-500/40 text-center space-y-1.5">
+                                <p className="text-xs font-black uppercase text-amber-400 flex items-center justify-center gap-1.5">
+                                    <Lock className="w-4 h-4 text-red-400" /> Team Picking Locked
+                                </p>
+                                <p className="text-[11px] text-zinc-300">
+                                    Admin has disabled team self-picking. Please ask the administrator to allot this player.
+                                </p>
+                            </div>
+                        )
                     ) : (
                         <div className="p-3 rounded-2xl bg-zinc-900 border border-zinc-800 text-center">
                             <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">

@@ -66,6 +66,17 @@ service cloud.firestore {
       );
     }
 
+    function isDraftBoardPickAllowed(auctionId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/auctions/$(auctionId)) &&
+        'auctionType' in get(/databases/$(database)/documents/auctions/$(auctionId)).data &&
+        get(/databases/$(database)/documents/auctions/$(auctionId)).data.auctionType == 'DRAFT_BOARD' &&
+        (!('draftBoardState' in get(/databases/$(database)/documents/auctions/$(auctionId)).data) ||
+         !(get(/databases/$(database)/documents/auctions/$(auctionId)).data.draftBoardState is map) ||
+         !('teamPickingEnabled' in get(/databases/$(database)/documents/auctions/$(auctionId)).data.draftBoardState) ||
+         get(/databases/$(database)/documents/auctions/$(auctionId)).data.draftBoardState.teamPickingEnabled != false);
+    }
+
     function isValidString(val, minSize, maxSize) {
       return val is string && val.size() >= minSize && val.size() <= maxSize;
     }
@@ -167,18 +178,54 @@ service cloud.firestore {
       // Auction is Public for browsing and registration
       allow read: if true;
       allow create: if isSignedIn();
-      allow update: if isAdmin(auctionId);
+      allow update: if isAdmin(auctionId) || (
+        isSignedIn() &&
+        'auctionType' in existing() &&
+        existing().auctionType == 'DRAFT_BOARD' &&
+        (!('draftBoardState' in existing()) ||
+         !(existing().draftBoardState is map) ||
+         !('teamPickingEnabled' in existing().draftBoardState) ||
+         existing().draftBoardState.teamPickingEnabled != false) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['draftBoardState']) &&
+        incoming().draftBoardState is map &&
+        (!('draftBoardState' in existing()) ||
+         !(existing().draftBoardState is map) ||
+         !('teamPickingEnabled' in existing().draftBoardState) ||
+         (('teamPickingEnabled' in incoming().draftBoardState) &&
+          incoming().draftBoardState.teamPickingEnabled == existing().draftBoardState.teamPickingEnabled))
+      );
       allow delete: if isSuperAdmin();
 
       // Sub-collections
       match /players/{playerId} {
         allow read: if true;
-        allow write: if isAdmin(auctionId);
+        allow create, delete: if isAdmin(auctionId);
+        allow update: if isAdmin(auctionId) || (
+          isDraftBoardPickAllowed(auctionId) &&
+          (!('status' in existing()) || existing().status != 'SOLD') &&
+          'status' in incoming() &&
+          incoming().status == 'SOLD' &&
+          'soldTo' in incoming() &&
+          isValidString(incoming().soldTo, 1, 200) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'soldTo', 'soldToId', 'teamId', 'soldPrice', 'soldAt'])
+        );
       }
 
       match /teams/{teamId} {
         allow read: if true;
-        allow write: if isAdmin(auctionId);
+        allow create, delete: if isAdmin(auctionId);
+        allow update: if isAdmin(auctionId) || (
+          isDraftBoardPickAllowed(auctionId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['budget', 'players']) &&
+          'budget' in incoming() &&
+          incoming().budget is number &&
+          incoming().budget >= 0 &&
+          (!('budget' in existing()) || !(existing().budget is number) || incoming().budget <= existing().budget) &&
+          'players' in incoming() &&
+          incoming().players is list &&
+          (((!('players' in existing()) || !(existing().players is list)) && incoming().players.size() == 1) ||
+           ('players' in existing() && existing().players is list && incoming().players.size() == existing().players.size() + 1))
+        );
       }
 
       match /categories/{categoryId} {
@@ -255,6 +302,11 @@ service cloud.firestore {
       }
 
       match /recollectionForms/{formId} {
+        allow read: if true;
+        allow write: if isAdmin(auctionId);
+      }
+
+      match /audioAssets/{assetId} {
         allow read: if true;
         allow write: if isAdmin(auctionId);
       }

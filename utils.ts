@@ -321,6 +321,57 @@ export const uploadImageOrFallback = async (
 };
 
 /**
+ * Uploads a custom audio file (Sold, Time Up, Unsold) to Firebase Storage.
+ * If Firebase Storage is unavailable/times out and the audio file is <= 700 KB,
+ * stores it cleanly inside `/auctions/{auctionId}/audioAssets/{soundKey}` and returns
+ * a compact `firestore-asset://{auctionId}/{soundKey}?v={ts}` reference so the root auction
+ * document stays well below Firestore's 1 MiB document size limit.
+ */
+export const uploadAudioOrFallback = async (
+    file: File,
+    auctionId: string,
+    soundKey: 'sold' | 'timeup' | 'unsold'
+): Promise<string> => {
+    if (!file || !auctionId) {
+        throw new Error('Missing audio file or auction ID.');
+    }
+
+    const ext = file.name?.split('.').pop()?.toLowerCase() || 'mp3';
+    const ts = Date.now();
+    const path = `auctions/${auctionId}/audio/${soundKey}_${ts}.${ext}`;
+
+    // 1. Try Firebase Storage first (supports larger files and direct CDN streaming)
+    const storageUrl = await uploadFileToStorage(file, path, 15000);
+    if (storageUrl) {
+        return storageUrl;
+    }
+
+    // 2. Fallback to dedicated Firestore audioAssets subcollection doc (<= 700 KB binary)
+    const MAX_FALLBACK_BYTES = 700 * 1024;
+    if (file.size > MAX_FALLBACK_BYTES) {
+        throw new Error(
+            `Audio file is ${(file.size / 1024).toFixed(0)} KB and cloud storage upload timed out. Please use an MP3/WAV under 700 KB.`
+        );
+    }
+
+    const dataUrl = await fileToDataUrl(file);
+    await db
+        .collection('auctions')
+        .doc(auctionId)
+        .collection('audioAssets')
+        .doc(soundKey)
+        .set({
+            soundKey,
+            fileName: file.name || `${soundKey}.${ext}`,
+            mimeType: file.type || 'audio/mpeg',
+            dataUrl,
+            updatedAt: ts
+        });
+
+    return `firestore-asset://${auctionId}/${soundKey}?v=${ts}`;
+};
+
+/**
  * Scans an object (e.g. registration data) for any base64 image strings ('data:...'),
  * uploads each to Firebase Storage, and replaces the base64 value with the Storage download URL.
  */
@@ -770,7 +821,8 @@ export const ALLOWED_AUCTION_FIELDS = [
     'hideScoringSection', 'sponsorConfig', 'projectorLayout', 'obsLayout', 'adminViewOverride',
     'biddingStatus', 'playerSelectionMode', 'logoUrl', 'auctionLogoUrl', 'registrationConfig',
     'successAdPosterUrl', 'isAdPosterEnabled', 'globalJerseyUrl', 'globalJerseyOverlayUrl',
-    'currentPlayerId', 'currentBid', 'highestBidderId', 'timer'
+    'currentPlayerId', 'currentBid', 'highestBidderId', 'timer',
+    'auctionType', 'draftBoardState', 'spinWheelState', 'customAudio', 'soldPopupDurationSeconds'
 ];
 
 export const FORBIDDEN_BLOATED_AUCTION_FIELDS = [

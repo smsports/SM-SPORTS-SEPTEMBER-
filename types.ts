@@ -250,9 +250,27 @@ export interface AuctionState {
   spinWheelState?: SpinWheelState | null; // Dedicated spinning wheel state for projector and OBS overlay
   auctionType?: 'BIDDING' | 'DRAFT_BOARD'; // 'BIDDING' (Standard live bidding) or 'DRAFT_BOARD' (Category-wise turn draft)
   draftBoardState?: DraftBoardState | null; // Dedicated draft board round, turn, timer, and pick state
+  customAudio?: CustomAudioConfig; // Uploaded custom sounds for Sold, Time Up, Unsold
+  soldPopupDurationSeconds?: number; // Configurable duration (seconds) for SOLD popup across screens
 }
 
 export type AuctionType = 'BIDDING' | 'DRAFT_BOARD';
+
+export type ObsDraftDisplayMode =
+  | 'FULL_BOARD'
+  | 'CURRENT_TEAM_ONLY'
+  | 'BOTTOM_CATEGORY_STRIP'
+  | 'TOP_HEADER_ONLY'
+  | 'HIDDEN';
+
+export interface CustomAudioConfig {
+  soldMusicUrl?: string;
+  soldMusicName?: string;
+  timeUpMusicUrl?: string;
+  timeUpMusicName?: string;
+  unsoldMusicUrl?: string;
+  unsoldMusicName?: string;
+}
 
 export interface DraftPickHistory {
   id: string;
@@ -283,6 +301,15 @@ export interface DraftCelebrationData {
   timestamp: number;
 }
 
+export interface DraftUnsoldEventData {
+  playerId?: string | number;
+  playerName: string;
+  playerPhoto?: string;
+  role?: string;
+  category?: string;
+  timestamp: number;
+}
+
 export interface DraftBoardState {
   currentRound: number;
   roundStatus: 'IDLE' | 'IN_PROGRESS' | 'ROUND_COMPLETED' | 'PAUSED' | 'COMPLETED' | 'FINISHED';
@@ -305,7 +332,13 @@ export interface DraftBoardState {
   autoAllotEnabled?: boolean; // When true, clicking on a player in draft board auto-allots to the picking team
   targetPickingTeamId?: string | number | 'CURRENT_TURN'; // Which team the player picking round is for
   teamPickingEnabled?: boolean; // Admin toggle to allow or disable player picking in team login
-  lastSoldCelebration?: DraftCelebrationData | null; // 5-second broadcast sold celebration popup
+  lastSoldCelebration?: DraftCelebrationData | null; // Configurable broadcast sold celebration popup
+  lastUnsoldEvent?: DraftUnsoldEventData | null; // Unsold player announcement event
+  soldPopupDurationSeconds?: number; // Configurable duration in seconds (default 5, 0 = Off)
+  customAudio?: CustomAudioConfig; // Custom audio URLs/asset refs for Sold, Time Up, Unsold
+  obsDisplayMode?: ObsDraftDisplayMode; // OBS overlay minimal/video-friendly display mode
+  obsCategoryFilter?: string; // Specific category shown in OBS bottom strip
+  obsTransparentBg?: boolean; // Keep OBS canvas transparent for live video feed
   history: DraftPickHistory[]; // supports undo
   updatedAt?: number;
 }
@@ -564,6 +597,8 @@ export interface AuctionSetup {
     auctionLog?: AuctionLog[];
     auctionType?: 'BIDDING' | 'DRAFT_BOARD';
     draftBoardState?: DraftBoardState | null;
+    customAudio?: CustomAudioConfig;
+    soldPopupDurationSeconds?: number;
 }
 
 export type ScoreboardTheme = 'ICC_T20_2010' | 'ICC_T20_2012' | 'ICC_T20_2014' | 'ICC_T20_2016' | 'ICC_T20_2021' | 'ICC_T20_2022' | 'ICC_T20_2024' | 'CWC_2023' | 'DEFAULT';

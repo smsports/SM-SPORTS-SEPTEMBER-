@@ -3,13 +3,13 @@ import { useParams } from 'react-router-dom';
 import { useAuction } from '../../hooks/useAuction';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Player, Team, AuctionCategory, DraftBoardState, DraftPickHistory, DraftCelebrationData } from '../../types';
-import { db } from '../../firebase';
+import { db, auth } from '../../firebase';
 import { 
     Users, Clock, Trophy, ChevronRight, CheckCircle2, AlertCircle, 
     Search, Filter, LayoutGrid, Table as TableIcon, Undo2, RotateCcw, 
     Play, Pause, FastForward, Check, X, Shield, Wallet, Sparkles, 
     Crown, Tag, Eye, ArrowRight, Gavel, RefreshCw, Monitor, Cast, Copy, ExternalLink,
-    Volume2, VolumeX, Maximize, Minimize, Columns, Zap, Lock
+    Volume2, VolumeX, Maximize, Minimize, Columns, Zap, Lock, Ban
 } from 'lucide-react';
 import DraftAdminControls from './DraftAdminControls';
 import DraftNominationModal from './DraftNominationModal';
@@ -21,7 +21,7 @@ import TeamDraftDashboard from './TeamDraftDashboard';
 import SoldCelebrationPopup from './SoldCelebrationPopup';
 import { getDraftTheme } from '../../utils/draftThemes';
 import confetti from 'canvas-confetti';
-import { playCountdownTickSound, playHeartbeatSound, playBuzzerSound, isDraftAudioMuted, setDraftAudioMuted } from '../../utils/draftAudio';
+import { playCountdownTickSound, playHeartbeatSound, playTimeUpSound, playUnsoldSoundTrack, isDraftAudioMuted, setDraftAudioMuted } from '../../utils/draftAudio';
 
 interface Props {
     isAdmin?: boolean;
@@ -82,6 +82,19 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     const [isMuted, setIsMuted] = useState<boolean>(isDraftAudioMuted());
     const [isTimeUpDismissed, setIsTimeUpDismissed] = useState<boolean>(false);
     const prevSecondsRef = useRef<number>(draftState.timerTimeRemaining);
+    const [pickError, setPickError] = useState<string | null>(null);
+    const [activeUnsoldBanner, setActiveUnsoldBanner] = useState<{
+        playerName: string;
+        role?: string;
+        category?: string;
+        playerPhoto?: string;
+        timestamp: number;
+    } | null>(null);
+    const prevUnsoldTsRef = useRef<number>(Number(draftState.lastUnsoldEvent?.timestamp || 0));
+
+    const customAudio = draftState.customAudio || state.customAudio;
+    const soldPopupSeconds = Number(draftState.soldPopupDurationSeconds ?? state.soldPopupDurationSeconds ?? 5);
+    const soldPopupDurationMs = Math.max(0, isNaN(soldPopupSeconds) ? 5 : soldPopupSeconds) * 1000;
 
     // Projector layout mode: 'COLUMNS' (Category columns side-by-side) | 'GRID' (Dynamic auto-fit grid) | 'TABLE' (Multi-pane table)
     const [projectorMode, setProjectorMode] = useState<'COLUMNS' | 'GRID' | 'TABLE'>('COLUMNS');
@@ -119,7 +132,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         }
     }, [draftState.timerTimeRemaining]);
 
-    // Countdown Audio Effects: Heartbeat & Tik-tik during last 10s, 3-ring Buzzer at 0s
+    // Countdown Audio Effects: Heartbeat & Tik-tik during last 10s, Custom or 3-ring Buzzer at 0s
     useEffect(() => {
         const prevSec = prevSecondsRef.current;
         const currentSec = draftState.timerTimeRemaining;
@@ -130,11 +143,29 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             playCountdownTickSound();
         }
 
-        // Arena 3-ring Buzzer sound immediately upon reaching 0s from a positive number
+        // Arena Time's Up sound (custom or 3-ring buzzer) immediately upon reaching 0s from a positive number
         if (currentSec === 0 && prevSec > 0) {
-            playBuzzerSound();
+            playTimeUpSound(customAudio?.timeUpMusicUrl, 0.85);
         }
-    }, [draftState.timerTimeRemaining, draftState.isTimerRunning]);
+    }, [draftState.timerTimeRemaining, draftState.isTimerRunning, customAudio?.timeUpMusicUrl]);
+
+    // Unsold Event Sound & Broadcast Toast Effect
+    useEffect(() => {
+        const ev = draftState.lastUnsoldEvent;
+        if (!ev || !ev.timestamp) return;
+        const ts = Number(ev.timestamp);
+        if (ts <= prevUnsoldTsRef.current) return;
+        prevUnsoldTsRef.current = ts;
+
+        if (Date.now() - ts < 15000) {
+            playUnsoldSoundTrack(customAudio?.unsoldMusicUrl, 0.85);
+            setActiveUnsoldBanner(ev);
+            const timer = setTimeout(() => {
+                setActiveUnsoldBanner(null);
+            }, 4000);
+            return () => clearTimeout(timer);
+        }
+    }, [draftState.lastUnsoldEvent?.timestamp, customAudio?.unsoldMusicUrl]);
 
     // Reset Turn Timer handler
     const handleResetTimer = async () => {
@@ -347,17 +378,35 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     // Handle Assign Player to Team
     const handleAssignPlayer = async (player: Player, teamId: string | number, price: number) => {
         if (!auctionId) return;
+        setPickError(null);
 
-        const targetTeam = teams.find(t => String(t.id) === String(teamId));
+        if (isTeamOwner && !isAdmin) {
+            if (draftState.teamPickingEnabled === false) {
+                setPickError('Picking is currently locked by the auction admin.');
+                return;
+            }
+            if (!myTeam || String(myTeam.id) !== String(draftState.currentTeamId)) {
+                setPickError('Please wait for your team turn before drafting a player.');
+                return;
+            }
+        }
+
+        const effectiveTeamId = (isTeamOwner && !isAdmin && myTeam) ? myTeam.id : teamId;
+        const targetTeam = teams.find(t => String(t.id) === String(effectiveTeamId));
         if (!targetTeam) return;
 
-        const effectivePrice = Math.max(0, price);
+        const effectivePrice = Math.max(0, Number(price || 0));
 
         try {
+            // Ensure Firebase Auth session (anonymous or signed-in) before writing to Firestore
+            if (!auth.currentUser) {
+                await auth.signInAnonymously();
+            }
+
             // 1. Mark player as SOLD in Firestore players subcollection
             const playerUpdateData = {
                 status: 'SOLD',
-                soldTo: targetTeam.name || '',
+                soldTo: targetTeam.name || 'Team',
                 soldToId: targetTeam.id,
                 teamId: targetTeam.id,
                 soldPrice: effectivePrice,
@@ -416,11 +465,11 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             const nextTurnIndex = Number(draftState.currentTurnIndex || 0) + 1;
             const isRoundFinished = nextTurnIndex >= currentOrder.length;
 
-            let nextRound = Number(draftState.currentRound || 1);
-            let nextTeamId = isRoundFinished ? null : (currentOrder[nextTurnIndex] ?? null);
-            let nextStatus: 'IDLE' | 'IN_PROGRESS' | 'ROUND_COMPLETED' = isRoundFinished ? 'ROUND_COMPLETED' : 'IN_PROGRESS';
+            const nextRound = Number(draftState.currentRound || 1);
+            const nextTeamId = isRoundFinished ? null : (currentOrder[nextTurnIndex] ?? null);
+            const nextStatus: 'IDLE' | 'IN_PROGRESS' | 'ROUND_COMPLETED' = isRoundFinished ? 'ROUND_COMPLETED' : 'IN_PROGRESS';
 
-            // Clean full state payload to prevent undefined field errors
+            // Clean atomic dot-notation update to preserve concurrent admin toggles & satisfy security rules
             const cleanHistory = JSON.parse(JSON.stringify(updatedHistory));
             const celebrationData: DraftCelebrationData = {
                 playerId: player.id,
@@ -435,24 +484,20 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 timestamp: Date.now()
             };
 
-            const draftBoardUpdatePayload = {
-                draftBoardState: {
-                    ...draftState,
-                    history: cleanHistory,
-                    currentRound: nextRound,
-                    currentTurnIndex: isRoundFinished ? currentOrder.length : nextTurnIndex,
-                    currentTeamId: nextTeamId,
-                    roundStatus: nextStatus,
-                    timerTimeRemaining: Number(draftState.turnTimerSeconds || 45),
-                    isTimerRunning: !isRoundFinished,
-                    selectedPlayerId: null,
-                    lastSoldCelebration: celebrationData,
-                    updatedAt: Date.now()
-                }
-            };
+            const draftBoardAtomicUpdate = JSON.parse(JSON.stringify({
+                'draftBoardState.history': cleanHistory,
+                'draftBoardState.currentRound': nextRound,
+                'draftBoardState.currentTurnIndex': isRoundFinished ? currentOrder.length : nextTurnIndex,
+                'draftBoardState.currentTeamId': nextTeamId,
+                'draftBoardState.roundStatus': nextStatus,
+                'draftBoardState.timerTimeRemaining': Number(draftState.turnTimerSeconds || 45),
+                'draftBoardState.isTimerRunning': !isRoundFinished,
+                'draftBoardState.selectedPlayerId': null,
+                'draftBoardState.lastSoldCelebration': celebrationData,
+                'draftBoardState.updatedAt': Date.now()
+            }));
 
-            const cleanPayload = JSON.parse(JSON.stringify(draftBoardUpdatePayload));
-            await db.collection('auctions').doc(auctionId).set(cleanPayload, { merge: true });
+            await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
 
             // Confetti celebration
             confetti({
@@ -463,8 +508,24 @@ export const CategoryDraftBoard: React.FC<Props> = ({
 
             setActivePlayerForModal(null);
         } catch (err: any) {
-            console.error("Failed to assign player in draft:", err);
-            alert(`Assignment failed: ${err.message}`);
+            const errInfo = {
+                error: err?.message || String(err),
+                code: err?.code || 'unknown',
+                operationType: 'update',
+                path: `auctions/${auctionId}`,
+                authInfo: {
+                    userId: auth.currentUser?.uid || null,
+                    isAnonymous: auth.currentUser?.isAnonymous ?? null,
+                    isTeamOwner,
+                    isAdmin
+                }
+            };
+            console.error("Failed to assign player in draft:", JSON.stringify(errInfo));
+            setPickError(
+                err?.message?.includes('permission') || err?.code === 'permission-denied'
+                    ? 'Assignment failed: Missing or insufficient permissions. Please verify Firestore rules are deployed or contact Admin.'
+                    : `Assignment failed: ${err?.message || 'Unable to save pick.'}`
+            );
         }
     };
 
@@ -583,7 +644,18 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     // Team Owner View: Render dedicated TeamDraftDashboard with multi-option tabs
     if (isTeamOwner && myTeam && !isProjectorView && !isOBSView) {
         return (
-            <div className="flex flex-col h-full min-h-0 w-full overflow-hidden">
+            <div className="flex flex-col h-full min-h-0 w-full overflow-hidden relative">
+                {pickError && (
+                    <div className="shrink-0 mx-3 mt-2 px-4 py-2.5 rounded-xl bg-red-950/95 border border-red-500 text-red-100 text-xs font-bold flex items-center justify-between gap-3 shadow-xl z-50">
+                        <div className="flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                            <span>{pickError}</span>
+                        </div>
+                        <button type="button" onClick={() => setPickError(null)} className="p-1 hover:bg-red-800/60 rounded-lg text-red-200">
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                )}
                 <TeamDraftDashboard
                     myTeam={myTeam}
                     teams={teams}
@@ -593,7 +665,10 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     draftPickMap={draftPickMap}
                     auctionId={auctionId || ''}
                     globalBasePrice={globalBasePrice}
-                    onNominatePlayer={(p) => setActivePlayerForModal(p)}
+                    onNominatePlayer={(p) => {
+                        setPickError(null);
+                        setActivePlayerForModal(p);
+                    }}
                     isDark={isDark}
                 />
                 {activePlayerForModal && (
@@ -601,8 +676,10 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         player={activePlayerForModal}
                         teams={teams}
                         currentTurnTeam={currentTurnTeam}
+                        myTeam={myTeam}
                         isAdmin={isAdmin}
                         isMyTurn={isMyTurn}
+                        isPickingAllowed={draftState.teamPickingEnabled !== false}
                         onClose={() => setActivePlayerForModal(null)}
                         onAssign={(player, teamId, price) => handleAssignPlayer(player, teamId, price)}
                         onUndoPlayer={handleUndoSpecificPlayer}
@@ -637,10 +714,218 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     };
 
     const themeConfig = getDraftTheme(draftState.broadcastTheme);
+    const obsMode = isOBSView ? (draftState.obsDisplayMode || 'FULL_BOARD') : 'FULL_BOARD';
+    const isObsTransparent = isOBSView && (obsMode !== 'FULL_BOARD' || !!draftState.obsTransparentBg);
+
+    const renderUnsoldBannerOverlay = () => {
+        if (!activeUnsoldBanner) return null;
+        return (
+            <div className="fixed bottom-6 right-6 z-[950] pointer-events-none animate-in fade-in slide-in-from-bottom-4 duration-300">
+                <div className="flex items-center gap-3.5 px-5 py-3.5 rounded-2xl bg-red-950/95 border-2 border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.5)] backdrop-blur-xl">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-900 border border-red-400/50 shrink-0 flex items-center justify-center">
+                        {activeUnsoldBanner.playerPhoto ? (
+                            <img src={activeUnsoldBanner.playerPhoto} alt={activeUnsoldBanner.playerName} className="w-full h-full object-cover object-top" />
+                        ) : (
+                            <Ban className="w-6 h-6 text-red-400" />
+                        )}
+                    </div>
+                    <div>
+                        <span className="px-2 py-0.5 rounded bg-red-600 text-white text-[9px] font-black uppercase tracking-widest">
+                            UNSOLD PASS
+                        </span>
+                        <h4 className="text-base font-black text-white uppercase tracking-tight mt-0.5">
+                            {activeUnsoldBanner.playerName}
+                        </h4>
+                        <p className="text-[10px] font-bold text-red-300 uppercase tracking-wider">
+                            {activeUnsoldBanner.category || activeUnsoldBanner.role || 'Returned to Pool'}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // MINIMAL / VIDEO-SAFE OBS OVERLAY MODES (Top 70%+ or Full Canvas stays 100% transparent for live video feed)
+    if (isOBSView && obsMode !== 'FULL_BOARD') {
+        if (obsMode === 'HIDDEN') {
+            return (
+                <div className="h-full w-full bg-transparent relative overflow-hidden pointer-events-none">
+                    {renderUnsoldBannerOverlay()}
+                    <SoldCelebrationPopup
+                        celebrationData={draftState.lastSoldCelebration}
+                        durationMs={soldPopupDurationMs}
+                        customSoldAudioUrl={customAudio?.soldMusicUrl}
+                    />
+                </div>
+            );
+        }
+
+        if (obsMode === 'CURRENT_TEAM_ONLY') {
+            return (
+                <div className="h-full w-full bg-transparent relative overflow-hidden pointer-events-none flex flex-col justify-end p-5 md:p-8">
+                    <div className="max-w-xl bg-zinc-950/90 backdrop-blur-xl border-2 border-amber-400/70 rounded-2xl p-3.5 shadow-[0_12px_40px_rgba(0,0,0,0.85)] flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3 min-w-0">
+                            {currentTurnTeam?.logoUrl ? (
+                                <img src={currentTurnTeam.logoUrl} alt={currentTurnTeam.name} className="w-12 h-12 rounded-xl object-contain bg-white p-1 border-2 border-amber-400 shrink-0 shadow" />
+                            ) : (
+                                <div className="w-12 h-12 rounded-xl bg-amber-500 text-black font-black text-xl flex items-center justify-center shrink-0">
+                                    {currentTurnTeam ? currentTurnTeam.name.charAt(0) : <Trophy className="w-6 h-6" />}
+                                </div>
+                            )}
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <span className="px-2 py-0.5 rounded bg-amber-500 text-black text-[9px] font-black uppercase tracking-wider">
+                                        Round {draftState.currentRound}
+                                    </span>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
+                                        Picking Now ({draftState.currentTurnIndex + 1}/{draftState.roundOrder?.length || teams.length})
+                                    </span>
+                                </div>
+                                <h3 className="text-lg md:text-xl font-black uppercase tracking-tight text-white truncate mt-0.5">
+                                    {currentTurnTeam ? currentTurnTeam.name : (draftState.roundStatus === 'ROUND_COMPLETED' ? `Round ${draftState.currentRound} Done` : 'Awaiting Turn')}
+                                </h3>
+                                {currentTurnTeam && (
+                                    <p className="text-[10px] font-bold text-blue-300 uppercase tracking-wider">
+                                        Squad: {currentTurnTeam.players?.length || 0} Players
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className={`px-3.5 py-2 rounded-xl border-2 shrink-0 text-center ${
+                            draftState.timerTimeRemaining <= 10 && draftState.isTimerRunning
+                                ? 'bg-red-600/30 border-red-400 text-red-300 animate-pulse'
+                                : 'bg-zinc-900/90 border-zinc-700 text-white'
+                        }`}>
+                            <p className="text-[8px] font-black uppercase tracking-widest text-zinc-400">Timer</p>
+                            <p className="text-xl font-black tabular-nums leading-tight">{draftState.timerTimeRemaining}s</p>
+                        </div>
+                    </div>
+
+                    {renderUnsoldBannerOverlay()}
+                    <SoldCelebrationPopup
+                        celebrationData={draftState.lastSoldCelebration}
+                        durationMs={soldPopupDurationMs}
+                        customSoldAudioUrl={customAudio?.soldMusicUrl}
+                    />
+                </div>
+            );
+        }
+
+        if (obsMode === 'BOTTOM_CATEGORY_STRIP') {
+            const targetCat = draftState.obsCategoryFilter && draftState.obsCategoryFilter !== 'ALL'
+                ? draftState.obsCategoryFilter
+                : (draftState.broadcastCategoryFilter && draftState.broadcastCategoryFilter !== 'ALL'
+                    ? draftState.broadcastCategoryFilter
+                    : categoryGroups[0]?.category || '');
+            const obsGroup = categoryGroups.find(g => g.category.toLowerCase() === targetCat.toLowerCase()) || categoryGroups[0];
+            const stripPlayers = obsGroup ? obsGroup.players : [];
+
+            return (
+                <div className="h-full w-full bg-transparent relative overflow-hidden pointer-events-none flex flex-col justify-end">
+                    {/* Docked Lower-Third Category & Pick Bar */}
+                    <div className="w-full max-h-[34vh] bg-zinc-950/92 backdrop-blur-xl border-t-2 border-amber-400/70 shadow-[0_-10px_40px_rgba(0,0,0,0.85)] px-3 py-2 flex flex-col gap-1.5">
+                        {/* Strip Header Row */}
+                        <div className="flex items-center justify-between gap-3 shrink-0">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                                <span className="px-2.5 py-0.5 rounded-lg bg-amber-500 text-black font-black text-[10px] uppercase tracking-wider shrink-0">
+                                    {obsGroup?.category || 'Category'}
+                                </span>
+                                <span className="text-[10px] font-bold text-emerald-400 uppercase shrink-0">
+                                    Avail: {obsGroup?.availableCount ?? 0}
+                                </span>
+                                <span className="text-[10px] font-bold text-zinc-400 uppercase shrink-0">
+                                    Sold: {obsGroup?.soldCount ?? 0}
+                                </span>
+                                <span className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-yellow-300 font-black text-[10px] uppercase shrink-0">
+                                    Round {draftState.currentRound}
+                                </span>
+                            </div>
+
+                            <div className="flex items-center gap-3 shrink-0">
+                                {currentTurnTeam && (
+                                    <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-400/50">
+                                        {currentTurnTeam.logoUrl ? (
+                                            <img src={currentTurnTeam.logoUrl} alt="" className="w-5 h-5 rounded-full object-contain bg-white p-0.5" />
+                                        ) : null}
+                                        <span className="text-[10px] font-black uppercase text-amber-300">
+                                            Pick: {currentTurnTeam.name}
+                                        </span>
+                                    </div>
+                                )}
+                                <div className={`px-2.5 py-1 rounded-xl border text-xs font-black tabular-nums ${
+                                    draftState.timerTimeRemaining <= 10 && draftState.isTimerRunning
+                                        ? 'bg-red-600/30 border-red-400 text-red-300 animate-pulse'
+                                        : 'bg-zinc-900 border-zinc-700 text-white'
+                                }`}>
+                                    {draftState.timerTimeRemaining}s
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Compact Fit-to-Strip Player Cards */}
+                        <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-1.5 overflow-hidden">
+                            {stripPlayers.map(player => {
+                                const pickInfo = draftPickMap.get(String(player.id));
+                                const isSold = player.status === 'SOLD' || !!pickInfo;
+                                const soldTeamName = pickInfo?.teamName || player.soldTo || 'Sold';
+                                return (
+                                    <div
+                                        key={player.id}
+                                        className={`rounded-lg border p-1 flex flex-col items-center text-center relative overflow-hidden ${
+                                            isSold
+                                                ? 'bg-red-950/75 border-red-500/70'
+                                                : 'bg-zinc-900/90 border-zinc-700/80'
+                                        }`}
+                                    >
+                                        <div className="w-full h-11 rounded overflow-hidden bg-zinc-950 relative">
+                                            {player.photoUrl ? (
+                                                <img src={player.photoUrl} alt={player.name} className="w-full h-full object-cover object-top" />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center font-black text-xs text-zinc-500">
+                                                    {player.name.charAt(0)}
+                                                </div>
+                                            )}
+                                            {isSold && (
+                                                <span className="absolute top-0.5 left-1/2 -translate-x-1/2 px-1 py-[1px] rounded bg-red-600 text-white text-[7px] font-black uppercase leading-none shadow">
+                                                    SOLD
+                                                </span>
+                                            )}
+                                        </div>
+                                        <p className="text-[9px] font-black text-white truncate w-full mt-0.5 leading-tight uppercase">
+                                            {player.name}
+                                        </p>
+                                        <p className={`text-[7.5px] font-bold truncate w-full leading-tight uppercase ${
+                                            isSold ? 'text-amber-300' : 'text-emerald-400'
+                                        }`}>
+                                            {isSold ? soldTeamName : (player.role || 'Avail')}
+                                        </p>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {renderUnsoldBannerOverlay()}
+                    <SoldCelebrationPopup
+                        celebrationData={draftState.lastSoldCelebration}
+                        durationMs={soldPopupDurationMs}
+                        customSoldAudioUrl={customAudio?.soldMusicUrl}
+                    />
+                </div>
+            );
+        }
+    }
 
     return (
         <div className={`flex flex-col h-full min-h-0 w-full overflow-hidden transition-all duration-300 ${
-            isProjectorView || isOBSView ? themeConfig.containerBg : isDark ? 'bg-zinc-950 text-white' : 'bg-slate-50 text-gray-900'
+            isObsTransparent
+                ? 'bg-transparent text-white'
+                : isProjectorView || isOBSView
+                    ? themeConfig.containerBg
+                    : isDark
+                        ? 'bg-zinc-950 text-white'
+                        : 'bg-slate-50 text-gray-900'
         }`}>
             {/* TOP HEADER: ROUND & ACTIVE TURN BANNER */}
             <div className={`shrink-0 ${isProjectorView || isOBSView ? `px-3 py-1.5 border-b ${themeConfig.headerBg} ${themeConfig.headerBorder}` : isDark ? 'p-3 md:p-5 border-b bg-zinc-900/90 border-zinc-800' : 'p-3 md:p-5 border-b bg-white/95 border-gray-200'} backdrop-blur-md shadow-lg z-20`}>
@@ -662,7 +947,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                     {state.tournamentName || "LIVE AUCTION"}
                                 </h1>
                                 <span className="text-[8px] font-bold text-amber-400 tracking-widest uppercase flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> Projector View
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> {isOBSView ? 'OBS Broadcast' : 'Projector View'}
                                 </span>
                             </div>
                         </div>
@@ -983,9 +1268,11 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             {/* MAIN CONTENT AREA */}
             <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
                 {/* Projector & OBS Display: Dedicated 100% Fit-to-Screen Board with ZERO scrolling */}
-                {isProjectorView || isOBSView ? (
+                {isOBSView && obsMode === 'TOP_HEADER_ONLY' ? (
+                    <div className="flex-1 bg-transparent pointer-events-none" />
+                ) : isProjectorView || isOBSView ? (
                     draftState.broadcastView === 'SQUADS' ? (
-                        <div className={`flex-1 min-h-0 w-full h-full overflow-hidden p-1 ${themeConfig.containerBg} flex flex-col`}>
+                        <div className={`flex-1 min-h-0 w-full h-full overflow-hidden p-1 ${isObsTransparent ? 'bg-transparent' : themeConfig.containerBg} flex flex-col`}>
                             <ProjectorSquadsView
                                 teams={teams}
                                 players={players}
@@ -996,7 +1283,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             />
                         </div>
                     ) : (
-                        <div className={`flex-1 min-h-0 w-full h-full overflow-hidden p-1 ${themeConfig.containerBg} flex flex-col`}>
+                        <div className={`flex-1 min-h-0 w-full h-full overflow-hidden p-1 ${isObsTransparent ? 'bg-transparent' : themeConfig.containerBg} flex flex-col`}>
                             <ProjectorFitBoard
                                 players={players}
                                 categories={categories}
@@ -1007,12 +1294,24 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                 layoutMode={draftState.projectorLayoutMode || 'ROWS'}
                                 categoryFilter={draftState.broadcastCategoryFilter || 'ALL'}
                                 isDark={!themeConfig.isLightMode}
+                                transparentBg={isObsTransparent}
                             />
                         </div>
                     )
                 ) : (
                     /* Admin & Team Owner Interactive View */
                     <div className="flex-1 min-h-0 p-3 md:p-6 overflow-y-auto custom-scrollbar space-y-6">
+                        {pickError && (
+                            <div className="px-4 py-2.5 rounded-xl bg-red-950/90 border border-red-500 text-red-100 text-xs font-bold flex items-center justify-between gap-3 shadow-lg">
+                                <div className="flex items-center gap-2">
+                                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                                    <span>{pickError}</span>
+                                </div>
+                                <button type="button" onClick={() => setPickError(null)} className="p-1 hover:bg-red-800/60 rounded-lg text-red-200">
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </div>
+                        )}
                         {/* ADMIN 1-CLICK AUTO-ALLOT CONTROL BAR */}
                         {isAdmin && !isProjectorView && !isOBSView && (
                             <div className={`p-3.5 rounded-2xl border-2 flex flex-wrap items-center justify-between gap-3 shadow-xl transition-all ${
@@ -1428,18 +1727,23 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     player={activePlayerForModal}
                     teams={teams}
                     currentTurnTeam={currentTurnTeam}
+                    myTeam={myTeam}
                     isAdmin={isAdmin}
                     isMyTurn={isMyTurn}
+                    isPickingAllowed={draftState.teamPickingEnabled !== false}
                     onClose={() => setActivePlayerForModal(null)}
                     onAssign={(player, teamId, price) => handleAssignPlayer(player, teamId, price)}
                     onUndoPlayer={handleUndoSpecificPlayer}
                 />
             )}
 
-            {/* 5-SECOND LARGE SOLD CELEBRATION POPUP ACROSS ALL SCREENS */}
+            {renderUnsoldBannerOverlay()}
+
+            {/* CONFIGURABLE SOLD CELEBRATION POPUP ACROSS ALL SCREENS */}
             <SoldCelebrationPopup
                 celebrationData={draftState.lastSoldCelebration}
-                durationMs={5000}
+                durationMs={soldPopupDurationMs}
+                customSoldAudioUrl={customAudio?.soldMusicUrl}
             />
         </div>
     );

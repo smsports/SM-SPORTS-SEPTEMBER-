@@ -10,6 +10,7 @@ import confetti from 'canvas-confetti';
 import { SpinWheelBroadcastOverlay } from '../components/SpinWheelBroadcastOverlay';
 import CategoryDraftBoard from '../components/DraftBoard/CategoryDraftBoard';
 import { getDraftTheme } from '../utils/draftThemes';
+import { playSoldSound, playUnsoldSoundTrack } from '../utils/draftAudio';
 
 interface DisplayState {
     player: Player | null;
@@ -146,6 +147,14 @@ const ProjectorScreen: React.FC = () => {
 
   const [showSoldOverlay, setShowSoldOverlay] = useState(false);
   const [soldAnimationPlayer, setSoldAnimationPlayer] = useState<{player: Player, bid: number, bidder: Team | null} | null>(null);
+  const prevProjectorStatusRef = useRef<string | null>(null);
+  const prevProjectorPlayerIdRef = useRef<string | number | null>(null);
+
+  const customAudio = state.draftBoardState?.customAudio || state.customAudio;
+  const soldPopupMs = Math.max(
+      0,
+      Number(state.soldPopupDurationSeconds ?? state.draftBoardState?.soldPopupDurationSeconds ?? 4)
+  ) * 1000;
 
   // When a new player is selected or auction is in progress, dismiss the sold overlay immediately
   useEffect(() => {
@@ -156,7 +165,30 @@ const ProjectorScreen: React.FC = () => {
   }, [state.currentPlayerId, state.status]);
 
   useEffect(() => {
-    if (display.status === 'SOLD' && display.player) {
+    const currentStatus = display.status;
+    const currentPlayerId = display.player?.id ?? null;
+    const isNewTransition =
+        currentStatus !== prevProjectorStatusRef.current ||
+        currentPlayerId !== prevProjectorPlayerIdRef.current;
+
+    prevProjectorStatusRef.current = currentStatus;
+    prevProjectorPlayerIdRef.current = currentPlayerId;
+
+    if (currentStatus === 'UNSOLD' && isNewTransition) {
+        playUnsoldSoundTrack(customAudio?.unsoldMusicUrl, 0.85);
+        return;
+    }
+
+    if (currentStatus === 'SOLD' && display.player) {
+        if (isNewTransition) {
+            playSoldSound(customAudio?.soldMusicUrl, 0.85);
+        }
+
+        if (soldPopupMs <= 0) {
+            setShowSoldOverlay(false);
+            return;
+        }
+
         setSoldAnimationPlayer({ player: display.player, bid: display.bid, bidder: display.bidder });
         if (!showSoldOverlay) {
             confetti({
@@ -168,10 +200,10 @@ const ProjectorScreen: React.FC = () => {
         setShowSoldOverlay(true);
         const timer = setTimeout(() => {
             setShowSoldOverlay(false);
-        }, 4000);
+        }, soldPopupMs);
         return () => clearTimeout(timer);
     }
-  }, [display.status, display.player]);
+  }, [display.status, display.player, soldPopupMs, customAudio?.soldMusicUrl, customAudio?.unsoldMusicUrl]);
 
   useEffect(() => {
       const { currentPlayerId, players, currentBid, highestBidder, status, teams, auctionLog } = state;

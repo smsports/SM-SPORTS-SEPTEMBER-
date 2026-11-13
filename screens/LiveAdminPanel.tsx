@@ -4,8 +4,11 @@ import { AuctionStatus, Team, Player, ProjectorLayout, OBSLayout } from '../type
 import TeamStatusCard from '../components/TeamStatusCard';
 import TradingPanel from '../components/TradingPanel';
 // Fixed missing LayoutList import
-import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign, Cast, Lock, Unlock, Monitor, ChevronDown, Shuffle, Search, User, Palette, Trophy, Gavel, Wallet, Eye, EyeOff, Clock, Zap, Undo2, RefreshCw, LayoutList, ArrowRightLeft } from 'lucide-react';
+import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign, Cast, Lock, Unlock, Monitor, ChevronDown, Shuffle, Search, User, Palette, Trophy, Gavel, Wallet, Eye, EyeOff, Clock, Zap, Undo2, RefreshCw, LayoutList, ArrowRightLeft, Music, Upload, Volume2, Square, Trash2, Timer } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { db } from '../firebase';
+import { uploadAudioOrFallback } from '../utils';
+import { previewAudioSound, stopCustomAudio } from '../utils/draftAudio';
 
 const LiveAdminPanel: React.FC = () => {
     const { state, sellPlayer, passPlayer, startAuction, undoPlayerSelection, endAuction, resetAuction, resetCurrentPlayer, resetUnsoldPlayers, updateBiddingStatus, toggleSelectionMode, updateTheme, activeAuctionId, placeBid, nextBid, updateSponsorConfig, correctPlayerSale, setAdminView } = useAuction();
@@ -34,6 +37,18 @@ const LiveAdminPanel: React.FC = () => {
 
   // Sponsor Config Local State (debounce or immediate)
   const [sponsorLoop, setSponsorLoop] = useState(state.sponsorConfig?.loopInterval || 5);
+
+  // Audio & Sold Popup Settings State
+  const [showAudioConfig, setShowAudioConfig] = useState(false);
+  const [uploadingAudioKey, setUploadingAudioKey] = useState<'sold' | 'timeup' | 'unsold' | null>(null);
+  const [audioStatusMsg, setAudioStatusMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+  const [livePopupSec, setLivePopupSec] = useState<string>(String(state.soldPopupDurationSeconds ?? 5));
+
+  useEffect(() => {
+      if (state.soldPopupDurationSeconds !== undefined) {
+          setLivePopupSec(String(state.soldPopupDurationSeconds));
+      }
+  }, [state.soldPopupDurationSeconds]);
 
   // Auto-fill price and leader when entering sell mode or when bid updates
   useEffect(() => {
@@ -201,6 +216,51 @@ const LiveAdminPanel: React.FC = () => {
   const saveSponsorLoop = () => {
       const current = state.sponsorConfig || { showOnOBS: false, showOnProjector: false, loopInterval: 5 };
       updateSponsorConfig({ ...current, loopInterval: sponsorLoop });
+  };
+
+  const handleSaveSoldPopupDuration = async (seconds: number) => {
+      if (!activeAuctionId) return;
+      const clamped = Math.max(0, Math.min(60, Math.round(seconds)));
+      setLivePopupSec(String(clamped));
+      await db.collection('auctions').doc(activeAuctionId).update({
+          soldPopupDurationSeconds: clamped,
+          'draftBoardState.soldPopupDurationSeconds': clamped
+      }).catch(console.error);
+  };
+
+  const handleUploadLiveAudio = async (soundKey: 'sold' | 'timeup' | 'unsold', file: File) => {
+      if (!activeAuctionId || !file) return;
+      setUploadingAudioKey(soundKey);
+      setAudioStatusMsg(null);
+      try {
+          const url = await uploadAudioOrFallback(file, activeAuctionId, soundKey);
+          const urlField = soundKey === 'sold' ? 'soldMusicUrl' : soundKey === 'timeup' ? 'timeUpMusicUrl' : 'unsoldMusicUrl';
+          const nameField = soundKey === 'sold' ? 'soldMusicName' : soundKey === 'timeup' ? 'timeUpMusicName' : 'unsoldMusicName';
+          await db.collection('auctions').doc(activeAuctionId).update({
+              [`customAudio.${urlField}`]: url,
+              [`customAudio.${nameField}`]: file.name,
+              [`draftBoardState.customAudio.${urlField}`]: url,
+              [`draftBoardState.customAudio.${nameField}`]: file.name
+          });
+          setAudioStatusMsg({ type: 'success', text: `Saved ${soundKey.toUpperCase()} audio: ${file.name}` });
+      } catch (err: any) {
+          setAudioStatusMsg({ type: 'error', text: err?.message || 'Audio upload failed.' });
+      } finally {
+          setUploadingAudioKey(null);
+      }
+  };
+
+  const handleClearLiveAudio = async (soundKey: 'sold' | 'timeup' | 'unsold') => {
+      if (!activeAuctionId) return;
+      const urlField = soundKey === 'sold' ? 'soldMusicUrl' : soundKey === 'timeup' ? 'timeUpMusicUrl' : 'unsoldMusicUrl';
+      const nameField = soundKey === 'sold' ? 'soldMusicName' : soundKey === 'timeup' ? 'timeUpMusicName' : 'unsoldMusicName';
+      await db.collection('auctions').doc(activeAuctionId).update({
+          [`customAudio.${urlField}`]: '',
+          [`customAudio.${nameField}`]: '',
+          [`draftBoardState.customAudio.${urlField}`]: '',
+          [`draftBoardState.customAudio.${nameField}`]: ''
+      }).catch(console.error);
+      setAudioStatusMsg({ type: 'success', text: `Reset ${soundKey.toUpperCase()} sound to default.` });
   };
 
   const selectedPlayerObj = players.find(p => p.id === manualPlayerId);
@@ -811,6 +871,116 @@ const LiveAdminPanel: React.FC = () => {
                           </div>
                       </div>
                   </div>
+              </div>
+
+              {/* SOLD POPUP TIMING & CUSTOM MUSIC (COLLAPSIBLE COMPACT DRAWER) */}
+              <div className="mt-2 bg-primary/40 border border-gray-800 rounded-xl overflow-hidden">
+                  <button
+                      type="button"
+                      onClick={() => setShowAudioConfig(prev => !prev)}
+                      className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-white/5 transition-colors"
+                  >
+                      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                          <Music className="w-3.5 h-3.5" /> Sold Popup Timing &amp; Custom Music
+                      </span>
+                      <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-bold text-amber-400">
+                              {Number(state.soldPopupDurationSeconds ?? 5) === 0 ? 'Popup Off' : `${state.soldPopupDurationSeconds ?? 5}s`}
+                          </span>
+                          <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showAudioConfig ? 'rotate-180' : ''}`} />
+                      </div>
+                  </button>
+
+                  {showAudioConfig && (
+                      <div className="p-3 pt-1 border-t border-gray-800 space-y-3">
+                          <div className="space-y-1.5">
+                              <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                                  <Timer className="w-3 h-3 text-amber-400" /> Sold Popup Duration (Seconds)
+                              </span>
+                              <div className="flex flex-wrap items-center gap-1">
+                                  {[0, 2, 3, 5, 8, 10].map(sec => (
+                                      <button
+                                          key={sec}
+                                          type="button"
+                                          onClick={() => handleSaveSoldPopupDuration(sec)}
+                                          className={`px-2 py-1 rounded text-[9px] font-black uppercase border ${
+                                              Number(state.soldPopupDurationSeconds ?? 5) === sec
+                                                  ? 'bg-amber-500 text-black border-amber-400'
+                                                  : 'bg-zinc-900 text-zinc-400 border-zinc-700 hover:text-white'
+                                          }`}
+                                      >
+                                          {sec === 0 ? 'Off' : `${sec}s`}
+                                      </button>
+                                  ))}
+                                  <input
+                                      type="number"
+                                      min={0}
+                                      max={60}
+                                      value={livePopupSec}
+                                      onChange={(e) => setLivePopupSec(e.target.value)}
+                                      className="w-12 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-bold text-white"
+                                  />
+                                  <button
+                                      type="button"
+                                      onClick={() => handleSaveSoldPopupDuration(Number(livePopupSec) || 0)}
+                                      className="px-2 py-1 rounded bg-emerald-600 text-white text-[9px] font-black uppercase"
+                                  >
+                                      Set
+                                  </button>
+                              </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                              {([
+                                  { key: 'sold' as const, label: 'Sold Music', url: state.customAudio?.soldMusicUrl, name: state.customAudio?.soldMusicName },
+                                  { key: 'timeup' as const, label: 'Time Up Music', url: state.customAudio?.timeUpMusicUrl, name: state.customAudio?.timeUpMusicName },
+                                  { key: 'unsold' as const, label: 'Unsold Music', url: state.customAudio?.unsoldMusicUrl, name: state.customAudio?.unsoldMusicName }
+                              ]).map(item => (
+                                  <div key={item.key} className="flex items-center justify-between gap-2 bg-zinc-900/80 border border-zinc-800 rounded-lg px-2 py-1.5">
+                                      <div className="min-w-0">
+                                          <p className="text-[9px] font-black uppercase text-white">{item.label}</p>
+                                          <p className="text-[8px] text-gray-400 truncate max-w-[120px]">{item.name || (item.url ? 'Custom Uploaded' : 'Default')}</p>
+                                      </div>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                          <label className="px-2 py-1 rounded bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white text-[8px] font-black uppercase cursor-pointer flex items-center gap-1 border border-blue-500/30">
+                                              <Upload className="w-2.5 h-2.5" />
+                                              {uploadingAudioKey === item.key ? '...' : 'Upload'}
+                                              <input
+                                                  type="file"
+                                                  accept="audio/*"
+                                                  className="hidden"
+                                                  onChange={(e) => {
+                                                      const file = e.target.files?.[0];
+                                                      if (file) {
+                                                          handleUploadLiveAudio(item.key, file);
+                                                          e.target.value = '';
+                                                      }
+                                                  }}
+                                              />
+                                          </label>
+                                          <button type="button" onClick={() => previewAudioSound(item.key, item.url)} className="p-1 rounded bg-zinc-800 text-emerald-400 hover:bg-emerald-600 hover:text-white" title="Play">
+                                              <Volume2 className="w-3 h-3" />
+                                          </button>
+                                          <button type="button" onClick={() => stopCustomAudio()} className="p-1 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700" title="Stop">
+                                              <Square className="w-2.5 h-2.5" />
+                                          </button>
+                                          {item.url && (
+                                              <button type="button" onClick={() => handleClearLiveAudio(item.key)} className="p-1 rounded bg-zinc-800 text-red-400 hover:bg-red-600 hover:text-white" title="Reset">
+                                                  <Trash2 className="w-3 h-3" />
+                                              </button>
+                                          )}
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+
+                          {audioStatusMsg && (
+                              <p className={`text-[9px] font-bold px-2 py-1 rounded border ${audioStatusMsg.type === 'error' ? 'bg-red-950/70 border-red-500/50 text-red-200' : 'bg-emerald-950/70 border-emerald-500/50 text-emerald-200'}`}>
+                                  {audioStatusMsg.text}
+                              </p>
+                          )}
+                      </div>
+                  )}
               </div>
 
       {/* SELECTION MODE TOGGLE (Inline Segments) */}

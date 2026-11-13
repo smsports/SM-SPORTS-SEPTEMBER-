@@ -1,12 +1,16 @@
+import { db } from '../firebase';
+
 /**
- * Web Audio API synthesizer for Category Draft Board
- * Generates realistic Heartbeat & Tik-Tik pulses (last 10s countdown),
- * 3-Ring Arena Buzzer (time's up), and Celebratory Sold Fanfare.
- * 100% client-side with zero external mp3/asset dependencies.
+ * Web Audio API synthesizer + Custom Audio URL player for Auction & Draft Board.
+ * Generates Heartbeat & Tik-Tik pulses (last 10s countdown), 3-Ring Arena Buzzer,
+ * Celebratory Sold Fanfare, Unsold Pass tone, and plays custom uploaded tracks
+ * (Firebase Storage URLs, Data URLs, or `firestore-asset://` references).
  */
 
 let audioCtx: AudioContext | null = null;
 let isMuted: boolean = typeof window !== 'undefined' ? localStorage.getItem('draft_sound_muted') === 'true' : false;
+let currentCustomAudio: HTMLAudioElement | null = null;
+const resolvedAssetCache = new Map<string, string>();
 
 function getAudioContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -48,15 +52,98 @@ export function isDraftAudioMuted(): boolean {
 
 export function setDraftAudioMuted(muted: boolean): void {
     isMuted = muted;
+    if (muted) {
+        stopCustomAudio();
+    }
     if (typeof window !== 'undefined') {
         localStorage.setItem('draft_sound_muted', muted ? 'true' : 'false');
     }
 }
 
+export function stopCustomAudio(): void {
+    if (currentCustomAudio) {
+        try {
+            currentCustomAudio.pause();
+            currentCustomAudio.currentTime = 0;
+        } catch {
+            // ignore
+        }
+        currentCustomAudio = null;
+    }
+}
+
+/**
+ * Resolves `firestore-asset://{auctionId}/{soundKey}?v={ts}` or passes through regular URLs/DataURLs.
+ */
+async function resolveAudioSourceUrl(rawUrl: string): Promise<string | null> {
+    if (!rawUrl) return null;
+    if (!rawUrl.startsWith('firestore-asset://')) {
+        return rawUrl;
+    }
+    const cached = resolvedAssetCache.get(rawUrl);
+    if (cached) return cached;
+
+    try {
+        const clean = rawUrl.replace('firestore-asset://', '').split('?')[0];
+        const [auctionId, assetId] = clean.split('/');
+        if (!auctionId || !assetId) return null;
+        const snap = await db.collection('auctions').doc(auctionId).collection('audioAssets').doc(assetId).get();
+        if (snap.exists) {
+            const dataUrl = snap.data()?.dataUrl as string | undefined;
+            if (dataUrl) {
+                resolvedAssetCache.set(rawUrl, dataUrl);
+                return dataUrl;
+            }
+        }
+    } catch (err) {
+        console.warn('Could not resolve custom Firestore audio asset:', err);
+    }
+    return null;
+}
+
+/**
+ * Plays a custom uploaded audio track with graceful fallback callback if unavailable/blocked.
+ */
+async function playCustomAudioUrl(
+    rawUrl: string | undefined,
+    volume: number,
+    fallbackSynth: () => void
+): Promise<boolean> {
+    if (isMuted) return false;
+    if (!rawUrl || !rawUrl.trim()) {
+        fallbackSynth();
+        return false;
+    }
+
+    try {
+        const resolvedUrl = await resolveAudioSourceUrl(rawUrl.trim());
+        if (!resolvedUrl) {
+            fallbackSynth();
+            return false;
+        }
+
+        stopCustomAudio();
+        const audio = new Audio(resolvedUrl);
+        audio.volume = Math.max(0, Math.min(1, volume));
+        currentCustomAudio = audio;
+
+        audio.onended = () => {
+            if (currentCustomAudio === audio) {
+                currentCustomAudio = null;
+            }
+        };
+
+        await audio.play();
+        return true;
+    } catch (err) {
+        console.warn('Custom audio playback fallback to synth:', err);
+        fallbackSynth();
+        return false;
+    }
+}
+
 /**
  * Play authentic 'Heartbeat + Tik-Tik' hybrid countdown audio
- * Blends deep sub-bass chest-pounding thump ("lub-dub") with a prominent,
- * crisp mechanical clock tick so it cuts through room speakers and projector setups.
  */
 export function playCountdownTickSound(customVolume: number = 0.65): void {
     if (isMuted) return;
@@ -73,7 +160,7 @@ export function playCountdownTickSound(customVolume: number = 0.65): void {
         masterGain.gain.setValueAtTime(customVolume, now);
         masterGain.connect(ctx.destination);
 
-        // --- LAYER 1: Sharp Clock "Tik-Tik" Mechanical Click Transient ---
+        // LAYER 1: Sharp Clock "Tik-Tik" Mechanical Click Transient
         const tickOsc = ctx.createOscillator();
         const tickGain = ctx.createGain();
         const tickFilter = ctx.createBiquadFilter();
@@ -97,7 +184,7 @@ export function playCountdownTickSound(customVolume: number = 0.65): void {
         tickOsc.start(now);
         tickOsc.stop(now + 0.06);
 
-        // --- LAYER 2: Heartbeat Sub-Bass "Lub" Thump (85Hz -> 40Hz) ---
+        // LAYER 2: Heartbeat Sub-Bass "Lub" Thump (85Hz -> 40Hz)
         const osc1 = ctx.createOscillator();
         const gain1 = ctx.createGain();
         const subFilter1 = ctx.createBiquadFilter();
@@ -120,7 +207,7 @@ export function playCountdownTickSound(customVolume: number = 0.65): void {
         osc1.start(now);
         osc1.stop(now + 0.14);
 
-        // --- LAYER 3: Heartbeat Secondary "Dub" Thump at +0.12s (70Hz -> 35Hz) ---
+        // LAYER 3: Heartbeat Secondary "Dub" Thump at +0.12s (70Hz -> 35Hz)
         const osc2 = ctx.createOscillator();
         const gain2 = ctx.createGain();
         const subFilter2 = ctx.createBiquadFilter();
@@ -147,17 +234,12 @@ export function playCountdownTickSound(customVolume: number = 0.65): void {
     }
 }
 
-/**
- * Backward compatibility alias for heartbeat countdown
- */
 export function playHeartbeatSound(customVolume: number = 0.65): void {
     playCountdownTickSound(customVolume);
 }
 
 /**
- * Play 3-Ring Arena Time's-Up Buzzer
- * Rings 3 distinct, unmistakable horn blasts in rapid succession:
- * Blast 1 (0 to 0.26s) -> Gap (0.10s) -> Blast 2 (0.36 to 0.62s) -> Gap (0.10s) -> Blast 3 (0.72 to 1.18s)
+ * Play 3-Ring Arena Time's-Up Buzzer (Synthesized default)
  */
 export function playBuzzerSound(customVolume: number = 0.65): void {
     if (isMuted) return;
@@ -171,7 +253,6 @@ export function playBuzzerSound(customVolume: number = 0.65): void {
 
         const now = ctx.currentTime;
 
-        // Helper to synthesize a single arena horn blast
         const triggerBlast = (startTime: number, blastDuration: number, isFinal: boolean = false) => {
             const filter = ctx.createBiquadFilter();
             filter.type = 'bandpass';
@@ -187,17 +268,14 @@ export function playBuzzerSound(customVolume: number = 0.65): void {
             filter.connect(blastGain);
             blastGain.connect(ctx.destination);
 
-            // Sawtooth primary
             const osc1 = ctx.createOscillator();
             osc1.type = 'sawtooth';
             osc1.frequency.setValueAtTime(isFinal ? 134 : 142, startTime);
 
-            // Detuned square secondary
             const osc2 = ctx.createOscillator();
             osc2.type = 'square';
             osc2.frequency.setValueAtTime(isFinal ? 140 : 148, startTime);
 
-            // Sub-bass growl
             const subOsc = ctx.createOscillator();
             subOsc.type = 'sawtooth';
             subOsc.frequency.setValueAtTime(isFinal ? 67 : 71, startTime);
@@ -215,13 +293,8 @@ export function playBuzzerSound(customVolume: number = 0.65): void {
             subOsc.stop(startTime + blastDuration);
         };
 
-        // RING 1
         triggerBlast(now, 0.25, false);
-
-        // RING 2 (after 0.36s)
         triggerBlast(now + 0.36, 0.25, false);
-
-        // RING 3 (after 0.72s - longer resonant final blast)
         triggerBlast(now + 0.72, 0.48, true);
     } catch {
         // Safe failover
@@ -229,7 +302,7 @@ export function playBuzzerSound(customVolume: number = 0.65): void {
 }
 
 /**
- * Play celebratory fanfare / hammer-down audio when a player is marked as SOLD
+ * Play celebratory fanfare when a player is marked as SOLD (Synthesized default)
  */
 export function playSoldFanfareSound(customVolume: number = 0.7): void {
     if (isMuted) return;
@@ -246,7 +319,6 @@ export function playSoldFanfareSound(customVolume: number = 0.7): void {
         masterGain.gain.setValueAtTime(customVolume, now);
         masterGain.connect(ctx.destination);
 
-        // Triumphant ascending triad notes: C4 (261.6Hz), E4 (329.6Hz), G4 (392Hz), C5 (523.25Hz)
         const notes = [
             { freq: 261.63, start: now, dur: 0.12 },
             { freq: 329.63, start: now + 0.10, dur: 0.12 },
@@ -274,3 +346,76 @@ export function playSoldFanfareSound(customVolume: number = 0.7): void {
         // Safe failover
     }
 }
+
+/**
+ * Play descending stadium pass tone when a player goes UNSOLD (Synthesized default)
+ */
+export function playUnsoldSound(customVolume: number = 0.65): void {
+    if (isMuted) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    try {
+        if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+        }
+
+        const now = ctx.currentTime;
+        const masterGain = ctx.createGain();
+        masterGain.gain.setValueAtTime(customVolume, now);
+        masterGain.connect(ctx.destination);
+
+        const notes = [
+            { freq: 311.13, start: now, dur: 0.18 },
+            { freq: 233.08, start: now + 0.18, dur: 0.22 },
+            { freq: 155.56, start: now + 0.40, dur: 0.45 }
+        ];
+
+        notes.forEach(n => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sawtooth';
+            const filter = ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(700, n.start);
+
+            osc.frequency.setValueAtTime(n.freq, n.start);
+            osc.frequency.exponentialRampToValueAtTime(n.freq * 0.88, n.start + n.dur);
+
+            gain.gain.setValueAtTime(0.001, n.start);
+            gain.gain.linearRampToValueAtTime(0.4, n.start + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, n.start + n.dur);
+
+            osc.connect(filter);
+            filter.connect(gain);
+            gain.connect(masterGain);
+
+            osc.start(n.start);
+            osc.stop(n.start + n.dur + 0.05);
+        });
+    } catch {
+        // Safe failover
+    }
+}
+
+export async function playSoldSound(customUrl?: string, volume: number = 0.85): Promise<void> {
+    await playCustomAudioUrl(customUrl, volume, () => playSoldFanfareSound(volume));
+}
+
+export async function playTimeUpSound(customUrl?: string, volume: number = 0.85): Promise<void> {
+    await playCustomAudioUrl(customUrl, volume, () => playBuzzerSound(volume));
+}
+
+export async function playUnsoldSoundTrack(customUrl?: string, volume: number = 0.85): Promise<void> {
+    await playCustomAudioUrl(customUrl, volume, () => playUnsoldSound(volume));
+}
+
+export async function previewAudioSound(
+    type: 'sold' | 'timeup' | 'unsold',
+    customUrl?: string
+): Promise<void> {
+    if (type === 'sold') return playSoldSound(customUrl, 0.85);
+    if (type === 'timeup') return playTimeUpSound(customUrl, 0.85);
+    return playUnsoldSoundTrack(customUrl, 0.85);
+}
+
