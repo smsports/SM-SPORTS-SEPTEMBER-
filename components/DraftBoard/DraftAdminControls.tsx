@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory, ObsDraftDisplayMode, CustomAudioConfig } from '../../types';
+import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory, ObsDraftDisplayMode, CustomAudioConfig, PendingDraftPickRequest } from '../../types';
 import { db } from '../../firebase';
 import { uploadAudioOrFallback } from '../../utils';
 import { previewAudioSound, stopCustomAudio, mergeCustomAudioConfig } from '../../utils/draftAudio';
@@ -9,7 +9,7 @@ import {
     Users, Shuffle, ArrowRight, Monitor, Cast, ExternalLink, Copy, Check,
     LayoutGrid, Columns, Table as TableIcon, LayoutList, Eye, Filter,
     Trophy, Palette, Sparkles, Zap, Lock, Music, Upload, Volume2, Square,
-    Trash2, Timer, Layers, EyeOff, Ban
+    Trash2, Timer, Layers, EyeOff, Ban, X
 } from 'lucide-react';
 import { DRAFT_THEMES, DraftThemeKey, getDraftTheme } from '../../utils/draftThemes';
 
@@ -21,6 +21,10 @@ interface Props {
     categories?: AuctionCategory[];
     auctionId: string;
     onStartNextRound: () => Promise<void>;
+    pendingPickRequests?: PendingDraftPickRequest[];
+    onApprovePickRequest?: (req: PendingDraftPickRequest) => Promise<void>;
+    onDismissPickRequest?: (requestId: string) => Promise<void> | void;
+    lastProcessedRequestNotice?: string | null;
 }
 
 export const DraftAdminControls: React.FC<Props> = ({
@@ -30,7 +34,11 @@ export const DraftAdminControls: React.FC<Props> = ({
     players,
     categories = [],
     auctionId,
-    onStartNextRound
+    onStartNextRound,
+    pendingPickRequests = [],
+    onApprovePickRequest,
+    onDismissPickRequest,
+    lastProcessedRequestNotice
 }) => {
     const [confirmAction, setConfirmAction] = useState<{
         title: string;
@@ -581,6 +589,80 @@ export const DraftAdminControls: React.FC<Props> = ({
                     </button>
                 </div>
             </div>
+
+            {/* LIVE TEAM OWNER PICK REQUESTS & CONFIRMATION NOTICE */}
+            {lastProcessedRequestNotice && (
+                <div className="p-2.5 rounded-xl bg-emerald-950/70 border border-emerald-500/60 text-emerald-200 text-[10px] font-black uppercase tracking-wider flex items-center gap-2 shadow-md">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="truncate">{lastProcessedRequestNotice}</span>
+                </div>
+            )}
+
+            {pendingPickRequests.length > 0 && (
+                <div className="p-3 rounded-2xl border-2 border-emerald-400 bg-gradient-to-b from-emerald-950/80 to-zinc-950 space-y-2.5 shadow-xl animate-pulse">
+                    <div className="flex items-center justify-between gap-2">
+                        <h4 className="text-[11px] font-black uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                            <Sparkles className="w-4 h-4 text-amber-400" /> Team Pick Requests ({pendingPickRequests.length})
+                        </h4>
+                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500 text-black">
+                            Action Needed
+                        </span>
+                    </div>
+                    <div className="space-y-2">
+                        {pendingPickRequests.map(req => (
+                            <div key={req.requestId} className="p-2.5 rounded-xl bg-black/70 border border-emerald-500/40 space-y-2">
+                                <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-black uppercase text-white truncate">
+                                            {req.playerName}
+                                        </p>
+                                        <p className="text-[10px] font-bold text-amber-300 uppercase truncate">
+                                            Requested by: {req.teamName}
+                                        </p>
+                                        {req.errorMessage && (
+                                            <p className="text-[9px] text-red-300 font-semibold mt-0.5">
+                                                {req.errorMessage}
+                                            </p>
+                                        )}
+                                    </div>
+                                    <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 shrink-0">
+                                        R{req.round}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                    {onApprovePickRequest && (
+                                        <button
+                                            type="button"
+                                            disabled={isProcessing}
+                                            onClick={async () => {
+                                                setIsProcessing(true);
+                                                try {
+                                                    await onApprovePickRequest(req);
+                                                } finally {
+                                                    setIsProcessing(false);
+                                                }
+                                            }}
+                                            className="flex-1 py-1.5 px-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-black font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 shadow active:scale-95 transition-all"
+                                        >
+                                            <Check className="w-3.5 h-3.5 stroke-[3]" /> Approve &amp; Mark SOLD
+                                        </button>
+                                    )}
+                                    {onDismissPickRequest && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onDismissPickRequest(req.requestId)}
+                                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-red-600/30 text-zinc-400 hover:text-red-300 border border-zinc-700 transition-all"
+                                            title="Dismiss request"
+                                        >
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {activeSection === 'MAIN' ? (
                 /* =====================================================================

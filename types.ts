@@ -111,7 +111,35 @@ export interface AuctionLog {
   id?: string;
   message: string;
   timestamp: number;
-  type: 'SYSTEM' | 'BID' | 'SOLD' | 'UNSOLD' | 'TRADE';
+  type: 'SYSTEM' | 'BID' | 'SOLD' | 'UNSOLD' | 'TRADE' | 'DRAFT_PICK_REQUEST';
+  requestId?: string;
+  auctionId?: string;
+  playerId?: string;
+  playerName?: string;
+  teamId?: string;
+  teamName?: string;
+  price?: number;
+  round?: number;
+  turnIndex?: number;
+  status?: 'PENDING' | 'PROCESSED' | 'ERROR';
+  requestedAt?: number;
+}
+
+export interface PendingDraftPickRequest {
+  requestId: string;
+  auctionId: string;
+  playerId: string;
+  playerName: string;
+  teamId: string;
+  teamName: string;
+  price: number;
+  round: number;
+  turnIndex: number;
+  status: 'PENDING' | 'PROCESSED' | 'ERROR';
+  requestedAt: number;
+  errorMessage?: string;
+  source?: 'SCORING_ASSETS' | 'AUCTION_LOGS' | 'BROADCAST';
+  logDocId?: string;
 }
 
 export interface TradeRecord {

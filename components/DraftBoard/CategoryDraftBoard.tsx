@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuction } from '../../hooks/useAuction';
 import { useTheme } from '../../contexts/ThemeContext';
-import { Player, Team, AuctionCategory, DraftBoardState, DraftPickHistory, DraftCelebrationData } from '../../types';
+import { Player, Team, AuctionCategory, DraftBoardState, DraftPickHistory, DraftCelebrationData, PendingDraftPickRequest } from '../../types';
 import { db, auth } from '../../firebase';
 import { 
     Users, Clock, Trophy, ChevronRight, CheckCircle2, AlertCircle, 
@@ -83,6 +83,17 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     const [isTimeUpDismissed, setIsTimeUpDismissed] = useState<boolean>(false);
     const prevSecondsRef = useRef<number>(draftState.timerTimeRemaining);
     const [pickError, setPickError] = useState<string | null>(null);
+    const [pendingPickRequests, setPendingPickRequests] = useState<PendingDraftPickRequest[]>([]);
+    const [lastProcessedRequestNotice, setLastProcessedRequestNotice] = useState<string | null>(null);
+    const dismissedRequestIdsRef = useRef<Set<string>>(new Set());
+    const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const showProcessedNotice = (text: string) => {
+        setLastProcessedRequestNotice(text);
+        if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+        noticeTimerRef.current = setTimeout(() => {
+            setLastProcessedRequestNotice(null);
+        }, 8000);
+    };
     const [activeUnsoldBanner, setActiveUnsoldBanner] = useState<{
         playerName: string;
         role?: string;
@@ -386,7 +397,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     const processedPickRequestsRef = useRef<Set<string>>(new Set());
     const reconcilingKeysRef = useRef<Set<string>>(new Set());
 
-    // Helper to persist player & team subcollection docs (reads fresh team doc so list size matches strict rules)
+    // Helper to persist player & team subcollection docs (reads fresh team doc so list size matches strict rules, falls back to query if doc id differs)
     const syncPlayerAndTeamDocs = async (
         targetPlayer: Player,
         targetTeam: Team,
@@ -397,24 +408,48 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             String(targetPlayer.soldToId || targetPlayer.teamId || '') === String(targetTeam.id);
 
         if (!playerAlreadySynced) {
-            const playerUpdateData = {
+            const playerUpdateData = JSON.parse(JSON.stringify({
                 status: 'SOLD',
                 soldTo: targetTeam.name || 'Team',
                 soldToId: targetTeam.id,
                 teamId: targetTeam.id,
                 soldPrice: effectivePrice,
                 soldAt: Date.now()
-            };
-            await db.collection('auctions').doc(auctionId).collection('players').doc(String(targetPlayer.id)).update(
-                JSON.parse(JSON.stringify(playerUpdateData))
-            );
+            }));
+            const playersCol = db.collection('auctions').doc(auctionId).collection('players');
+            try {
+                await playersCol.doc(String(targetPlayer.id)).update(playerUpdateData);
+            } catch (pErr: any) {
+                const isNotFound = pErr?.code === 'not-found' || String(pErr?.message || '').toLowerCase().includes('no document to update');
+                if (!isNotFound) throw pErr;
+                let matchedSnap = await playersCol.where('id', '==', targetPlayer.id).limit(1).get();
+                if (matchedSnap.empty) {
+                    matchedSnap = await playersCol.where('id', '==', String(targetPlayer.id)).limit(1).get();
+                }
+                if (!matchedSnap.empty) {
+                    await matchedSnap.docs[0].ref.update(playerUpdateData);
+                } else {
+                    throw pErr;
+                }
+            }
         }
 
-        const teamDocRef = db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id));
+        const teamsCol = db.collection('auctions').doc(auctionId).collection('teams');
+        let teamDocRef = teamsCol.doc(String(targetTeam.id));
         let freshPlayers: any[] = targetTeam.players || [];
         let freshBudget = Number(targetTeam.budget || 0);
         try {
-            const freshSnap = await teamDocRef.get();
+            let freshSnap: any = await teamDocRef.get();
+            if (!freshSnap.exists) {
+                let qSnap = await teamsCol.where('id', '==', targetTeam.id).limit(1).get();
+                if (qSnap.empty) {
+                    qSnap = await teamsCol.where('id', '==', String(targetTeam.id)).limit(1).get();
+                }
+                if (!qSnap.empty) {
+                    freshSnap = qSnap.docs[0];
+                    teamDocRef = freshSnap.ref;
+                }
+            }
             if (freshSnap.exists) {
                 const freshData = freshSnap.data() as any;
                 if (Array.isArray(freshData?.players)) {
@@ -454,31 +489,34 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     };
 
     // Handle Assign Player to Team
-    const handleAssignPlayer = async (player: Player, teamId: string | number, price: number) => {
-        if (!auctionId) return;
+    const handleAssignPlayer = async (player: Player, teamId: string | number, price: number): Promise<{ ok: boolean; error?: string }> => {
+        if (!auctionId) return { ok: false, error: 'Missing auction ID.' };
         setPickError(null);
 
         if (player.status === 'SOLD' || draftPickMapRef.current.has(String(player.id))) {
-            setPickError(`${player.name} is already sold.`);
-            return;
+            const msg = `${player.name} is already sold.`;
+            setPickError(msg);
+            return { ok: false, error: msg };
         }
 
         const currentDraft = draftStateRef.current;
 
         if (isTeamOwner && !isAdmin) {
             if (currentDraft.teamPickingEnabled === false) {
-                setPickError('Picking is currently locked by the auction admin.');
-                return;
+                const msg = 'Picking is currently locked by the auction admin.';
+                setPickError(msg);
+                return { ok: false, error: msg };
             }
             if (!myTeam || String(myTeam.id) !== String(currentDraft.currentTeamId)) {
-                setPickError('Please wait for your team turn before drafting a player.');
-                return;
+                const msg = 'Please wait for your team turn before drafting a player.';
+                setPickError(msg);
+                return { ok: false, error: msg };
             }
         }
 
         const effectiveTeamId = (isTeamOwner && !isAdmin && myTeam) ? myTeam.id : teamId;
         const targetTeam = teamsRef.current.find(t => String(t.id) === String(effectiveTeamId));
-        if (!targetTeam) return;
+        if (!targetTeam) return { ok: false, error: 'Target team not found.' };
 
         const effectivePrice = Math.max(0, Number(price || 0));
 
@@ -585,7 +623,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         console.warn('Subcollection sync deferred to Admin auto-reconcile:', subErr?.code || subErr?.message);
                     }
                 } else if (rootPermissionDenied) {
-                    // 2) Fallback Relay via signed-in writable collections (scoringAssets + auctionLogs) so connected Admin executes the pick cleanly.
+                    // 2) Fallback Relay via signed-in writable collections (scoringAssets + auctionLogs) + BroadcastChannel so connected Admin executes & displays the pick cleanly.
                     const requestId = `pickreq_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
                     const reqPayload = {
                         auctionId,
@@ -606,8 +644,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     try {
                         await db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).set(reqPayload);
                         relayDispatched = true;
-                    } catch {
-                        // ignore and try auctionLogs
+                    } catch (err) {
+                        console.warn('Relay scoringAssets dispatch skipped:', err);
                     }
                     try {
                         await db.collection('auctions').doc(auctionId).collection('auctionLogs').add({
@@ -617,40 +655,67 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             timestamp: Date.now()
                         });
                         relayDispatched = true;
+                    } catch (err) {
+                        console.warn('Relay auctionLogs dispatch skipped:', err);
+                    }
+                    try {
+                        if (typeof BroadcastChannel !== 'undefined') {
+                            const ch = new BroadcastChannel(`sm_draft_pick_${auctionId}`);
+                            ch.postMessage({ type: 'DRAFT_PICK_REQUEST', payload: reqPayload });
+                            ch.close();
+                            relayDispatched = true;
+                        }
                     } catch {
-                        // ignore if scoringAssets succeeded
+                        // BroadcastChannel optional
                     }
 
                     if (!relayDispatched) {
                         throw new Error('Missing or insufficient permissions.');
                     }
 
-                    // Wait up to 5s for connected Admin Draft Board to process the relay request
+                    // Wait up to 8s for connected Admin Draft Board to process the relay request
                     const relayResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
                         let settled = false;
                         let unsubAuction: () => void = () => {};
+                        let unsubPlayerDoc: () => void = () => {};
                         let unsubReq: () => void = () => {};
+                        let channel: BroadcastChannel | null = null;
 
                         const finish = (res: { ok: boolean; error?: string }) => {
                             if (settled) return;
                             settled = true;
                             clearTimeout(timeoutId);
                             unsubAuction();
+                            unsubPlayerDoc();
                             unsubReq();
+                            if (channel) {
+                                try { channel.close(); } catch {}
+                            }
                             resolve(res);
                         };
 
                         const timeoutId = setTimeout(() => {
                             finish({
                                 ok: false,
-                                error: 'Pick request sent — keep Admin Draft Dashboard open (or deploy Firestore rules) to finalize team picks.'
+                                error: 'Pick request sent to Admin Panel! Keep the Admin Draft Dashboard open so the Admin can finalize or approve your pick.'
                             });
-                        }, 5000);
+                        }, 8000);
 
                         unsubAuction = db.collection('auctions').doc(auctionId).onSnapshot((snap) => {
                             const data = snap.data() as any;
                             const hist: any[] = data?.draftBoardState?.history || [];
-                            if (hist.some(h => String(h.playerId) === String(player.id))) {
+                            const lastCel = data?.draftBoardState?.lastSoldCelebration;
+                            if (
+                                hist.some(h => String(h.playerId) === String(player.id)) ||
+                                (lastCel && String(lastCel.playerId) === String(player.id))
+                            ) {
+                                finish({ ok: true });
+                            }
+                        }, () => {});
+
+                        unsubPlayerDoc = db.collection('auctions').doc(auctionId).collection('players').doc(String(player.id)).onSnapshot((snap) => {
+                            const pData = snap.data() as any;
+                            if (pData?.status === 'SOLD') {
                                 finish({ ok: true });
                             }
                         }, () => {});
@@ -661,11 +726,24 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                 finish({ ok: false, error: reqData.errorMessage || 'Pick rejected by auction rules.' });
                             }
                         }, () => {});
+
+                        try {
+                            if (typeof BroadcastChannel !== 'undefined') {
+                                channel = new BroadcastChannel(`sm_draft_pick_${auctionId}`);
+                                channel.onmessage = (ev) => {
+                                    if (ev?.data?.type === 'DRAFT_PICK_RESULT' && ev.data.requestId === requestId) {
+                                        finish({ ok: !!ev.data.ok, error: ev.data.error });
+                                    }
+                                };
+                            }
+                        } catch {
+                            // optional
+                        }
                     });
 
                     if (!relayResult.ok) {
                         setPickError(relayResult.error || 'Unable to confirm pick.');
-                        return;
+                        return { ok: false, error: relayResult.error };
                     }
                 }
             }
@@ -678,6 +756,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             });
 
             setActivePlayerForModal(null);
+            return { ok: true };
         } catch (err: any) {
             const errInfo = {
                 error: err?.message || String(err),
@@ -692,95 +771,294 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 }
             };
             console.error("Failed to assign player in draft:", JSON.stringify(errInfo));
-            setPickError(
+            const friendlyErr =
                 err?.message?.includes('permission') || err?.code === 'permission-denied'
-                    ? 'Assignment failed: Missing or insufficient permissions. Please verify Firestore rules are deployed or keep Admin Draft Board open.'
-                    : `Assignment failed: ${err?.message || 'Unable to save pick.'}`
-            );
+                    ? 'Assignment failed: Missing or insufficient permissions. Please verify Firestore rules are deployed or sign in as Admin.'
+                    : `Assignment failed: ${err?.message || 'Unable to save pick.'}`;
+            setPickError(friendlyErr);
+            return { ok: false, error: friendlyErr };
         }
     };
 
     const handleAssignPlayerRef = useRef(handleAssignPlayer);
     handleAssignPlayerRef.current = handleAssignPlayer;
 
-    // ADMIN RELAY PROCESSOR: Process pending Team Owner pick requests from scoringAssets & auctionLogs
-    useEffect(() => {
-        if (!isAdmin || !auctionId) return;
-
-        const processIncomingRequest = async (req: any, markDocProcessed: boolean) => {
-            if (!req || !req.requestId || req.status === 'PROCESSED' || req.status === 'ERROR') return;
-            if (processedPickRequestsRef.current.has(req.requestId)) return;
-
-            const ageMs = Date.now() - Number(req.requestedAt || req.timestamp || 0);
-            if (ageMs > 60000) return;
-
-            processedPickRequestsRef.current.add(req.requestId);
-
-            const currentDraft = draftStateRef.current;
-            if (currentDraft.teamPickingEnabled === false) {
-                if (markDocProcessed) {
-                    db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).update({
-                        status: 'ERROR',
-                        errorMessage: 'Picking is currently locked by Admin.'
-                    }).catch(() => {});
-                }
-                return;
+    const broadcastRelayResult = (requestId: string, ok: boolean, error?: string) => {
+        try {
+            if (typeof BroadcastChannel !== 'undefined' && auctionId) {
+                const ch = new BroadcastChannel(`sm_draft_pick_${auctionId}`);
+                ch.postMessage({ type: 'DRAFT_PICK_RESULT', requestId, ok, error });
+                ch.close();
             }
+        } catch {
+            // optional
+        }
+    };
 
-            if (String(req.teamId) !== String(currentDraft.currentTeamId)) {
-                if (markDocProcessed) {
-                    db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).update({
-                        status: 'ERROR',
-                        errorMessage: 'Turn already passed before pick arrived.'
-                    }).catch(() => {});
-                }
-                return;
+    const upsertPendingRequest = (req: PendingDraftPickRequest) => {
+        setPendingPickRequests(prev => {
+            const idx = prev.findIndex(r => r.requestId === req.requestId);
+            if (idx >= 0) {
+                const copy = [...prev];
+                copy[idx] = { ...copy[idx], ...req };
+                return copy;
             }
+            return [req, ...prev];
+        });
+    };
 
-            const matchedPlayer = playersRef.current.find(p => String(p.id) === String(req.playerId));
-            const matchedTeam = teamsRef.current.find(t => String(t.id) === String(req.teamId));
+    const removePendingRequest = (requestId: string) => {
+        setPendingPickRequests(prev => prev.filter(r => r.requestId !== requestId));
+    };
 
-            if (!matchedPlayer || !matchedTeam) return;
-            if (matchedPlayer.status === 'SOLD' || draftPickMapRef.current.has(String(matchedPlayer.id))) {
-                if (markDocProcessed) {
-                    db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).update({
-                        status: 'PROCESSED',
-                        processedAt: Date.now()
-                    }).catch(() => {});
-                }
-                return;
-            }
+    const enqueueAndProcessPickRequestRef = useRef<
+        (req: any, source: 'SCORING_ASSETS' | 'AUCTION_LOGS' | 'BROADCAST') => Promise<void>
+    >(async () => {});
 
-            await handleAssignPlayerRef.current(matchedPlayer, matchedTeam.id, Number(req.price || 0));
-            if (markDocProcessed) {
+    enqueueAndProcessPickRequestRef.current = async (
+        req: any,
+        source: 'SCORING_ASSETS' | 'AUCTION_LOGS' | 'BROADCAST'
+    ) => {
+        if (!isAdmin || !auctionId || !req) return;
+        const requestId = String(req.requestId || req.id || '').trim();
+        if (!requestId || !req.playerId || !req.teamId) return;
+        if (req.status === 'PROCESSED' || req.status === 'ERROR') return;
+        if (dismissedRequestIdsRef.current.has(requestId)) return;
+
+        // Generous 30-min window and never drop negative clock-skew offsets
+        const rawTs = Number(req.requestedAt || req.timestamp || 0);
+        if (rawTs > 0 && Date.now() - rawTs > 30 * 60 * 1000) return;
+
+        const matchedPlayer = playersRef.current.find(p => String(p.id) === String(req.playerId));
+        const matchedTeam = teamsRef.current.find(t => String(t.id) === String(req.teamId));
+        const alreadySold = (matchedPlayer?.status === 'SOLD') || draftPickMapRef.current.has(String(req.playerId));
+
+        if (alreadySold) {
+            removePendingRequest(requestId);
+            if (source === 'SCORING_ASSETS') {
                 db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).update({
                     status: 'PROCESSED',
                     processedAt: Date.now()
                 }).catch(() => {});
             }
+            broadcastRelayResult(requestId, true);
+            return;
+        }
+
+        const normalizedReq: PendingDraftPickRequest = {
+            requestId,
+            auctionId,
+            playerId: String(req.playerId),
+            playerName: String(req.playerName || matchedPlayer?.name || 'Player'),
+            teamId: String(req.teamId),
+            teamName: String(req.teamName || matchedTeam?.name || 'Team'),
+            price: Number(req.price || 0),
+            round: Number(req.round || draftStateRef.current.currentRound || 1),
+            turnIndex: Number(req.turnIndex ?? draftStateRef.current.currentTurnIndex ?? 0),
+            status: 'PENDING',
+            requestedAt: rawTs || Date.now(),
+            source,
+            logDocId: req._logDocId || req.logDocId || (source === 'AUCTION_LOGS' && req.id ? String(req.id) : undefined)
         };
+
+        // Always make incoming request visibly appear in Admin Panel immediately
+        upsertPendingRequest(normalizedReq);
+
+        // Wait until players & teams collections are hydrated before auto-finalizing
+        if (!matchedPlayer || !matchedTeam) return;
+
+        if (processedPickRequestsRef.current.has(requestId)) return;
+        processedPickRequestsRef.current.add(requestId);
+
+        const markRelayDocs = (status: 'PROCESSED' | 'ERROR', errorMessage?: string) => {
+            const payload: Record<string, any> = status === 'PROCESSED'
+                ? { status: 'PROCESSED', processedAt: Date.now() }
+                : { status: 'ERROR', errorMessage: errorMessage || 'Pick rejected.' };
+            db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).get().then(snap => {
+                if (snap.exists && (snap.data()?.requestId === requestId || source === 'SCORING_ASSETS')) {
+                    snap.ref.update(payload).catch(() => {});
+                }
+            }).catch(() => {});
+            if (normalizedReq.logDocId) {
+                db.collection('auctions').doc(auctionId).collection('auctionLogs').doc(normalizedReq.logDocId).update(payload).catch(() => {});
+            }
+        };
+
+        const currentDraft = draftStateRef.current;
+        if (currentDraft.teamPickingEnabled === false) {
+            const lockMsg = 'Team picking is currently locked by Admin. Click Approve & Mark SOLD to override or Dismiss.';
+            upsertPendingRequest({ ...normalizedReq, errorMessage: lockMsg });
+            if (source === 'SCORING_ASSETS') {
+                markRelayDocs('ERROR', 'Picking is currently locked by Admin.');
+            }
+            broadcastRelayResult(requestId, false, 'Picking is currently locked by Admin.');
+            return;
+        }
+
+        if (String(normalizedReq.teamId) !== String(currentDraft.currentTeamId)) {
+            const turnMsg = 'Turn changed before pick arrived. Click Approve & Mark SOLD to assign anyway or Dismiss.';
+            upsertPendingRequest({ ...normalizedReq, errorMessage: turnMsg });
+            if (source === 'SCORING_ASSETS') {
+                markRelayDocs('ERROR', 'Turn already passed before pick arrived.');
+            }
+            broadcastRelayResult(requestId, false, 'Turn already passed before pick arrived.');
+            return;
+        }
+
+        const res = await handleAssignPlayerRef.current(matchedPlayer, matchedTeam.id, normalizedReq.price);
+        if (res.ok) {
+            removePendingRequest(requestId);
+            showProcessedNotice(`Auto-Finalized: ${normalizedReq.playerName} → ${normalizedReq.teamName}`);
+            markRelayDocs('PROCESSED');
+            broadcastRelayResult(requestId, true);
+        } else {
+            const errMsg = res.error || 'Auto-finalize failed. Click Approve & Mark SOLD to retry.';
+            upsertPendingRequest({ ...normalizedReq, errorMessage: errMsg });
+            markRelayDocs('ERROR', errMsg);
+            broadcastRelayResult(requestId, false, errMsg);
+        }
+    };
+
+    const handleApprovePickRequest = async (req: PendingDraftPickRequest) => {
+        if (!isAdmin || !auctionId) return;
+        const matchedPlayer = playersRef.current.find(p => String(p.id) === String(req.playerId));
+        const matchedTeam = teamsRef.current.find(t => String(t.id) === String(req.teamId));
+
+        if (!matchedPlayer || !matchedTeam) {
+            upsertPendingRequest({
+                ...req,
+                errorMessage: 'Player or team record not loaded yet. Please wait a moment and try again.'
+            });
+            return;
+        }
+
+        const markApprovedDocs = () => {
+            const payload = { status: 'PROCESSED', processedAt: Date.now() };
+            db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).get().then(snap => {
+                if (snap.exists && snap.data()?.requestId === req.requestId) {
+                    snap.ref.update(payload).catch(() => {});
+                }
+            }).catch(() => {});
+            if (req.logDocId) {
+                db.collection('auctions').doc(auctionId).collection('auctionLogs').doc(req.logDocId).update(payload).catch(() => {});
+            }
+        };
+
+        if (matchedPlayer.status === 'SOLD' || draftPickMapRef.current.has(String(matchedPlayer.id))) {
+            removePendingRequest(req.requestId);
+            showProcessedNotice(`${req.playerName} is already marked SOLD.`);
+            markApprovedDocs();
+            broadcastRelayResult(req.requestId, true);
+            return;
+        }
+
+        const res = await handleAssignPlayerRef.current(matchedPlayer, matchedTeam.id, Number(req.price || 0));
+        if (res.ok) {
+            processedPickRequestsRef.current.add(req.requestId);
+            removePendingRequest(req.requestId);
+            showProcessedNotice(`Approved: ${req.playerName} → ${req.teamName}`);
+            markApprovedDocs();
+            broadcastRelayResult(req.requestId, true);
+        } else {
+            upsertPendingRequest({
+                ...req,
+                errorMessage: res.error || 'Failed to mark player SOLD. Please check Admin sign-in.'
+            });
+        }
+    };
+
+    const handleDismissPickRequest = (requestId: string) => {
+        dismissedRequestIdsRef.current.add(requestId);
+        const targetReq = pendingPickRequests.find(r => r.requestId === requestId);
+        removePendingRequest(requestId);
+        if (auctionId) {
+            const errPayload = { status: 'ERROR', errorMessage: 'Pick request dismissed by Admin.' };
+            db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).get().then(snap => {
+                if (snap.exists && snap.data()?.requestId === requestId) {
+                    snap.ref.update(errPayload).catch(() => {});
+                }
+            }).catch(() => {});
+            if (targetReq?.logDocId) {
+                db.collection('auctions').doc(auctionId).collection('auctionLogs').doc(targetReq.logDocId).update(errPayload).catch(() => {});
+            }
+        }
+        broadcastRelayResult(requestId, false, 'Pick request dismissed by Admin.');
+    };
+
+    // ADMIN RELAY PROCESSOR: Listen to scoringAssets, auctionLogs, and BroadcastChannel for incoming Team Owner pick requests
+    useEffect(() => {
+        if (!isAdmin || !auctionId) return;
 
         const unsubScoringReq = db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).onSnapshot((snap) => {
             if (snap.exists) {
-                processIncomingRequest(snap.data(), true);
+                enqueueAndProcessPickRequestRef.current(snap.data(), 'SCORING_ASSETS');
             }
-        }, () => {});
+        }, (err) => {
+            console.warn('Admin scoringAssets relay listener notice:', err?.code || err?.message);
+        });
 
         const unsubLogReq = db.collection('auctions').doc(auctionId).collection('auctionLogs')
             .where('type', '==', 'DRAFT_PICK_REQUEST')
             .onSnapshot((snap) => {
                 snap.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        processIncomingRequest(change.doc.data(), false);
+                    if (change.type === 'added' || change.type === 'modified') {
+                        enqueueAndProcessPickRequestRef.current({ ...change.doc.data(), _logDocId: change.doc.id }, 'AUCTION_LOGS');
                     }
                 });
-            }, () => {});
+            }, (err) => {
+                console.warn('Admin auctionLogs relay listener notice:', err?.code || err?.message);
+            });
+
+        let channel: BroadcastChannel | null = null;
+        try {
+            if (typeof BroadcastChannel !== 'undefined') {
+                channel = new BroadcastChannel(`sm_draft_pick_${auctionId}`);
+                channel.onmessage = (ev) => {
+                    if (ev?.data?.type === 'DRAFT_PICK_REQUEST' && ev.data.payload) {
+                        enqueueAndProcessPickRequestRef.current(ev.data.payload, 'BROADCAST');
+                    }
+                };
+            }
+        } catch {
+            // optional
+        }
 
         return () => {
             unsubScoringReq();
             unsubLogReq();
+            if (channel) {
+                try { channel.close(); } catch {}
+            }
         };
     }, [isAdmin, auctionId]);
+
+    // Also consume already-streamed state.auctionLog entries from AuctionContext in Admin Panel
+    useEffect(() => {
+        if (!isAdmin || !auctionId || !state.auctionLog?.length) return;
+        state.auctionLog.forEach(entry => {
+            if (entry?.type === 'DRAFT_PICK_REQUEST') {
+                enqueueAndProcessPickRequestRef.current(entry, 'AUCTION_LOGS');
+            }
+        });
+    }, [isAdmin, auctionId, state.auctionLog]);
+
+    // Auto-prune SOLD requests & retry any queued requests once players/teams finish loading
+    useEffect(() => {
+        if (!isAdmin || pendingPickRequests.length === 0) return;
+        const soldIds = new Set<string>();
+        pendingPickRequests.forEach(req => {
+            const mp = players.find(p => String(p.id) === String(req.playerId));
+            const isSold = (mp?.status === 'SOLD') || draftPickMap.has(String(req.playerId));
+            if (isSold) {
+                soldIds.add(req.requestId);
+            } else if (!processedPickRequestsRef.current.has(req.requestId) && mp && teams.some(t => String(t.id) === String(req.teamId))) {
+                enqueueAndProcessPickRequestRef.current(req, req.source || 'AUCTION_LOGS');
+            }
+        });
+        if (soldIds.size > 0) {
+            setPendingPickRequests(prev => prev.filter(r => !soldIds.has(r.requestId)));
+        }
+    }, [isAdmin, pendingPickRequests, players, teams, draftPickMap]);
 
     // ADMIN AUTO-RECONCILE: Keep /players and /teams subcollections synced whenever a Team Owner pick updated draftBoardState.history
     useEffect(() => {
@@ -977,7 +1255,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             setPickError(null);
                             setActivePlayerForModal(null);
                         }}
-                        onAssign={(player, teamId, price) => handleAssignPlayer(player, teamId, price)}
+                        onAssign={async (player, teamId, price) => { await handleAssignPlayer(player, teamId, price); }}
                         onUndoPlayer={handleUndoSpecificPlayer}
                     />
                 )}
@@ -1603,6 +1881,62 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 ) : (
                     /* Admin & Team Owner Interactive View */
                     <div className="flex-1 min-h-0 p-3 md:p-6 overflow-y-auto custom-scrollbar space-y-6">
+                        {isAdmin && !isProjectorView && !isOBSView && lastProcessedRequestNotice && (
+                            <div className="px-4 py-2.5 rounded-xl bg-emerald-950/90 border border-emerald-500 text-emerald-100 text-xs font-black uppercase tracking-wider flex items-center justify-between gap-3 shadow-lg">
+                                <div className="flex items-center gap-2">
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                                    <span>{lastProcessedRequestNotice}</span>
+                                </div>
+                                <button type="button" onClick={() => setLastProcessedRequestNotice(null)} className="p-1 hover:bg-emerald-800/60 rounded-lg text-emerald-200">
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </div>
+                        )}
+                        {isAdmin && !isProjectorView && !isOBSView && pendingPickRequests.length > 0 && (
+                            <div className="p-3.5 rounded-2xl border-2 border-emerald-400 bg-gradient-to-r from-emerald-950/90 via-zinc-950 to-emerald-950/90 space-y-2.5 shadow-xl">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-black uppercase tracking-wider text-emerald-300 flex items-center gap-2">
+                                        <Sparkles className="w-4 h-4 text-amber-400" /> Incoming Team Pick Requests ({pendingPickRequests.length})
+                                    </span>
+                                    <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-500 text-black animate-pulse">
+                                        Approve or Auto-Finalize
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    {pendingPickRequests.map(req => (
+                                        <div key={req.requestId} className="p-2.5 rounded-xl bg-black/75 border border-emerald-500/40 flex flex-wrap items-center justify-between gap-2">
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-xs font-black uppercase text-white truncate">
+                                                    {req.playerName} <span className="text-amber-300">&rarr; {req.teamName}</span>
+                                                </p>
+                                                {req.errorMessage ? (
+                                                    <p className="text-[10px] text-red-300 font-semibold mt-0.5">{req.errorMessage}</p>
+                                                ) : (
+                                                    <p className="text-[10px] text-emerald-300/80 font-bold uppercase">Round {req.round}</p>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleApprovePickRequest(req)}
+                                                    className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider flex items-center gap-1 shadow active:scale-95 transition-all"
+                                                >
+                                                    <Check className="w-3.5 h-3.5 stroke-[3]" /> Approve &amp; Mark SOLD
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDismissPickRequest(req.requestId)}
+                                                    className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-red-600/80 text-zinc-300 hover:text-white font-black text-[10px] uppercase border border-zinc-700 transition-all"
+                                                    title="Dismiss pick request"
+                                                >
+                                                    <X className="w-3.5 h-3.5" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                         {pickError && (
                             <div className="px-4 py-2.5 rounded-xl bg-red-950/90 border border-red-500 text-red-100 text-xs font-bold flex items-center justify-between gap-3 shadow-lg">
                                 <div className="flex items-center gap-2">
@@ -1836,6 +2170,10 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                 players={players}
                                 categories={categories}
                                 auctionId={auctionId}
+                                pendingPickRequests={pendingPickRequests}
+                                onApprovePickRequest={handleApprovePickRequest}
+                                onDismissPickRequest={handleDismissPickRequest}
+                                lastProcessedRequestNotice={lastProcessedRequestNotice}
                                 onStartNextRound={async () => {
                                     const nextRoundNumber = draftState.currentRound + 1;
                                     const isSnake = draftState.orderType === 'SNAKE';
@@ -1950,7 +2288,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         setPickError(null);
                         setActivePlayerForModal(null);
                     }}
-                    onAssign={(player, teamId, price) => handleAssignPlayer(player, teamId, price)}
+                    onAssign={async (player, teamId, price) => { await handleAssignPlayer(player, teamId, price); }}
                     onUndoPlayer={handleUndoSpecificPlayer}
                 />
             )}
