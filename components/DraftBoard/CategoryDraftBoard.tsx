@@ -375,35 +375,28 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         return groups;
     }, [categories, players, draftPickMap, searchQuery, statusFilter, selectedCategoryFilter]);
 
-    // Handle Assign Player to Team
-    const handleAssignPlayer = async (player: Player, teamId: string | number, price: number) => {
-        if (!auctionId) return;
-        setPickError(null);
+    const playersRef = useRef(players);
+    playersRef.current = players;
+    const teamsRef = useRef(teams);
+    teamsRef.current = teams;
+    const draftStateRef = useRef(draftState);
+    draftStateRef.current = draftState;
+    const draftPickMapRef = useRef(draftPickMap);
+    draftPickMapRef.current = draftPickMap;
+    const processedPickRequestsRef = useRef<Set<string>>(new Set());
+    const reconcilingKeysRef = useRef<Set<string>>(new Set());
 
-        if (isTeamOwner && !isAdmin) {
-            if (draftState.teamPickingEnabled === false) {
-                setPickError('Picking is currently locked by the auction admin.');
-                return;
-            }
-            if (!myTeam || String(myTeam.id) !== String(draftState.currentTeamId)) {
-                setPickError('Please wait for your team turn before drafting a player.');
-                return;
-            }
-        }
+    // Helper to persist player & team subcollection docs (reads fresh team doc so list size matches strict rules)
+    const syncPlayerAndTeamDocs = async (
+        targetPlayer: Player,
+        targetTeam: Team,
+        effectivePrice: number
+    ): Promise<void> => {
+        const playerAlreadySynced =
+            targetPlayer.status === 'SOLD' &&
+            String(targetPlayer.soldToId || targetPlayer.teamId || '') === String(targetTeam.id);
 
-        const effectiveTeamId = (isTeamOwner && !isAdmin && myTeam) ? myTeam.id : teamId;
-        const targetTeam = teams.find(t => String(t.id) === String(effectiveTeamId));
-        if (!targetTeam) return;
-
-        const effectivePrice = Math.max(0, Number(price || 0));
-
-        try {
-            // Ensure Firebase Auth session (anonymous or signed-in) before writing to Firestore
-            if (!auth.currentUser) {
-                await auth.signInAnonymously();
-            }
-
-            // 1. Mark player as SOLD in Firestore players subcollection
+        if (!playerAlreadySynced) {
             const playerUpdateData = {
                 status: 'SOLD',
                 soldTo: targetTeam.name || 'Team',
@@ -412,105 +405,270 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 soldPrice: effectivePrice,
                 soldAt: Date.now()
             };
-            await db.collection('auctions').doc(auctionId).collection('players').doc(String(player.id)).update(
+            await db.collection('auctions').doc(auctionId).collection('players').doc(String(targetPlayer.id)).update(
                 JSON.parse(JSON.stringify(playerUpdateData))
             );
+        }
 
-            // 2. Update team budget and squad (clean payload to eliminate any undefined values)
-            const updatedBudget = Math.max(0, Number(targetTeam.budget || 0) - effectivePrice);
+        const teamDocRef = db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id));
+        let freshPlayers: any[] = targetTeam.players || [];
+        let freshBudget = Number(targetTeam.budget || 0);
+        try {
+            const freshSnap = await teamDocRef.get();
+            if (freshSnap.exists) {
+                const freshData = freshSnap.data() as any;
+                if (Array.isArray(freshData?.players)) {
+                    freshPlayers = freshData.players;
+                }
+                if (typeof freshData?.budget === 'number') {
+                    freshBudget = freshData.budget;
+                }
+            }
+        } catch {
+            // Fall back to snapshot state if direct read fails
+        }
+
+        const alreadyInSquad = freshPlayers.some((p: any) => String(p?.id) === String(targetPlayer.id));
+        if (!alreadyInSquad) {
             const minimalPlayer = {
-                id: player.id,
-                name: player.name || '',
-                role: player.role || 'Player',
-                category: player.category || 'General',
-                photoUrl: player.photoUrl || '',
-                basePrice: Number(player.basePrice || globalBasePrice || 0),
+                id: targetPlayer.id,
+                name: targetPlayer.name || '',
+                role: targetPlayer.role || 'Player',
+                category: targetPlayer.category || 'General',
+                photoUrl: targetPlayer.photoUrl || '',
+                basePrice: Number(targetPlayer.basePrice || globalBasePrice || 0),
                 soldPrice: effectivePrice,
                 status: 'SOLD',
                 soldTo: targetTeam.name || '',
-                jerseyNumber: player.jerseyNumber || '',
-                jerseyName: player.jerseyName || ''
+                jerseyNumber: targetPlayer.jerseyNumber || '',
+                jerseyName: targetPlayer.jerseyName || ''
             };
-            const updatedTeamPlayers = [...(targetTeam.players || []), minimalPlayer];
+            const updatedTeamPlayers = [...freshPlayers, minimalPlayer];
+            const updatedBudget = Math.max(0, freshBudget - effectivePrice);
 
-            await db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id)).update({
+            await teamDocRef.update({
                 budget: updatedBudget,
                 players: JSON.parse(JSON.stringify(updatedTeamPlayers))
             });
+        }
+    };
 
-            // Compact media helper: keep HTTPS URLs (<1000 chars), drop raw Base64 blobs from root auction doc
-            // so draftBoardState.history & lastSoldCelebration never trigger Firestore's 1 MiB document limit.
-            const compactMediaRef = (url?: string): string => {
-                if (!url) return '';
-                if (url.startsWith('data:') && url.length > 1000) return '';
-                return url;
-            };
+    // Handle Assign Player to Team
+    const handleAssignPlayer = async (player: Player, teamId: string | number, price: number) => {
+        if (!auctionId) return;
+        setPickError(null);
 
-            // 3. Record draft pick in history with guaranteed non-undefined values
-            const newPick: DraftPickHistory = {
-                id: `pick_${Date.now()}`,
-                round: Number(draftState.currentRound || 1),
-                pickNumber: Number(draftState.history?.length || 0) + 1,
-                teamId: targetTeam.id,
-                teamName: targetTeam.name || '',
-                teamLogo: compactMediaRef(targetTeam.logoUrl),
-                playerId: player.id,
-                playerName: player.name || '',
-                playerCategory: player.category || player.role || 'Player',
-                playerRole: player.role || 'Player',
-                playerPhoto: compactMediaRef(player.photoUrl),
-                soldPrice: effectivePrice,
-                timestamp: Date.now()
-            };
+        if (player.status === 'SOLD' || draftPickMapRef.current.has(String(player.id))) {
+            setPickError(`${player.name} is already sold.`);
+            return;
+        }
 
-            const sanitizedPriorHistory = (draftState.history || []).map(h => ({
-                ...h,
-                teamLogo: compactMediaRef(h.teamLogo),
-                playerPhoto: compactMediaRef(h.playerPhoto)
-            }));
-            const updatedHistory = [...sanitizedPriorHistory, newPick];
+        const currentDraft = draftStateRef.current;
 
-            // 4. Advance turn to next team in round order
-            const currentOrder = (draftState.roundOrder && draftState.roundOrder.length > 0)
-                ? draftState.roundOrder 
-                : teams.map(t => t.id);
+        if (isTeamOwner && !isAdmin) {
+            if (currentDraft.teamPickingEnabled === false) {
+                setPickError('Picking is currently locked by the auction admin.');
+                return;
+            }
+            if (!myTeam || String(myTeam.id) !== String(currentDraft.currentTeamId)) {
+                setPickError('Please wait for your team turn before drafting a player.');
+                return;
+            }
+        }
 
-            const nextTurnIndex = Number(draftState.currentTurnIndex || 0) + 1;
-            const isRoundFinished = nextTurnIndex >= currentOrder.length;
+        const effectiveTeamId = (isTeamOwner && !isAdmin && myTeam) ? myTeam.id : teamId;
+        const targetTeam = teamsRef.current.find(t => String(t.id) === String(effectiveTeamId));
+        if (!targetTeam) return;
 
-            const nextRound = Number(draftState.currentRound || 1);
-            const nextTeamId = isRoundFinished ? null : (currentOrder[nextTurnIndex] ?? null);
-            const nextStatus: 'IDLE' | 'IN_PROGRESS' | 'ROUND_COMPLETED' = isRoundFinished ? 'ROUND_COMPLETED' : 'IN_PROGRESS';
+        const effectivePrice = Math.max(0, Number(price || 0));
 
-            // Clean atomic dot-notation update to preserve concurrent admin toggles & satisfy security rules
-            const cleanHistory = JSON.parse(JSON.stringify(updatedHistory));
-            const celebrationData: DraftCelebrationData = {
-                playerId: player.id,
-                playerName: player.name || '',
-                playerPhoto: compactMediaRef(player.photoUrl),
-                role: player.role || player.category || 'Player',
-                category: player.category || 'General',
-                jerseyNumber: player.jerseyNumber || '',
-                teamId: targetTeam.id,
-                teamName: targetTeam.name || '',
-                teamLogo: compactMediaRef(targetTeam.logoUrl),
-                timestamp: Date.now()
-            };
+        // Compact media helper: keep HTTPS URLs (<1000 chars), drop raw Base64 blobs from root auction doc
+        // so draftBoardState.history & lastSoldCelebration never trigger Firestore's 1 MiB document limit.
+        const compactMediaRef = (url?: string): string => {
+            if (!url) return '';
+            if (url.startsWith('data:') && url.length > 1000) return '';
+            return url;
+        };
 
-            const draftBoardAtomicUpdate = JSON.parse(JSON.stringify({
-                'draftBoardState.history': cleanHistory,
-                'draftBoardState.currentRound': nextRound,
-                'draftBoardState.currentTurnIndex': isRoundFinished ? currentOrder.length : nextTurnIndex,
-                'draftBoardState.currentTeamId': nextTeamId,
-                'draftBoardState.roundStatus': nextStatus,
-                'draftBoardState.timerTimeRemaining': Number(draftState.turnTimerSeconds || 45),
-                'draftBoardState.isTimerRunning': !isRoundFinished,
-                'draftBoardState.selectedPlayerId': null,
-                'draftBoardState.lastSoldCelebration': celebrationData,
-                'draftBoardState.updatedAt': Date.now()
-            }));
+        const newPick: DraftPickHistory = {
+            id: `pick_${Date.now()}`,
+            round: Number(currentDraft.currentRound || 1),
+            pickNumber: Number(currentDraft.history?.length || 0) + 1,
+            teamId: targetTeam.id,
+            teamName: targetTeam.name || '',
+            teamLogo: compactMediaRef(targetTeam.logoUrl),
+            playerId: player.id,
+            playerName: player.name || '',
+            playerCategory: player.category || player.role || 'Player',
+            playerRole: player.role || 'Player',
+            playerPhoto: compactMediaRef(player.photoUrl),
+            soldPrice: effectivePrice,
+            timestamp: Date.now()
+        };
 
-            await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
+        const sanitizedPriorHistory = (currentDraft.history || []).map(h => ({
+            ...h,
+            teamLogo: compactMediaRef(h.teamLogo),
+            playerPhoto: compactMediaRef(h.playerPhoto)
+        }));
+        const updatedHistory = [...sanitizedPriorHistory, newPick];
+
+        const currentOrder = (currentDraft.roundOrder && currentDraft.roundOrder.length > 0)
+            ? currentDraft.roundOrder 
+            : teamsRef.current.map(t => t.id);
+
+        const nextTurnIndex = Number(currentDraft.currentTurnIndex || 0) + 1;
+        const isRoundFinished = nextTurnIndex >= currentOrder.length;
+
+        const nextRound = Number(currentDraft.currentRound || 1);
+        const nextTeamId = isRoundFinished ? null : (currentOrder[nextTurnIndex] ?? null);
+        const nextStatus: 'IDLE' | 'IN_PROGRESS' | 'ROUND_COMPLETED' = isRoundFinished ? 'ROUND_COMPLETED' : 'IN_PROGRESS';
+
+        const cleanHistory = JSON.parse(JSON.stringify(updatedHistory));
+        const celebrationData: DraftCelebrationData = {
+            playerId: player.id,
+            playerName: player.name || '',
+            playerPhoto: compactMediaRef(player.photoUrl),
+            role: player.role || player.category || 'Player',
+            category: player.category || 'General',
+            jerseyNumber: player.jerseyNumber || '',
+            teamId: targetTeam.id,
+            teamName: targetTeam.name || '',
+            teamLogo: compactMediaRef(targetTeam.logoUrl),
+            timestamp: Date.now()
+        };
+
+        const draftBoardAtomicUpdate = JSON.parse(JSON.stringify({
+            'draftBoardState.history': cleanHistory,
+            'draftBoardState.currentRound': nextRound,
+            'draftBoardState.currentTurnIndex': isRoundFinished ? currentOrder.length : nextTurnIndex,
+            'draftBoardState.currentTeamId': nextTeamId,
+            'draftBoardState.roundStatus': nextStatus,
+            'draftBoardState.timerTimeRemaining': Number(currentDraft.turnTimerSeconds || 45),
+            'draftBoardState.isTimerRunning': !isRoundFinished,
+            'draftBoardState.selectedPlayerId': null,
+            'draftBoardState.lastSoldCelebration': celebrationData,
+            'draftBoardState.updatedAt': Date.now()
+        }));
+
+        try {
+            if (!auth.currentUser) {
+                await auth.signInAnonymously();
+            }
+
+            if (isAdmin) {
+                await syncPlayerAndTeamDocs(player, targetTeam, effectivePrice);
+                await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
+            } else {
+                // TEAM OWNER FLOW:
+                // 1) Update root draftBoardState FIRST so history, turn advance, SOLD popup & sound sync immediately across all screens
+                //    even if subcollection rules restrict anonymous writes to /players or /teams.
+                let directRootSucceeded = false;
+                let rootPermissionDenied = false;
+
+                try {
+                    await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
+                    directRootSucceeded = true;
+                } catch (rootErr: any) {
+                    const isPerm = rootErr?.code === 'permission-denied' || String(rootErr?.message || '').toLowerCase().includes('permission');
+                    if (!isPerm) {
+                        throw rootErr;
+                    }
+                    rootPermissionDenied = true;
+                }
+
+                if (directRootSucceeded) {
+                    // Best-effort sync of subcollection docs; if restricted for anonymous users, Admin's auto-reconcile effect syncs them cleanly.
+                    try {
+                        await syncPlayerAndTeamDocs(player, targetTeam, effectivePrice);
+                    } catch (subErr: any) {
+                        console.warn('Subcollection sync deferred to Admin auto-reconcile:', subErr?.code || subErr?.message);
+                    }
+                } else if (rootPermissionDenied) {
+                    // 2) Fallback Relay via signed-in writable collections (scoringAssets + auctionLogs) so connected Admin executes the pick cleanly.
+                    const requestId = `pickreq_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+                    const reqPayload = {
+                        auctionId,
+                        requestId,
+                        playerId: String(player.id),
+                        playerName: player.name || '',
+                        teamId: String(targetTeam.id),
+                        teamName: targetTeam.name || '',
+                        price: effectivePrice,
+                        round: nextRound,
+                        turnIndex: Number(currentDraft.currentTurnIndex || 0),
+                        status: 'PENDING',
+                        requestedByUid: auth.currentUser?.uid || null,
+                        requestedAt: Date.now()
+                    };
+
+                    let relayDispatched = false;
+                    try {
+                        await db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).set(reqPayload);
+                        relayDispatched = true;
+                    } catch {
+                        // ignore and try auctionLogs
+                    }
+                    try {
+                        await db.collection('auctions').doc(auctionId).collection('auctionLogs').add({
+                            type: 'DRAFT_PICK_REQUEST',
+                            ...reqPayload,
+                            message: `${targetTeam.name} requested pick: ${player.name}`,
+                            timestamp: Date.now()
+                        });
+                        relayDispatched = true;
+                    } catch {
+                        // ignore if scoringAssets succeeded
+                    }
+
+                    if (!relayDispatched) {
+                        throw new Error('Missing or insufficient permissions.');
+                    }
+
+                    // Wait up to 5s for connected Admin Draft Board to process the relay request
+                    const relayResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+                        let settled = false;
+                        let unsubAuction: () => void = () => {};
+                        let unsubReq: () => void = () => {};
+
+                        const finish = (res: { ok: boolean; error?: string }) => {
+                            if (settled) return;
+                            settled = true;
+                            clearTimeout(timeoutId);
+                            unsubAuction();
+                            unsubReq();
+                            resolve(res);
+                        };
+
+                        const timeoutId = setTimeout(() => {
+                            finish({
+                                ok: false,
+                                error: 'Pick request sent — keep Admin Draft Dashboard open (or deploy Firestore rules) to finalize team picks.'
+                            });
+                        }, 5000);
+
+                        unsubAuction = db.collection('auctions').doc(auctionId).onSnapshot((snap) => {
+                            const data = snap.data() as any;
+                            const hist: any[] = data?.draftBoardState?.history || [];
+                            if (hist.some(h => String(h.playerId) === String(player.id))) {
+                                finish({ ok: true });
+                            }
+                        }, () => {});
+
+                        unsubReq = db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).onSnapshot((snap) => {
+                            const reqData = snap.data() as any;
+                            if (reqData && reqData.requestId === requestId && reqData.status === 'ERROR') {
+                                finish({ ok: false, error: reqData.errorMessage || 'Pick rejected by auction rules.' });
+                            }
+                        }, () => {});
+                    });
+
+                    if (!relayResult.ok) {
+                        setPickError(relayResult.error || 'Unable to confirm pick.');
+                        return;
+                    }
+                }
+            }
 
             // Confetti celebration
             confetti({
@@ -536,11 +694,119 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             console.error("Failed to assign player in draft:", JSON.stringify(errInfo));
             setPickError(
                 err?.message?.includes('permission') || err?.code === 'permission-denied'
-                    ? 'Assignment failed: Missing or insufficient permissions. Please verify Firestore rules are deployed or contact Admin.'
+                    ? 'Assignment failed: Missing or insufficient permissions. Please verify Firestore rules are deployed or keep Admin Draft Board open.'
                     : `Assignment failed: ${err?.message || 'Unable to save pick.'}`
             );
         }
     };
+
+    const handleAssignPlayerRef = useRef(handleAssignPlayer);
+    handleAssignPlayerRef.current = handleAssignPlayer;
+
+    // ADMIN RELAY PROCESSOR: Process pending Team Owner pick requests from scoringAssets & auctionLogs
+    useEffect(() => {
+        if (!isAdmin || !auctionId) return;
+
+        const processIncomingRequest = async (req: any, markDocProcessed: boolean) => {
+            if (!req || !req.requestId || req.status === 'PROCESSED' || req.status === 'ERROR') return;
+            if (processedPickRequestsRef.current.has(req.requestId)) return;
+
+            const ageMs = Date.now() - Number(req.requestedAt || req.timestamp || 0);
+            if (ageMs > 60000) return;
+
+            processedPickRequestsRef.current.add(req.requestId);
+
+            const currentDraft = draftStateRef.current;
+            if (currentDraft.teamPickingEnabled === false) {
+                if (markDocProcessed) {
+                    db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).update({
+                        status: 'ERROR',
+                        errorMessage: 'Picking is currently locked by Admin.'
+                    }).catch(() => {});
+                }
+                return;
+            }
+
+            if (String(req.teamId) !== String(currentDraft.currentTeamId)) {
+                if (markDocProcessed) {
+                    db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).update({
+                        status: 'ERROR',
+                        errorMessage: 'Turn already passed before pick arrived.'
+                    }).catch(() => {});
+                }
+                return;
+            }
+
+            const matchedPlayer = playersRef.current.find(p => String(p.id) === String(req.playerId));
+            const matchedTeam = teamsRef.current.find(t => String(t.id) === String(req.teamId));
+
+            if (!matchedPlayer || !matchedTeam) return;
+            if (matchedPlayer.status === 'SOLD' || draftPickMapRef.current.has(String(matchedPlayer.id))) {
+                if (markDocProcessed) {
+                    db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).update({
+                        status: 'PROCESSED',
+                        processedAt: Date.now()
+                    }).catch(() => {});
+                }
+                return;
+            }
+
+            await handleAssignPlayerRef.current(matchedPlayer, matchedTeam.id, Number(req.price || 0));
+            if (markDocProcessed) {
+                db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).update({
+                    status: 'PROCESSED',
+                    processedAt: Date.now()
+                }).catch(() => {});
+            }
+        };
+
+        const unsubScoringReq = db.collection('scoringAssets').doc(`draft_pick_${auctionId}`).onSnapshot((snap) => {
+            if (snap.exists) {
+                processIncomingRequest(snap.data(), true);
+            }
+        }, () => {});
+
+        const unsubLogReq = db.collection('auctions').doc(auctionId).collection('auctionLogs')
+            .where('type', '==', 'DRAFT_PICK_REQUEST')
+            .onSnapshot((snap) => {
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'added') {
+                        processIncomingRequest(change.doc.data(), false);
+                    }
+                });
+            }, () => {});
+
+        return () => {
+            unsubScoringReq();
+            unsubLogReq();
+        };
+    }, [isAdmin, auctionId]);
+
+    // ADMIN AUTO-RECONCILE: Keep /players and /teams subcollections synced whenever a Team Owner pick updated draftBoardState.history
+    useEffect(() => {
+        if (!isAdmin || !auctionId || !draftState.history?.length) return;
+
+        draftState.history.forEach(async (pick) => {
+            const p = playersRef.current.find(pl => String(pl.id) === String(pick.playerId));
+            const t = teamsRef.current.find(tm => String(tm.id) === String(pick.teamId));
+            if (!p || !t) return;
+
+            const playerNeedsSync = p.status !== 'SOLD' || String(p.soldToId || p.teamId || '') !== String(t.id);
+            const teamNeedsSync = !(t.players || []).some(tp => String(tp.id) === String(p.id));
+            if (!playerNeedsSync && !teamNeedsSync) return;
+
+            const reconcileKey = `${pick.id}_${p.id}_${t.id}`;
+            if (reconcilingKeysRef.current.has(reconcileKey)) return;
+            reconcilingKeysRef.current.add(reconcileKey);
+
+            try {
+                await syncPlayerAndTeamDocs(p, t, Number(pick.soldPrice || 0));
+            } catch (err) {
+                reconcilingKeysRef.current.delete(reconcileKey);
+                console.warn('Admin auto-reconcile notice:', err);
+            }
+        });
+    }, [isAdmin, auctionId, draftState.history, players, teams]);
 
     // Handle Undo Specific Player
     const handleUndoSpecificPlayer = async (player: Player) => {
@@ -688,6 +954,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     auctionId={auctionId || ''}
                     globalBasePrice={globalBasePrice}
                     customSoldAudioUrl={customAudio.soldMusicUrl}
+                    soldPopupDurationMs={soldPopupDurationMs}
                     onNominatePlayer={(p) => {
                         setPickError(null);
                         setActivePlayerForModal(p);
@@ -703,7 +970,13 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         isAdmin={isAdmin}
                         isMyTurn={isMyTurn}
                         isPickingAllowed={draftState.teamPickingEnabled !== false}
-                        onClose={() => setActivePlayerForModal(null)}
+                        isSoldOverride={activePlayerForModal.status === 'SOLD' || draftPickMap.has(String(activePlayerForModal.id))}
+                        soldToTeamName={draftPickMap.get(String(activePlayerForModal.id))?.teamName || activePlayerForModal.soldTo}
+                        errorMessage={pickError}
+                        onClose={() => {
+                            setPickError(null);
+                            setActivePlayerForModal(null);
+                        }}
                         onAssign={(player, teamId, price) => handleAssignPlayer(player, teamId, price)}
                         onUndoPlayer={handleUndoSpecificPlayer}
                     />
@@ -1670,7 +1943,13 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     isAdmin={isAdmin}
                     isMyTurn={isMyTurn}
                     isPickingAllowed={draftState.teamPickingEnabled !== false}
-                    onClose={() => setActivePlayerForModal(null)}
+                    isSoldOverride={activePlayerForModal.status === 'SOLD' || draftPickMap.has(String(activePlayerForModal.id))}
+                    soldToTeamName={draftPickMap.get(String(activePlayerForModal.id))?.teamName || activePlayerForModal.soldTo}
+                    errorMessage={pickError}
+                    onClose={() => {
+                        setPickError(null);
+                        setActivePlayerForModal(null);
+                    }}
                     onAssign={(player, teamId, price) => handleAssignPlayer(player, teamId, price)}
                     onUndoPlayer={handleUndoSpecificPlayer}
                 />

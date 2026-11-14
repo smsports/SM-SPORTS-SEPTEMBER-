@@ -50,13 +50,17 @@ function getAudioContext(): AudioContext | null {
     }
 }
 
+export function unlockDraftAudio(): void {
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+    }
+}
+
 // Unlock audio on first user interaction
 if (typeof window !== 'undefined') {
     const unlockAudio = () => {
-        const ctx = getAudioContext();
-        if (ctx && ctx.state === 'suspended') {
-            ctx.resume().catch(() => {});
-        }
+        unlockDraftAudio();
         window.removeEventListener('click', unlockAudio);
         window.removeEventListener('touchstart', unlockAudio);
         window.removeEventListener('keydown', unlockAudio);

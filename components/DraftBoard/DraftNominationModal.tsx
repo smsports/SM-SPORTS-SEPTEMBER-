@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { Player, Team } from '../../types';
 import { 
     X, Check, Shield, Wallet, Trophy, User, CheckCircle2, 
-    Crown, Sparkles, AlertCircle, Tag, Undo2, Lock
+    Crown, Sparkles, AlertCircle, Tag, Undo2, Lock, Loader2
 } from 'lucide-react';
+import { unlockDraftAudio } from '../../utils/draftAudio';
 
 interface Props {
     player: Player;
@@ -13,8 +14,11 @@ interface Props {
     isAdmin: boolean;
     isMyTurn: boolean;
     isPickingAllowed?: boolean;
+    isSoldOverride?: boolean;
+    soldToTeamName?: string;
+    errorMessage?: string | null;
     onClose: () => void;
-    onAssign: (player: Player, teamId: string | number, price: number) => void;
+    onAssign: (player: Player, teamId: string | number, price: number) => Promise<void> | void;
     onUndoPlayer?: (player: Player) => void;
 }
 
@@ -26,15 +30,32 @@ export const DraftNominationModal: React.FC<Props> = ({
     isAdmin,
     isMyTurn,
     isPickingAllowed = true,
+    isSoldOverride,
+    soldToTeamName,
+    errorMessage,
     onClose,
     onAssign,
     onUndoPlayer
 }) => {
-    const isSold = player.status === 'SOLD';
-    const defaultTeamId = currentTurnTeam?.id ?? myTeam?.id ?? teams[0]?.id ?? '';
+    const isSold = isSoldOverride ?? (player.status === 'SOLD');
+    const defaultTeamId = isAdmin
+        ? (currentTurnTeam?.id ?? teams[0]?.id ?? '')
+        : (myTeam?.id ?? currentTurnTeam?.id ?? teams[0]?.id ?? '');
     const [selectedTeamId, setSelectedTeamId] = useState<string | number>(defaultTeamId);
+    const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
     const selectedTeam = teams.find(t => String(t.id) === String(selectedTeamId));
+
+    const handlePickSubmit = async (targetTeamId: string | number) => {
+        if (isSubmitting || isSold) return;
+        unlockDraftAudio();
+        setIsSubmitting(true);
+        try {
+            await onAssign(player, targetTeamId, 0);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
@@ -42,7 +63,8 @@ export const DraftNominationModal: React.FC<Props> = ({
                 {/* Close Button */}
                 <button
                     onClick={onClose}
-                    className="absolute top-5 right-5 p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition-all"
+                    disabled={isSubmitting}
+                    className="absolute top-5 right-5 p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition-all disabled:opacity-50"
                 >
                     <X className="w-5 h-5" />
                 </button>
@@ -105,12 +127,20 @@ export const DraftNominationModal: React.FC<Props> = ({
                     </div>
                 </div>
 
+                {/* Inline Error Feedback */}
+                {errorMessage && (
+                    <div className="p-3.5 rounded-2xl bg-red-950/80 border border-red-500/70 text-red-100 text-xs font-bold flex items-start gap-2.5 shadow-lg">
+                        <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                        <span>{errorMessage}</span>
+                    </div>
+                )}
+
                 {/* If already SOLD */}
                 {isSold ? (
                     <div className="p-4 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-3">
                         <div className="flex items-center justify-between text-xs">
                             <span className="text-zinc-400 font-bold uppercase">Drafted To Team:</span>
-                            <span className="text-amber-400 font-black uppercase text-sm">{player.soldTo || 'Assigned'}</span>
+                            <span className="text-amber-400 font-black uppercase text-sm">{soldToTeamName || player.soldTo || 'Assigned'}</span>
                         </div>
                         {isAdmin && onUndoPlayer && (
                             <button
@@ -141,6 +171,7 @@ export const DraftNominationModal: React.FC<Props> = ({
                                     <select
                                         value={selectedTeamId}
                                         onChange={(e) => setSelectedTeamId(e.target.value)}
+                                        disabled={isSubmitting}
                                         className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white font-bold text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     >
                                         {teams.map(t => (
@@ -154,10 +185,20 @@ export const DraftNominationModal: React.FC<Props> = ({
                             </div>
 
                             <button
-                                onClick={() => onAssign(player, selectedTeamId, 0)}
-                                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-600/25 active:scale-95 transition-all flex items-center justify-center gap-2"
+                                type="button"
+                                disabled={isSubmitting}
+                                onClick={() => handlePickSubmit(selectedTeamId)}
+                                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-60 text-white font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-600/25 active:scale-95 transition-all flex items-center justify-center gap-2"
                             >
-                                <Check className="w-4 h-4 stroke-[3]" /> Confirm Draft Pick for {selectedTeam?.name || 'Selected Team'}
+                                {isSubmitting ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" /> Confirming Pick...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Check className="w-4 h-4 stroke-[3]" /> Confirm Draft Pick for {selectedTeam?.name || 'Selected Team'}
+                                    </>
+                                )}
                             </button>
                         </div>
                     ) : isMyTurn ? (
@@ -171,10 +212,18 @@ export const DraftNominationModal: React.FC<Props> = ({
                                     Draft this player directly to your squad:
                                 </p>
                                 <button
-                                    onClick={() => onAssign(player, myTeam?.id ?? currentTurnTeam?.id ?? selectedTeamId, 0)}
-                                    className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all"
+                                    type="button"
+                                    disabled={isSubmitting}
+                                    onClick={() => handlePickSubmit(myTeam?.id ?? currentTurnTeam?.id ?? selectedTeamId)}
+                                    className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-black font-black text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
                                 >
-                                    Pick for {currentTurnTeam?.name || myTeam?.name}
+                                    {isSubmitting ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" /> Drafting Player...
+                                        </>
+                                    ) : (
+                                        <>Pick for {myTeam?.name || currentTurnTeam?.name}</>
+                                    )}
                                 </button>
                             </div>
                         ) : (

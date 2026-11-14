@@ -54,6 +54,7 @@ interface Props {
     auctionId: string;
     globalBasePrice?: number;
     customSoldAudioUrl?: string;
+    soldPopupDurationMs?: number;
     onNominatePlayer: (player: Player) => void;
     isDark?: boolean;
 }
@@ -68,6 +69,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
     auctionId,
     globalBasePrice = 100,
     customSoldAudioUrl,
+    soldPopupDurationMs,
     onNominatePlayer,
     isDark = true
 }) => {
@@ -1314,13 +1316,18 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                             <div className="mt-2 pt-1 border-t border-white/10">
                                                 {isSold ? (
                                                     <span className="text-[8px] text-zinc-500 block text-center uppercase font-bold">Unavailable</span>
-                                                ) : isMyTurn ? (
+                                                ) : canPickNow ? (
                                                     <button
+                                                        type="button"
                                                         onClick={() => onNominatePlayer(player)}
                                                         className="w-full py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider shadow active:scale-95 transition-all flex items-center justify-center gap-1"
                                                     >
                                                         <Check className="w-3 h-3 stroke-[3]" /> Draft Now
                                                     </button>
+                                                ) : isMyTurn && !isPickingAllowed ? (
+                                                    <div className="py-1 rounded bg-amber-500/20 border border-amber-500/40 text-center text-[8px] font-bold text-amber-300 uppercase flex items-center justify-center gap-1">
+                                                        <Lock className="w-2.5 h-2.5" /> Admin Only
+                                                    </div>
                                                 ) : (
                                                     <span className="text-[9px] text-emerald-400 block text-center uppercase font-bold">★ Target Ready</span>
                                                 )}
@@ -1405,7 +1412,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
             {/* CONFIGURABLE SOLD CELEBRATION POPUP */}
             <SoldCelebrationPopup
                 celebrationData={draftState.lastSoldCelebration}
-                durationMs={Math.max(0, Number(draftState.soldPopupDurationSeconds ?? 5)) * 1000}
+                durationMs={soldPopupDurationMs ?? (Math.max(0, Number(draftState.soldPopupDurationSeconds ?? 5)) * 1000)}
                 customSoldAudioUrl={customSoldAudioUrl ?? draftState.customAudio?.soldMusicUrl}
                 players={players}
                 teams={teams}
