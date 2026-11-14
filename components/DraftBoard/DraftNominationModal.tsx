@@ -14,6 +14,7 @@ interface Props {
     isAdmin: boolean;
     isMyTurn: boolean;
     isPickingAllowed?: boolean;
+    isPickRequestMode?: boolean;
     isSoldOverride?: boolean;
     soldToTeamName?: string;
     errorMessage?: string | null;
@@ -30,6 +31,7 @@ export const DraftNominationModal: React.FC<Props> = ({
     isAdmin,
     isMyTurn,
     isPickingAllowed = true,
+    isPickRequestMode = false,
     isSoldOverride,
     soldToTeamName,
     errorMessage,
@@ -209,7 +211,9 @@ export const DraftNominationModal: React.FC<Props> = ({
                                     ★ It is your team&apos;s turn to pick!
                                 </p>
                                 <p className="text-[11px] text-zinc-300">
-                                    Draft this player directly to your squad:
+                                    {isPickRequestMode
+                                        ? 'Send a pick request to the Admin for approval:'
+                                        : 'Draft this player directly to your squad:'}
                                 </p>
                                 <button
                                     type="button"
@@ -219,10 +223,10 @@ export const DraftNominationModal: React.FC<Props> = ({
                                 >
                                     {isSubmitting ? (
                                         <>
-                                            <Loader2 className="w-4 h-4 animate-spin" /> Drafting Player...
+                                            <Loader2 className="w-4 h-4 animate-spin" /> {isPickRequestMode ? 'Sending Pick Request...' : 'Drafting Player...'}
                                         </>
                                     ) : (
-                                        <>Pick for {myTeam?.name || currentTurnTeam?.name}</>
+                                        <>{isPickRequestMode ? `Send Pick Request (${myTeam?.name || currentTurnTeam?.name})` : `Pick for ${myTeam?.name || currentTurnTeam?.name}`}</>
                                     )}
                                 </button>
                             </div>

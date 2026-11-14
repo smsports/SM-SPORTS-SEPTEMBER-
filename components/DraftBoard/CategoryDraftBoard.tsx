@@ -83,16 +83,25 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     const [isTimeUpDismissed, setIsTimeUpDismissed] = useState<boolean>(false);
     const prevSecondsRef = useRef<number>(draftState.timerTimeRemaining);
     const [pickError, setPickError] = useState<string | null>(null);
+    const [pickNotice, setPickNotice] = useState<string | null>(null);
     const [pendingPickRequests, setPendingPickRequests] = useState<PendingDraftPickRequest[]>([]);
     const [lastProcessedRequestNotice, setLastProcessedRequestNotice] = useState<string | null>(null);
     const dismissedRequestIdsRef = useRef<Set<string>>(new Set());
     const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pickNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const showProcessedNotice = (text: string) => {
         setLastProcessedRequestNotice(text);
         if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
         noticeTimerRef.current = setTimeout(() => {
             setLastProcessedRequestNotice(null);
         }, 8000);
+    };
+    const showPickNotice = (text: string) => {
+        setPickNotice(text);
+        if (pickNoticeTimerRef.current) clearTimeout(pickNoticeTimerRef.current);
+        pickNoticeTimerRef.current = setTimeout(() => {
+            setPickNotice(null);
+        }, 7000);
     };
     const [activeUnsoldBanner, setActiveUnsoldBanner] = useState<{
         playerName: string;
@@ -599,20 +608,22 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
             } else {
                 // TEAM OWNER FLOW:
-                // 1) Update root draftBoardState FIRST so history, turn advance, SOLD popup & sound sync immediately across all screens
-                //    even if subcollection rules restrict anonymous writes to /players or /teams.
+                const isApprovalRequired = currentDraft.pickRequestApprovalEnabled === true;
                 let directRootSucceeded = false;
-                let rootPermissionDenied = false;
+                let shouldDispatchRelay = isApprovalRequired;
 
-                try {
-                    await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
-                    directRootSucceeded = true;
-                } catch (rootErr: any) {
-                    const isPerm = rootErr?.code === 'permission-denied' || String(rootErr?.message || '').toLowerCase().includes('permission');
-                    if (!isPerm) {
-                        throw rootErr;
+                if (!isApprovalRequired) {
+                    // 1) Update root draftBoardState FIRST when direct picking is active so history, turn advance, SOLD popup & sound sync immediately
+                    try {
+                        await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
+                        directRootSucceeded = true;
+                    } catch (rootErr: any) {
+                        const isPerm = rootErr?.code === 'permission-denied' || String(rootErr?.message || '').toLowerCase().includes('permission');
+                        if (!isPerm) {
+                            throw rootErr;
+                        }
+                        shouldDispatchRelay = true;
                     }
-                    rootPermissionDenied = true;
                 }
 
                 if (directRootSucceeded) {
@@ -622,8 +633,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     } catch (subErr: any) {
                         console.warn('Subcollection sync deferred to Admin auto-reconcile:', subErr?.code || subErr?.message);
                     }
-                } else if (rootPermissionDenied) {
-                    // 2) Fallback Relay via signed-in writable collections (scoringAssets + auctionLogs) + BroadcastChannel so connected Admin executes & displays the pick cleanly.
+                } else if (shouldDispatchRelay) {
+                    // 2) Dispatch Pick Request to Admin Panel via signed-in writable collections (scoringAssets + auctionLogs) + BroadcastChannel.
                     const requestId = `pickreq_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
                     const reqPayload = {
                         auctionId,
@@ -636,6 +647,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         round: nextRound,
                         turnIndex: Number(currentDraft.currentTurnIndex || 0),
                         status: 'PENDING',
+                        requiresApproval: isApprovalRequired,
                         requestedByUid: auth.currentUser?.uid || null,
                         requestedAt: Date.now()
                     };
@@ -673,7 +685,14 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         throw new Error('Missing or insufficient permissions.');
                     }
 
-                    // Wait up to 8s for connected Admin Draft Board to process the relay request
+                    // When Admin Pick Request Approval Mode is ON, return immediately with a positive notice and wait for Admin approval
+                    if (isApprovalRequired) {
+                        setActivePlayerForModal(null);
+                        showPickNotice(`Pick request sent to Admin for approval: ${player.name} (${targetTeam.name}). Waiting for Admin to mark SOLD.`);
+                        return { ok: true };
+                    }
+
+                    // Otherwise wait up to 8s for connected Admin Draft Board to auto-finalize the relay request
                     const relayResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
                         let settled = false;
                         let unsubAuction: () => void = () => {};
@@ -799,8 +818,19 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         setPendingPickRequests(prev => {
             const idx = prev.findIndex(r => r.requestId === req.requestId);
             if (idx >= 0) {
+                const existing = prev[idx];
+                if (
+                    existing.status === req.status &&
+                    existing.errorMessage === req.errorMessage &&
+                    existing.requiresApproval === req.requiresApproval &&
+                    existing.playerName === req.playerName &&
+                    existing.teamName === req.teamName &&
+                    existing.logDocId === (req.logDocId ?? existing.logDocId)
+                ) {
+                    return prev;
+                }
                 const copy = [...prev];
-                copy[idx] = { ...copy[idx], ...req };
+                copy[idx] = { ...existing, ...req };
                 return copy;
             }
             return [req, ...prev];
@@ -845,6 +875,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             return;
         }
 
+        const requiresManualApproval = draftStateRef.current.pickRequestApprovalEnabled === true || req.requiresApproval === true;
+
         const normalizedReq: PendingDraftPickRequest = {
             requestId,
             auctionId,
@@ -858,11 +890,15 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             status: 'PENDING',
             requestedAt: rawTs || Date.now(),
             source,
-            logDocId: req._logDocId || req.logDocId || (source === 'AUCTION_LOGS' && req.id ? String(req.id) : undefined)
+            logDocId: req._logDocId || req.logDocId || (source === 'AUCTION_LOGS' && req.id ? String(req.id) : undefined),
+            requiresApproval: requiresManualApproval
         };
 
         // Always make incoming request visibly appear in Admin Panel immediately
         upsertPendingRequest(normalizedReq);
+
+        // When Pick Request Approval Mode is active, do NOT auto-finalize — keep visible for Admin Approve/Dismiss
+        if (requiresManualApproval) return;
 
         // Wait until players & teams collections are hydrated before auto-finalizing
         if (!matchedPlayer || !matchedTeam) return;
@@ -1051,14 +1087,20 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             const isSold = (mp?.status === 'SOLD') || draftPickMap.has(String(req.playerId));
             if (isSold) {
                 soldIds.add(req.requestId);
-            } else if (!processedPickRequestsRef.current.has(req.requestId) && mp && teams.some(t => String(t.id) === String(req.teamId))) {
+            } else if (
+                !req.requiresApproval &&
+                draftState.pickRequestApprovalEnabled !== true &&
+                !processedPickRequestsRef.current.has(req.requestId) &&
+                mp &&
+                teams.some(t => String(t.id) === String(req.teamId))
+            ) {
                 enqueueAndProcessPickRequestRef.current(req, req.source || 'AUCTION_LOGS');
             }
         });
         if (soldIds.size > 0) {
             setPendingPickRequests(prev => prev.filter(r => !soldIds.has(r.requestId)));
         }
-    }, [isAdmin, pendingPickRequests, players, teams, draftPickMap]);
+    }, [isAdmin, pendingPickRequests, players, teams, draftPickMap, draftState.pickRequestApprovalEnabled]);
 
     // ADMIN AUTO-RECONCILE: Keep /players and /teams subcollections synced whenever a Team Owner pick updated draftBoardState.history
     useEffect(() => {
@@ -1211,6 +1253,17 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     if (isTeamOwner && myTeam && !isProjectorView && !isOBSView) {
         return (
             <div className="flex flex-col h-full min-h-0 w-full overflow-hidden relative">
+                {pickNotice && (
+                    <div className="shrink-0 mx-3 mt-2 px-4 py-2.5 rounded-xl bg-emerald-950/95 border border-emerald-500 text-emerald-100 text-xs font-bold flex items-center justify-between gap-3 shadow-xl z-50">
+                        <div className="flex items-center gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <span>{pickNotice}</span>
+                        </div>
+                        <button type="button" onClick={() => setPickNotice(null)} className="p-1 hover:bg-emerald-800/60 rounded-lg text-emerald-200">
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                )}
                 {pickError && (
                     <div className="shrink-0 mx-3 mt-2 px-4 py-2.5 rounded-xl bg-red-950/95 border border-red-500 text-red-100 text-xs font-bold flex items-center justify-between gap-3 shadow-xl z-50">
                         <div className="flex items-center gap-2">
@@ -1235,6 +1288,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     soldPopupDurationMs={soldPopupDurationMs}
                     onNominatePlayer={(p) => {
                         setPickError(null);
+                        setPickNotice(null);
                         setActivePlayerForModal(p);
                     }}
                     isDark={isDark}
@@ -1248,6 +1302,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         isAdmin={isAdmin}
                         isMyTurn={isMyTurn}
                         isPickingAllowed={draftState.teamPickingEnabled !== false}
+                        isPickRequestMode={draftState.pickRequestApprovalEnabled === true}
                         isSoldOverride={activePlayerForModal.status === 'SOLD' || draftPickMap.has(String(activePlayerForModal.id))}
                         soldToTeamName={draftPickMap.get(String(activePlayerForModal.id))?.teamName || activePlayerForModal.soldTo}
                         errorMessage={pickError}
@@ -2281,6 +2336,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     isAdmin={isAdmin}
                     isMyTurn={isMyTurn}
                     isPickingAllowed={draftState.teamPickingEnabled !== false}
+                    isPickRequestMode={draftState.pickRequestApprovalEnabled === true}
                     isSoldOverride={activePlayerForModal.status === 'SOLD' || draftPickMap.has(String(activePlayerForModal.id))}
                     soldToTeamName={draftPickMap.get(String(activePlayerForModal.id))?.teamName || activePlayerForModal.soldTo}
                     errorMessage={pickError}

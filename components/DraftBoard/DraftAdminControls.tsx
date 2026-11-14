@@ -605,7 +605,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                             <Sparkles className="w-4 h-4 text-amber-400" /> Team Pick Requests ({pendingPickRequests.length})
                         </h4>
                         <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500 text-black">
-                            Action Needed
+                            Approve Queue
                         </span>
                     </div>
                     <div className="space-y-2">
@@ -730,6 +730,42 @@ export const DraftAdminControls: React.FC<Props> = ({
                                     </option>
                                 ))}
                             </select>
+                        </div>
+
+                        {/* Quick Toggle: Pick Request Approval Mode */}
+                        <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-black/50 border border-zinc-800">
+                            <div className="min-w-0">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-white">
+                                    Pick Request Mode
+                                </p>
+                                <p className="text-[8.5px] text-zinc-400 truncate">
+                                    {draftState.pickRequestApprovalEnabled
+                                        ? 'Team picks wait for Admin Approve'
+                                        : 'Team picks mark SOLD directly'}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    if (!auctionId) return;
+                                    await db.collection('auctions').doc(auctionId).update({
+                                        'draftBoardState.pickRequestApprovalEnabled': !draftState.pickRequestApprovalEnabled,
+                                        'draftBoardState.updatedAt': Date.now()
+                                    });
+                                }}
+                                className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition-all shrink-0 border ${
+                                    draftState.pickRequestApprovalEnabled
+                                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 shadow-md shadow-emerald-600/20'
+                                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
+                                }`}
+                                title="When ON, Team Owner picks send an Approve Request to the Admin Panel before marking SOLD"
+                            >
+                                {draftState.pickRequestApprovalEnabled ? (
+                                    <><Check className="w-3 h-3 stroke-[3]" /> ON</>
+                                ) : (
+                                    <>OFF</>
+                                )}
+                            </button>
                         </div>
 
                         {/* Turn Timer Controls */}
@@ -1267,6 +1303,48 @@ export const DraftAdminControls: React.FC<Props> = ({
                                         <Lock className="w-3.5 h-3.5" />
                                         <span>LOCKED</span>
                                     </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 2B. PICK REQUEST APPROVAL MODE */}
+                    <div className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-2.5 shadow-md">
+                        <div className="flex items-center justify-between gap-2">
+                            <div>
+                                <h4 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
+                                    <CheckCircle2 className={`w-4 h-4 ${draftState.pickRequestApprovalEnabled ? 'text-emerald-400' : 'text-zinc-500'}`} />
+                                    Pick Request Approval
+                                </h4>
+                                <p className="text-[9px] text-zinc-400 mt-0.5">
+                                    {draftState.pickRequestApprovalEnabled
+                                        ? 'Team picks appear in Admin Panel for approval before SOLD'
+                                        : 'Team picks bypass Admin approval when permitted'}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    if (!auctionId) return;
+                                    await db.collection('auctions').doc(auctionId).update({
+                                        'draftBoardState.pickRequestApprovalEnabled': !draftState.pickRequestApprovalEnabled,
+                                        'draftBoardState.updatedAt': Date.now()
+                                    });
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md active:scale-95 shrink-0 ${
+                                    draftState.pickRequestApprovalEnabled
+                                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30 border border-emerald-400'
+                                        : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700'
+                                }`}
+                                title="Require Admin approval whenever a Team Owner picks a player"
+                            >
+                                {draftState.pickRequestApprovalEnabled ? (
+                                    <>
+                                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                        <span>ENABLED</span>
+                                    </>
+                                ) : (
+                                    <span>DISABLED</span>
                                 )}
                             </button>
                         </div>

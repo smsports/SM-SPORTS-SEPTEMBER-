@@ -123,6 +123,7 @@ export interface AuctionLog {
   turnIndex?: number;
   status?: 'PENDING' | 'PROCESSED' | 'ERROR';
   requestedAt?: number;
+  requiresApproval?: boolean;
 }
 
 export interface PendingDraftPickRequest {
@@ -140,6 +141,7 @@ export interface PendingDraftPickRequest {
   errorMessage?: string;
   source?: 'SCORING_ASSETS' | 'AUCTION_LOGS' | 'BROADCAST';
   logDocId?: string;
+  requiresApproval?: boolean;
 }
 
 export interface TradeRecord {
@@ -360,6 +362,7 @@ export interface DraftBoardState {
   autoAllotEnabled?: boolean; // When true, clicking on a player in draft board auto-allots to the picking team
   targetPickingTeamId?: string | number | 'CURRENT_TURN'; // Which team the player picking round is for
   teamPickingEnabled?: boolean; // Admin toggle to allow or disable player picking in team login
+  pickRequestApprovalEnabled?: boolean; // Admin toggle: require manual Admin approval for team picks
   lastSoldCelebration?: DraftCelebrationData | null; // Configurable broadcast sold celebration popup
   lastUnsoldEvent?: DraftUnsoldEventData | null; // Unsold player announcement event
   soldPopupDurationSeconds?: number; // Configurable duration in seconds (default 5, 0 = Off)

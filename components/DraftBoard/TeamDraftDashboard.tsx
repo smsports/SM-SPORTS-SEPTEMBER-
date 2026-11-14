@@ -147,8 +147,9 @@ export const TeamDraftDashboard: React.FC<Props> = ({
     // Is it my team's turn?
     const isMyTurn = String(draftState.currentTeamId) === String(myTeam.id) && draftState.roundStatus === 'IN_PROGRESS';
 
-    // Admin toggle for team self-picking permission
+    // Admin toggle for team self-picking permission & pick request approval mode
     const isPickingAllowed = draftState.teamPickingEnabled !== false;
+    const isPickRequestMode = draftState.pickRequestApprovalEnabled === true;
     const canPickNow = isMyTurn && isPickingAllowed;
 
     // Current turn team
@@ -365,7 +366,11 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                             isPickingAllowed ? (
                                 <div className="flex-1 md:flex-initial px-4 py-2 rounded-xl bg-emerald-500 text-black font-black text-xs md:text-sm uppercase tracking-wider shadow-lg border-2 border-emerald-200 flex items-center gap-2 animate-pulse">
                                     <Sparkles className="w-4 h-4 fill-black text-black shrink-0" />
-                                    <span className="text-black font-black">YOUR TURN TO PICK! ({draftState.timerTimeRemaining}s)</span>
+                                    <span className="text-black font-black">
+                                        {isPickRequestMode
+                                            ? `YOUR TURN TO REQUEST PICK! (${draftState.timerTimeRemaining}s)`
+                                            : `YOUR TURN TO PICK! (${draftState.timerTimeRemaining}s)`}
+                                    </span>
                                 </div>
                             ) : (
                                 <div className="flex-1 md:flex-initial px-4 py-2 rounded-xl bg-amber-400 text-black font-black text-xs md:text-sm uppercase tracking-wider shadow-lg border-2 border-amber-200 flex items-center gap-2">
@@ -785,7 +790,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                         }}
                                                                         className="w-full py-0.5 rounded bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[8px] uppercase tracking-wider shadow flex items-center justify-center gap-0.5 active:scale-95 transition-all"
                                                                     >
-                                                                        <Check className="w-2.5 h-2.5 stroke-[3]" /> Draft
+                                                                        <Check className="w-2.5 h-2.5 stroke-[3]" /> {isPickRequestMode ? 'Request' : 'Draft'}
                                                                     </button>
                                                                 ) : isMyTurn && !isPickingAllowed ? (
                                                                     <div className="py-0.2 rounded bg-amber-500/20 border border-amber-500/30 text-center text-[7px] font-bold text-amber-300 uppercase flex items-center justify-center gap-0.5">
@@ -957,7 +962,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                             }}
                                                                             className="w-full py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider shadow-md flex items-center justify-center gap-1 active:scale-95 transition-all"
                                                                         >
-                                                                            <Check className="w-3 h-3 stroke-[3]" /> Draft Now
+                                                                            <Check className="w-3 h-3 stroke-[3]" /> {isPickRequestMode ? 'Request Pick' : 'Draft Now'}
                                                                         </button>
                                                                     ) : isMyTurn && !isPickingAllowed ? (
                                                                         <div className="py-1 rounded bg-amber-500/20 border border-amber-500/40 text-center text-[8px] font-bold text-amber-300 uppercase flex items-center justify-center gap-1">
@@ -1322,7 +1327,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                         onClick={() => onNominatePlayer(player)}
                                                         className="w-full py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider shadow active:scale-95 transition-all flex items-center justify-center gap-1"
                                                     >
-                                                        <Check className="w-3 h-3 stroke-[3]" /> Draft Now
+                                                        <Check className="w-3 h-3 stroke-[3]" /> {isPickRequestMode ? 'Request Pick' : 'Draft Now'}
                                                     </button>
                                                 ) : isMyTurn && !isPickingAllowed ? (
                                                     <div className="py-1 rounded bg-amber-500/20 border border-amber-500/40 text-center text-[8px] font-bold text-amber-300 uppercase flex items-center justify-center gap-1">
