@@ -25,6 +25,7 @@ import { playCountdownTickSound, playHeartbeatSound, playTimeUpSound, playUnsold
 
 interface Props {
     isAdmin?: boolean;
+    isCurator?: boolean;
     isTeamOwner?: boolean;
     myTeam?: Team | null;
     isProjectorView?: boolean;
@@ -34,6 +35,7 @@ interface Props {
 
 export const CategoryDraftBoard: React.FC<Props> = ({
     isAdmin = false,
+    isCurator = false,
     isTeamOwner = false,
     myTeam = null,
     isProjectorView = false,
@@ -187,12 +189,88 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         }
     }, [draftState.lastUnsoldEvent?.timestamp, customAudio?.unsoldMusicUrl]);
 
+    const isPermissionErr = (err: any) =>
+        err?.code === 'permission-denied' ||
+        String(err?.message || '').toLowerCase().includes('permission');
+
+    const dispatchCuratorRelay = async (action: string, data?: Record<string, any>) => {
+        if (!auctionId) return;
+        try {
+            if (!auth.currentUser) {
+                await auth.signInAnonymously();
+            }
+        } catch {
+            // proceed best-effort
+        }
+        const actionId = `cur_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const cleanPayload = JSON.parse(JSON.stringify({
+            actionId,
+            auctionId,
+            action,
+            data: data || {},
+            status: 'PENDING',
+            requestedByUid: auth.currentUser?.uid || null,
+            requestedAt: Date.now()
+        }));
+
+        let dispatched = false;
+        try {
+            await db.collection('scoringAssets').doc(`curator_action_${auctionId}`).set(cleanPayload);
+            dispatched = true;
+        } catch (e) {
+            console.warn('Curator relay scoringAssets dispatch skipped:', e);
+        }
+        try {
+            await db.collection('auctions').doc(auctionId).collection('auctionLogs').add({
+                type: 'CURATOR_ACTION',
+                ...cleanPayload,
+                message: `Curator action: ${action}`,
+                timestamp: Date.now()
+            });
+            dispatched = true;
+        } catch (e) {
+            console.warn('Curator relay auctionLogs dispatch skipped:', e);
+        }
+        try {
+            if (typeof BroadcastChannel !== 'undefined') {
+                const ch = new BroadcastChannel(`sm_curator_action_${auctionId}`);
+                ch.postMessage({ type: 'CURATOR_ACTION', payload: cleanPayload });
+                ch.close();
+                dispatched = true;
+            }
+        } catch {
+            // optional
+        }
+
+        if (!dispatched) {
+            setPickError('Permission denied: Could not save or relay Curator action. Please ensure Admin Dashboard is open or sign in.');
+            throw new Error('Missing or insufficient permissions.');
+        }
+
+        if (action !== 'UPDATE_AUCTION_FIELDS') {
+            showProcessedNotice(`Curator command (${action.replace(/_/g, ' ')}) sent to Admin Console.`);
+        }
+    };
+
+    const updateAuctionFieldsWithRelay = async (fields: Record<string, any>) => {
+        if (!auctionId) return;
+        try {
+            await db.collection('auctions').doc(auctionId).update(fields);
+        } catch (err: any) {
+            if (isCurator && isPermissionErr(err)) {
+                await dispatchCuratorRelay('UPDATE_AUCTION_FIELDS', { fields });
+            } else {
+                throw err;
+            }
+        }
+    };
+
     // Reset Turn Timer handler
     const handleResetTimer = async () => {
         if (!auctionId) return;
         const defaultSec = Number(draftState.turnTimerSeconds || 45);
         setIsTimeUpDismissed(false);
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionFieldsWithRelay({
             'draftBoardState.timerTimeRemaining': defaultSec,
             'draftBoardState.isTimerRunning': true,
             'draftBoardState.roundStatus': 'IN_PROGRESS',
@@ -216,7 +294,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     const handleSwitchViewMode = async (mode: 'GRID' | 'TABLE') => {
         setViewMode(mode);
         if (isAdmin && auctionId) {
-            await db.collection('auctions').doc(auctionId).update({
+            await updateAuctionFieldsWithRelay({
                 'draftBoardState.displayMode': mode,
                 'draftBoardState.updatedAt': Date.now()
             }).catch(() => {});
@@ -268,19 +346,20 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         window.open(`${window.location.origin}/#/obs-overlay/${auctionId}`, '_blank');
     };
 
-    // Turn timer effect for active timer
+    // Turn timer effect for active timer (Curator defers to active Admin unless Admin update timestamp is >2.5s stale)
     useEffect(() => {
         if (!isAdmin || !draftState.isTimerRunning) return;
 
         const interval = setInterval(() => {
+            if (isCurator && Date.now() - Number(draftStateRef.current.updatedAt || 0) < 2500) {
+                return;
+            }
             if (draftState.timerTimeRemaining > 1) {
-                // Update local countdown or periodic DB sync
                 db.collection('auctions').doc(auctionId).update({
                     'draftBoardState.timerTimeRemaining': draftState.timerTimeRemaining - 1,
                     'draftBoardState.updatedAt': Date.now()
                 }).catch(() => {});
             } else if (draftState.timerTimeRemaining === 1) {
-                // Timer finished
                 db.collection('auctions').doc(auctionId).update({
                     'draftBoardState.timerTimeRemaining': 0,
                     'draftBoardState.isTimerRunning': false,
@@ -290,7 +369,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [isAdmin, draftState.isTimerRunning, draftState.timerTimeRemaining, auctionId]);
+    }, [isAdmin, isCurator, draftState.isTimerRunning, draftState.timerTimeRemaining, auctionId]);
 
     // Current turn team
     const currentTurnTeam = useMemo(() => {
@@ -604,8 +683,21 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             }
 
             if (isAdmin) {
-                await syncPlayerAndTeamDocs(player, targetTeam, effectivePrice);
-                await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
+                try {
+                    await syncPlayerAndTeamDocs(player, targetTeam, effectivePrice);
+                    await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
+                } catch (adminErr: any) {
+                    if (isCurator && isPermissionErr(adminErr)) {
+                        await dispatchCuratorRelay('ASSIGN_PLAYER', {
+                            playerId: player.id,
+                            teamId: targetTeam.id,
+                            price: effectivePrice
+                        });
+                        setActivePlayerForModal(null);
+                        return { ok: true };
+                    }
+                    throw adminErr;
+                }
             } else {
                 // TEAM OWNER FLOW:
                 const isApprovalRequired = currentDraft.pickRequestApprovalEnabled === true;
@@ -1017,6 +1109,9 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             if (targetReq?.logDocId) {
                 db.collection('auctions').doc(auctionId).collection('auctionLogs').doc(targetReq.logDocId).update(errPayload).catch(() => {});
             }
+            if (isCurator) {
+                dispatchCuratorRelay('DISMISS_PICK_REQUEST', { requestId }).catch(() => {});
+            }
         }
         broadcastRelayResult(requestId, false, 'Pick request dismissed by Admin.');
     };
@@ -1128,64 +1223,302 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         });
     }, [isAdmin, auctionId, draftState.history, players, teams]);
 
+    // Core Undo executor (reusable for both direct clicks and Curator relay)
+    const executeUndoPlayerById = async (playerId: string | number) => {
+        const player = playersRef.current.find(p => String(p.id) === String(playerId));
+        if (!player || !auctionId) return;
+
+        const pickInfo = draftPickMapRef.current.get(String(player.id));
+        const soldTeamId = pickInfo?.teamId || player.soldToId || player.teamId;
+        const soldPrice = Number(pickInfo?.soldPrice ?? player.soldPrice ?? 0);
+
+        // 1. Revert player in players subcollection
+        const playerResetData = {
+            status: 'UNSOLD',
+            soldTo: null,
+            soldToId: null,
+            teamId: null,
+            soldPrice: null,
+            soldAt: null
+        };
+        await db.collection('auctions').doc(auctionId).collection('players').doc(String(player.id)).update(
+            JSON.parse(JSON.stringify(playerResetData))
+        );
+
+        // 2. Refund team budget and remove player from team's squad
+        if (soldTeamId) {
+            const targetTeam = teamsRef.current.find(t => String(t.id) === String(soldTeamId));
+            if (targetTeam) {
+                const restoredBudget = Number(targetTeam.budget || 0) + soldPrice;
+                const updatedSquad = (targetTeam.players || []).filter(p => String(p.id) !== String(player.id));
+
+                await db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id)).update({
+                    budget: restoredBudget,
+                    players: JSON.parse(JSON.stringify(updatedSquad))
+                });
+            }
+        }
+
+        // 3. Remove pick from draftBoardState.history
+        const currentDraft = draftStateRef.current;
+        const updatedHistory = (currentDraft.history || []).filter(h => String(h.playerId) !== String(player.id));
+        const cleanHistory = JSON.parse(JSON.stringify(updatedHistory));
+
+        const payload = {
+            draftBoardState: {
+                ...currentDraft,
+                history: cleanHistory,
+                updatedAt: Date.now()
+            }
+        };
+        await db.collection('auctions').doc(auctionId).set(JSON.parse(JSON.stringify(payload)), { merge: true });
+    };
+
+    const startNextRoundAction = async () => {
+        if (!auctionId) return;
+        const currentDraft = draftStateRef.current;
+        const currentTeams = teamsRef.current;
+        const nextRoundNumber = Number(currentDraft.currentRound || 1) + 1;
+        const isSnake = currentDraft.orderType === 'SNAKE';
+        const reversed = [...currentTeams.map(t => t.id)].reverse();
+        const newRoundOrder = (isSnake && nextRoundNumber % 2 === 0)
+            ? reversed
+            : currentTeams.map(t => t.id);
+
+        const nextPayload = {
+            draftBoardState: {
+                ...currentDraft,
+                currentRound: nextRoundNumber,
+                currentTurnIndex: 0,
+                currentTeamId: newRoundOrder[0] || null,
+                roundOrder: newRoundOrder,
+                roundStatus: 'IN_PROGRESS',
+                timerTimeRemaining: Number(currentDraft.turnTimerSeconds || 45),
+                isTimerRunning: true,
+                updatedAt: Date.now()
+            }
+        };
+        const cleanNext = JSON.parse(JSON.stringify(nextPayload));
+        try {
+            await db.collection('auctions').doc(auctionId).set(cleanNext, { merge: true });
+        } catch (err: any) {
+            if (isCurator && isPermissionErr(err)) {
+                await dispatchCuratorRelay('START_NEXT_ROUND');
+            } else {
+                throw err;
+            }
+        }
+    };
+
+    // ADMIN CURATOR RELAY PROCESSOR: Executes Curator commands sent from remote Curator browser when direct Firestore writes are restricted
+    const processedCuratorActionsRef = useRef<Set<string>>(new Set());
+    const processCuratorActionRef = useRef<(req: any) => Promise<void>>(async () => {});
+
+    processCuratorActionRef.current = async (req: any) => {
+        if (!isAdmin || isCurator || !auctionId || !req) return;
+        const actionId = String(req.actionId || req.id || '').trim();
+        const action = String(req.action || '').trim();
+        if (!actionId || !action) return;
+        if (req.status === 'PROCESSED') return;
+        if (processedCuratorActionsRef.current.has(actionId)) return;
+
+        const rawTs = Number(req.requestedAt || req.timestamp || 0);
+        if (rawTs > 0 && Date.now() - rawTs > 15 * 60 * 1000) return;
+
+        processedCuratorActionsRef.current.add(actionId);
+        const data = req.data || {};
+
+        try {
+            if (action === 'UPDATE_AUCTION_FIELDS' && data.fields) {
+                await db.collection('auctions').doc(auctionId).update(data.fields);
+            } else if (action === 'ASSIGN_PLAYER') {
+                const mp = playersRef.current.find(p => String(p.id) === String(data.playerId));
+                const mt = teamsRef.current.find(t => String(t.id) === String(data.teamId));
+                if (mp && mt && mp.status !== 'SOLD' && !draftPickMapRef.current.has(String(mp.id))) {
+                    await handleAssignPlayerRef.current(mp, mt.id, Number(data.price || 0));
+                }
+            } else if (action === 'DISMISS_PICK_REQUEST' && data.requestId) {
+                handleDismissPickRequest(String(data.requestId));
+            } else if (action === 'UNDO_PLAYER' && data.playerId) {
+                await executeUndoPlayerById(data.playerId);
+            } else if (action === 'START_NEXT_ROUND') {
+                await startNextRoundAction();
+            } else if (action === 'REOPEN_DRAFT') {
+                await db.collection('auctions').doc(auctionId).update({
+                    status: 'ACTIVE',
+                    'draftBoardState.roundStatus': 'IN_PROGRESS',
+                    'draftBoardState.broadcastView': 'PLAYERS',
+                    'draftBoardState.updatedAt': Date.now()
+                });
+            } else if (action === 'UNDO_LAST_PICK') {
+                const currentDraft = draftStateRef.current;
+                const history = currentDraft.history || [];
+                if (history.length > 0) {
+                    const lastPick = history[history.length - 1];
+                    await db.collection('auctions').doc(auctionId).collection('players').doc(String(lastPick.playerId)).update({
+                        status: 'UNSOLD',
+                        soldTo: null,
+                        soldToId: null,
+                        teamId: null,
+                        soldPrice: null,
+                        soldAt: null
+                    });
+                    const t = teamsRef.current.find(tm => String(tm.id) === String(lastPick.teamId));
+                    if (t) {
+                        await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update({
+                            budget: Number(t.budget || 0) + Number(lastPick.soldPrice || 0),
+                            players: (t.players || []).filter(p => String(p.id) !== String(lastPick.playerId))
+                        });
+                    }
+                    await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+                        'draftBoardState.history': history.slice(0, -1),
+                        'draftBoardState.currentTurnIndex': Math.max(0, Number(currentDraft.currentTurnIndex || 0) - 1),
+                        'draftBoardState.currentTeamId': lastPick.teamId || null,
+                        'draftBoardState.roundStatus': 'IN_PROGRESS',
+                        'draftBoardState.timerTimeRemaining': Number(currentDraft.turnTimerSeconds || 45),
+                        'draftBoardState.isTimerRunning': false,
+                        'draftBoardState.updatedAt': Date.now()
+                    })));
+                }
+            } else if (action === 'RESET_CURRENT_ROUND') {
+                const currentDraft = draftStateRef.current;
+                const currentRound = currentDraft.currentRound;
+                const currentRoundPicks = (currentDraft.history || []).filter(h => h.round === currentRound);
+                for (const pick of currentRoundPicks) {
+                    await db.collection('auctions').doc(auctionId).collection('players').doc(String(pick.playerId)).update({
+                        status: 'UNSOLD', soldTo: null, soldToId: null, teamId: null, soldPrice: null, soldAt: null
+                    });
+                    const t = teamsRef.current.find(tm => String(tm.id) === String(pick.teamId));
+                    if (t) {
+                        await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update({
+                            budget: Number(t.budget || 0) + Number(pick.soldPrice || 0),
+                            players: (t.players || []).filter(p => String(p.id) !== String(pick.playerId))
+                        });
+                    }
+                }
+                const remainingHistory = (currentDraft.history || []).filter(h => h.round !== currentRound);
+                const firstTeamId = currentDraft.roundOrder?.[0] || teamsRef.current[0]?.id || null;
+                await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+                    'draftBoardState.history': remainingHistory,
+                    'draftBoardState.currentTurnIndex': 0,
+                    'draftBoardState.currentTeamId': firstTeamId,
+                    'draftBoardState.roundStatus': 'IDLE',
+                    'draftBoardState.timerTimeRemaining': Number(currentDraft.turnTimerSeconds || 45),
+                    'draftBoardState.isTimerRunning': false,
+                    'draftBoardState.updatedAt': Date.now()
+                })));
+            } else if (action === 'RESET_FULL_DRAFT') {
+                const currentDraft = draftStateRef.current;
+                const allDraftPicks = currentDraft.history || [];
+                for (const pick of allDraftPicks) {
+                    await db.collection('auctions').doc(auctionId).collection('players').doc(String(pick.playerId)).update({
+                        status: 'UNSOLD', soldTo: null, soldToId: null, teamId: null, soldPrice: null, soldAt: null
+                    });
+                }
+                for (const t of teamsRef.current) {
+                    const spent = allDraftPicks.filter(p => String(p.teamId) === String(t.id)).reduce((s, p) => s + (p.soldPrice || 0), 0);
+                    const draftIds = new Set(allDraftPicks.map(p => String(p.playerId)));
+                    await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update({
+                        budget: Number(t.budget || 0) + spent,
+                        players: JSON.parse(JSON.stringify((t.players || []).filter(p => !draftIds.has(String(p.id)))))
+                    });
+                }
+                await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+                    'draftBoardState.currentRound': 1,
+                    'draftBoardState.currentTurnIndex': 0,
+                    'draftBoardState.currentTeamId': teamsRef.current[0]?.id || null,
+                    'draftBoardState.roundOrder': teamsRef.current.map(t => t.id),
+                    'draftBoardState.roundStatus': 'IDLE',
+                    'draftBoardState.timerTimeRemaining': Number(currentDraft.turnTimerSeconds || 45),
+                    'draftBoardState.isTimerRunning': false,
+                    'draftBoardState.history': [],
+                    'draftBoardState.updatedAt': Date.now()
+                })));
+            }
+
+            db.collection('scoringAssets').doc(`curator_action_${auctionId}`).get().then(snap => {
+                if (snap.exists && snap.data()?.actionId === actionId) {
+                    snap.ref.update({ status: 'PROCESSED', processedAt: Date.now() }).catch(() => {});
+                }
+            }).catch(() => {});
+        } catch (err) {
+            console.warn('Admin Curator Relay processing error:', err);
+        }
+    };
+
+    useEffect(() => {
+        if (!isAdmin || isCurator || !auctionId) return;
+
+        const unsubCuratorScoring = db.collection('scoringAssets').doc(`curator_action_${auctionId}`).onSnapshot((snap) => {
+            if (snap.exists) {
+                processCuratorActionRef.current(snap.data());
+            }
+        }, () => {});
+
+        const unsubCuratorLogs = db.collection('auctions').doc(auctionId).collection('auctionLogs')
+            .where('type', '==', 'CURATOR_ACTION')
+            .onSnapshot((snap) => {
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'added' || change.type === 'modified') {
+                        processCuratorActionRef.current(change.doc.data());
+                    }
+                });
+            }, () => {});
+
+        let ch: BroadcastChannel | null = null;
+        try {
+            if (typeof BroadcastChannel !== 'undefined') {
+                ch = new BroadcastChannel(`sm_curator_action_${auctionId}`);
+                ch.onmessage = (ev) => {
+                    if (ev?.data?.type === 'CURATOR_ACTION' && ev.data.payload) {
+                        processCuratorActionRef.current(ev.data.payload);
+                    }
+                };
+            }
+        } catch {
+            // optional
+        }
+
+        return () => {
+            unsubCuratorScoring();
+            unsubCuratorLogs();
+            if (ch) {
+                try { ch.close(); } catch {}
+            }
+        };
+    }, [isAdmin, isCurator, auctionId]);
+
+    useEffect(() => {
+        if (!isAdmin || isCurator || !auctionId || !state.auctionLog?.length) return;
+        state.auctionLog.forEach(entry => {
+            if (entry?.type === 'CURATOR_ACTION') {
+                processCuratorActionRef.current(entry);
+            }
+        });
+    }, [isAdmin, isCurator, auctionId, state.auctionLog]);
+
     // Handle Undo Specific Player
     const handleUndoSpecificPlayer = async (player: Player) => {
         if (!auctionId || !isAdmin) return;
-
-        const pickInfo = draftPickMap.get(String(player.id));
-        const soldTeamId = pickInfo?.teamId || player.soldToId || player.teamId;
-        const soldPrice = Number(pickInfo?.soldPrice ?? player.soldPrice ?? 0);
 
         const confirmMsg = `Are you sure you want to UNDO selection for "${player.name}"?\nThis will revert the player to AVAILABLE and return them to the draft pool.`;
         if (!window.confirm(confirmMsg)) return;
 
         try {
-            // 1. Revert player in players subcollection
-            const playerResetData = {
-                status: 'UNSOLD',
-                soldTo: null,
-                soldToId: null,
-                teamId: null,
-                soldPrice: null,
-                soldAt: null
-            };
-            await db.collection('auctions').doc(auctionId).collection('players').doc(String(player.id)).update(
-                JSON.parse(JSON.stringify(playerResetData))
-            );
-
-            // 2. Refund team budget and remove player from team's squad
-            if (soldTeamId) {
-                const targetTeam = teams.find(t => String(t.id) === String(soldTeamId));
-                if (targetTeam) {
-                    const restoredBudget = Number(targetTeam.budget || 0) + soldPrice;
-                    const updatedSquad = (targetTeam.players || []).filter(p => String(p.id) !== String(player.id));
-
-                    await db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id)).update({
-                        budget: restoredBudget,
-                        players: JSON.parse(JSON.stringify(updatedSquad))
-                    });
-                }
-            }
-
-            // 3. Remove pick from draftBoardState.history
-            const updatedHistory = (draftState.history || []).filter(h => String(h.playerId) !== String(player.id));
-            const cleanHistory = JSON.parse(JSON.stringify(updatedHistory));
-
-            const payload = {
-                draftBoardState: {
-                    ...draftState,
-                    history: cleanHistory,
-                    updatedAt: Date.now()
-                }
-            };
-            await db.collection('auctions').doc(auctionId).set(JSON.parse(JSON.stringify(payload)), { merge: true });
-
+            await executeUndoPlayerById(player.id);
             if (activePlayerForModal?.id === player.id) {
                 setActivePlayerForModal(null);
             }
         } catch (err: any) {
-            console.error("Failed to undo player sale:", err);
-            alert(`Undo failed: ${err.message}`);
+            if (isCurator && isPermissionErr(err)) {
+                await dispatchCuratorRelay('UNDO_PLAYER', { playerId: player.id });
+                if (activePlayerForModal?.id === player.id) {
+                    setActivePlayerForModal(null);
+                }
+            } else {
+                console.error("Failed to undo player sale:", err);
+                alert(`Undo failed: ${err.message}`);
+            }
         }
     };
 
@@ -1230,12 +1563,20 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     auctionId={auctionId}
                     onReopenDraft={async () => {
                         if (!auctionId) return;
-                        await db.collection('auctions').doc(auctionId).update({
-                            status: 'ACTIVE',
-                            'draftBoardState.roundStatus': 'IN_PROGRESS',
-                            'draftBoardState.broadcastView': 'PLAYERS',
-                            'draftBoardState.updatedAt': Date.now()
-                        });
+                        try {
+                            await db.collection('auctions').doc(auctionId).update({
+                                status: 'ACTIVE',
+                                'draftBoardState.roundStatus': 'IN_PROGRESS',
+                                'draftBoardState.broadcastView': 'PLAYERS',
+                                'draftBoardState.updatedAt': Date.now()
+                            });
+                        } catch (err: any) {
+                            if (isCurator && isPermissionErr(err)) {
+                                await dispatchCuratorRelay('REOPEN_DRAFT');
+                            } else {
+                                throw err;
+                            }
+                        }
                     }}
                 />
                 <SoldCelebrationPopup
@@ -1786,8 +2127,15 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             </div>
                         )}
 
+                        {/* Curator Console Badge */}
+                        {isCurator && !isProjectorView && !isOBSView && (
+                            <span className="px-3 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                <Shield className="w-3.5 h-3.5" /> Curator Console
+                            </span>
+                        )}
+
                         {/* Admin Mode Switcher Back to Live Bidding */}
-                        {isAdmin && !isProjectorView && !isOBSView && (
+                        {isAdmin && !isCurator && !isProjectorView && !isOBSView && (
                             <button
                                 type="button"
                                 onClick={() => updateAuctionType('BIDDING')}
@@ -2229,31 +2577,11 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                 onApprovePickRequest={handleApprovePickRequest}
                                 onDismissPickRequest={handleDismissPickRequest}
                                 lastProcessedRequestNotice={lastProcessedRequestNotice}
-                                onStartNextRound={async () => {
-                                    const nextRoundNumber = draftState.currentRound + 1;
-                                    const isSnake = draftState.orderType === 'SNAKE';
-                                    // In Snake draft, reverse the team order for even rounds
-                                    const reversed = [...teams.map(t => t.id)].reverse();
-                                    const newRoundOrder = (isSnake && nextRoundNumber % 2 === 0) 
-                                        ? reversed 
-                                        : teams.map(t => t.id);
-
-                                    const nextPayload = {
-                                        draftBoardState: {
-                                            ...draftState,
-                                            currentRound: nextRoundNumber,
-                                            currentTurnIndex: 0,
-                                            currentTeamId: newRoundOrder[0] || null,
-                                            roundOrder: newRoundOrder,
-                                            roundStatus: 'IN_PROGRESS',
-                                            timerTimeRemaining: Number(draftState.turnTimerSeconds || 45),
-                                            isTimerRunning: true,
-                                            updatedAt: Date.now()
-                                        }
-                                    };
-                                    const cleanNext = JSON.parse(JSON.stringify(nextPayload));
-                                    await db.collection('auctions').doc(auctionId).set(cleanNext, { merge: true });
-                                }}
+                                isCurator={isCurator}
+                                curatorPassword={state.curatorPassword || ''}
+                                onUpdateAuctionFields={updateAuctionFieldsWithRelay}
+                                onCuratorRelayAction={isCurator ? dispatchCuratorRelay : undefined}
+                                onStartNextRound={startNextRoundAction}
                             />
                         </div>
                     ) : (

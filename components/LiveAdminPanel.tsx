@@ -4,9 +4,10 @@ import { useTheme } from '../contexts/ThemeContext';
 import { AuctionStatus, Team, Player, ProjectorLayout, OBSLayout, UserRole } from '../types';
 import TeamStatusCard from '../components/TeamStatusCard';
 import { SpinningWheelModal } from './SpinningWheelModal';
-import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign, Cast, Lock, Unlock, Monitor, ChevronDown, Shuffle, Search, User, Palette, Trophy, Gavel, Wallet, Eye, EyeOff, Clock, Zap, Undo2, RefreshCw, LayoutList, ShieldAlert, CreditCard, AlertTriangle, CheckCircle, Users } from 'lucide-react';
+import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign, Cast, Lock, Unlock, Monitor, ChevronDown, Shuffle, Search, User, Palette, Trophy, Gavel, Wallet, Eye, EyeOff, Clock, Zap, Undo2, RefreshCw, LayoutList, ShieldAlert, CreditCard, AlertTriangle, CheckCircle, Users, Copy, ExternalLink, Trash2, Shield } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { calculateMaxBid, getEffectiveBasePrice } from '../utils';
+import { db } from '../firebase';
 
 const LiveAdminPanel: React.FC = () => {
   const { state, userProfile, sellPlayer, passPlayer, startAuction, undoPlayerSelection, endAuction, resetAuction, resetCurrentPlayer, resetUnsoldPlayers, updateBiddingStatus, toggleSelectionMode, updateTheme, activeAuctionId, placeBid, nextBid, updateSponsorConfig, correctPlayerSale, setAdminView, repairAuctionDocument } = useAuction();
@@ -95,6 +96,37 @@ const LiveAdminPanel: React.FC = () => {
 
   // Sponsor Config Local State (debounce or immediate)
   const [sponsorLoop, setSponsorLoop] = useState(state.sponsorConfig?.loopInterval || 5);
+
+  // Curator Portal Password Local State
+  const [curatorPassInput, setCuratorPassInput] = useState(state.curatorPassword || '');
+  const [showCuratorPass, setShowCuratorPass] = useState(false);
+  const [savingCuratorPass, setSavingCuratorPass] = useState(false);
+
+  useEffect(() => {
+    setCuratorPassInput(state.curatorPassword || '');
+  }, [state.curatorPassword]);
+
+  const handleSaveCuratorPass = async (nextPass: string) => {
+    if (!activeAuctionId) return;
+    setSavingCuratorPass(true);
+    try {
+      const trimmed = nextPass.trim();
+      await db.collection('auctions').doc(activeAuctionId).update({
+        curatorPassword: trimmed
+      });
+      setCuratorPassInput(trimmed);
+      showNotification(trimmed ? 'Curator password updated!' : 'Curator password removed (open access).', 'success');
+    } catch (e: any) {
+      showNotification(e?.message || 'Failed to update curator password.');
+    } finally {
+      setSavingCuratorPass(false);
+    }
+  };
+
+  const getCuratorUrl = () => {
+    const baseUrl = window.location.href.split('#')[0];
+    return `${baseUrl}#/auction/${activeAuctionId}/curator`;
+  };
 
   // Auto-fill price and leader when entering sell mode or when bid updates
   useEffect(() => {
@@ -1118,6 +1150,80 @@ const LiveAdminPanel: React.FC = () => {
                 />
                 <Clock className={`w-2.5 h-2.5 absolute top-1/2 -translate-y-1/2 right-1.5 ${isDark ? 'text-zinc-600' : 'text-gray-400'} pointer-events-none`} />
               </div>
+            </div>
+          </div>
+
+          {/* Curator Portal Access & Password */}
+          <div className={`rounded-xl p-2.5 space-y-2 border ${isDark ? 'bg-primary/40 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <Shield className={`w-3.5 h-3.5 ${isDark ? 'text-amber-400' : 'text-blue-600'}`} />
+                <span className={`text-[9px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-300' : 'text-gray-700'}`}>Curator Portal Access</span>
+              </div>
+              <span className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider ${
+                state.curatorPassword ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-zinc-800 text-zinc-400'
+              }`}>
+                {state.curatorPassword ? 'Locked' : 'Open'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <div className="relative flex-1">
+                <input
+                  type={showCuratorPass ? 'text' : 'password'}
+                  value={curatorPassInput}
+                  onChange={(e) => setCuratorPassInput(e.target.value)}
+                  placeholder="Set curator password..."
+                  className={`w-full border rounded-lg text-[10px] py-1.5 pl-2.5 pr-7 font-bold outline-none ${isDark ? 'bg-zinc-900 border-accent/15 text-white' : 'bg-white border-blue-500/15 text-gray-900'}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCuratorPass(!showCuratorPass)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white"
+                  title={showCuratorPass ? 'Hide password' : 'Show password'}
+                >
+                  {showCuratorPass ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+              </div>
+              <button
+                type="button"
+                disabled={savingCuratorPass}
+                onClick={() => handleSaveCuratorPass(curatorPassInput)}
+                className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-black text-[8px] uppercase tracking-wider shrink-0"
+              >
+                {savingCuratorPass ? '...' : 'Save'}
+              </button>
+              {state.curatorPassword && (
+                <button
+                  type="button"
+                  disabled={savingCuratorPass}
+                  onClick={() => handleSaveCuratorPass('')}
+                  className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/30 shrink-0"
+                  title="Remove Curator Password"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(getCuratorUrl());
+                  showNotification('Curator Portal link copied!', 'success');
+                }}
+                className={`py-1.5 rounded-lg text-[8px] font-black uppercase tracking-wider flex items-center justify-center gap-1 border ${isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white' : 'bg-white border-gray-200 text-gray-600'}`}
+              >
+                <Copy className="w-3 h-3" /> Copy Curator
+              </button>
+              <button
+                type="button"
+                onClick={() => window.open(getCuratorUrl(), '_blank')}
+                className={`py-1.5 rounded-lg text-[8px] font-black uppercase tracking-wider flex items-center justify-center gap-1 border ${isDark ? 'bg-zinc-900 border-zinc-800 text-emerald-400 hover:bg-emerald-500/10' : 'bg-white border-gray-200 text-emerald-600'}`}
+              >
+                <ExternalLink className="w-3 h-3" /> Open Curator
+              </button>
             </div>
           </div>
 

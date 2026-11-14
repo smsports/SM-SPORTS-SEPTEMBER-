@@ -25,6 +25,10 @@ interface Props {
     onApprovePickRequest?: (req: PendingDraftPickRequest) => Promise<void>;
     onDismissPickRequest?: (requestId: string) => Promise<void> | void;
     lastProcessedRequestNotice?: string | null;
+    isCurator?: boolean;
+    curatorPassword?: string;
+    onUpdateAuctionFields?: (fields: Record<string, any>) => Promise<void>;
+    onCuratorRelayAction?: (action: string, data?: Record<string, any>) => Promise<void>;
 }
 
 export const DraftAdminControls: React.FC<Props> = ({
@@ -38,7 +42,11 @@ export const DraftAdminControls: React.FC<Props> = ({
     pendingPickRequests = [],
     onApprovePickRequest,
     onDismissPickRequest,
-    lastProcessedRequestNotice
+    lastProcessedRequestNotice,
+    isCurator = false,
+    curatorPassword = '',
+    onUpdateAuctionFields,
+    onCuratorRelayAction
 }) => {
     const [confirmAction, setConfirmAction] = useState<{
         title: string;
@@ -50,16 +58,34 @@ export const DraftAdminControls: React.FC<Props> = ({
     const [isProcessing, setIsProcessing] = useState(false);
     const [copiedProjector, setCopiedProjector] = useState(false);
     const [copiedOBS, setCopiedOBS] = useState(false);
+    const [copiedCurator, setCopiedCurator] = useState(false);
     const [uploadingSoundKey, setUploadingSoundKey] = useState<'sold' | 'timeup' | 'unsold' | null>(null);
     const [audioFeedback, setAudioFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
     const [customPopupSec, setCustomPopupSec] = useState<string>(String(draftState.soldPopupDurationSeconds ?? 5));
     const [unsoldPlayerId, setUnsoldPlayerId] = useState<string>('');
+    const [curatorPassInput, setCuratorPassInput] = useState<string>(curatorPassword || '');
+    const [showCuratorPass, setShowCuratorPass] = useState<boolean>(false);
+    const [savingCuratorPass, setSavingCuratorPass] = useState<boolean>(false);
+    const [curatorPassNotice, setCuratorPassNotice] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
     useEffect(() => {
         if (draftState.soldPopupDurationSeconds !== undefined) {
             setCustomPopupSec(String(draftState.soldPopupDurationSeconds));
         }
     }, [draftState.soldPopupDurationSeconds]);
+
+    useEffect(() => {
+        setCuratorPassInput(curatorPassword || '');
+    }, [curatorPassword]);
+
+    const updateAuctionDoc = async (fields: Record<string, any>) => {
+        if (!auctionId) return;
+        if (onUpdateAuctionFields) {
+            await onUpdateAuctionFields(fields);
+        } else {
+            await db.collection('auctions').doc(auctionId).update(fields);
+        }
+    };
 
     const getBaseUrl = () => {
         const { protocol, host, pathname } = window.location;
@@ -88,6 +114,44 @@ export const DraftAdminControls: React.FC<Props> = ({
         window.open(`${getBaseUrl()}#/obs-overlay/${auctionId}`, '_blank');
     };
 
+    const handleCopyCurator = () => {
+        const url = `${getBaseUrl()}#/auction/${auctionId}/curator`;
+        navigator.clipboard.writeText(url);
+        setCopiedCurator(true);
+        setTimeout(() => setCopiedCurator(false), 2000);
+    };
+
+    const handleOpenCurator = () => {
+        window.open(`${getBaseUrl()}#/auction/${auctionId}/curator`, '_blank');
+    };
+
+    const handleSaveCuratorPassword = async (passwordToSave: string) => {
+        if (!auctionId) return;
+        setSavingCuratorPass(true);
+        setCuratorPassNotice(null);
+        try {
+            const trimmed = passwordToSave.trim();
+            await db.collection('auctions').doc(auctionId).update({
+                curatorPassword: trimmed,
+                updatedAt: Date.now()
+            });
+            setCuratorPassInput(trimmed);
+            setCuratorPassNotice({
+                type: 'success',
+                text: trimmed
+                    ? 'Curator Portal password saved & active!'
+                    : 'Curator Portal password removed (Open access).'
+            });
+        } catch (err: any) {
+            setCuratorPassNotice({
+                type: 'error',
+                text: err?.message || 'Failed to save Curator password.'
+            });
+        } finally {
+            setSavingCuratorPass(false);
+        }
+    };
+
     // Timer Duration Options
     const timerOptions = [15, 30, 45, 60, 90, 120];
 
@@ -95,7 +159,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     const handleToggleTimer = async () => {
         if (!auctionId) return;
         const newRunning = !draftState.isTimerRunning;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.isTimerRunning': newRunning,
             'draftBoardState.roundStatus': newRunning ? 'IN_PROGRESS' : 'PAUSED',
             'draftBoardState.updatedAt': Date.now()
@@ -105,7 +169,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     // Change Turn Timer duration
     const handleChangeTimerDuration = async (seconds: number) => {
         if (!auctionId) return;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.turnTimerSeconds': seconds,
             'draftBoardState.timerTimeRemaining': seconds,
             'draftBoardState.updatedAt': Date.now()
@@ -116,7 +180,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     const handleResetTimer = async () => {
         if (!auctionId) return;
         const defaultSec = Number(draftState.turnTimerSeconds || 45);
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.timerTimeRemaining': defaultSec,
             'draftBoardState.isTimerRunning': true,
             'draftBoardState.roundStatus': 'IN_PROGRESS',
@@ -134,7 +198,7 @@ export const DraftAdminControls: React.FC<Props> = ({
         const nextTurnIndex = draftState.currentTurnIndex + 1;
         const isRoundFinished = nextTurnIndex >= currentOrder.length;
 
-        await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+        await updateAuctionDoc(JSON.parse(JSON.stringify({
             'draftBoardState.currentTurnIndex': isRoundFinished ? currentOrder.length : nextTurnIndex,
             'draftBoardState.currentTeamId': isRoundFinished ? null : (currentOrder[nextTurnIndex] ?? null),
             'draftBoardState.roundStatus': isRoundFinished ? 'ROUND_COMPLETED' : 'IN_PROGRESS',
@@ -190,7 +254,12 @@ export const DraftAdminControls: React.FC<Props> = ({
                 'draftBoardState.updatedAt': Date.now()
             })));
         } catch (err: any) {
-            alert(`Undo failed: ${err.message}`);
+            const isPerm = err?.code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission');
+            if (isPerm && isCurator && onCuratorRelayAction) {
+                await onCuratorRelayAction('UNDO_LAST_PICK');
+            } else {
+                alert(`Undo failed: ${err.message}`);
+            }
         } finally {
             setIsProcessing(false);
             setConfirmAction(null);
@@ -239,7 +308,12 @@ export const DraftAdminControls: React.FC<Props> = ({
                 'draftBoardState.updatedAt': Date.now()
             })));
         } catch (err: any) {
-            alert(`Reset round failed: ${err.message}`);
+            const isPerm = err?.code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission');
+            if (isPerm && isCurator && onCuratorRelayAction) {
+                await onCuratorRelayAction('RESET_CURRENT_ROUND');
+            } else {
+                alert(`Reset round failed: ${err.message}`);
+            }
         } finally {
             setIsProcessing(false);
             setConfirmAction(null);
@@ -291,7 +365,12 @@ export const DraftAdminControls: React.FC<Props> = ({
                 'draftBoardState.updatedAt': Date.now()
             })));
         } catch (err: any) {
-            alert(`Reset full draft failed: ${err.message}`);
+            const isPerm = err?.code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission');
+            if (isPerm && isCurator && onCuratorRelayAction) {
+                await onCuratorRelayAction('RESET_FULL_DRAFT');
+            } else {
+                alert(`Reset full draft failed: ${err.message}`);
+            }
         } finally {
             setIsProcessing(false);
             setConfirmAction(null);
@@ -314,7 +393,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     // Switch Projector & OBS View: Players Draft Board vs Team Squads vs Summary
     const handleSetBroadcastView = async (view: 'PLAYERS' | 'SQUADS' | 'SUMMARY') => {
         if (!auctionId) return;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.broadcastView': view,
             'draftBoardState.updatedAt': Date.now()
         }).catch(console.error);
@@ -323,7 +402,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     // Switch Broadcast Theme across all screens
     const handleSetBroadcastTheme = async (themeKey: DraftThemeKey) => {
         if (!auctionId) return;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.broadcastTheme': themeKey,
             'draftBoardState.updatedAt': Date.now()
         }).catch(console.error);
@@ -334,7 +413,7 @@ export const DraftAdminControls: React.FC<Props> = ({
         if (!auctionId) return;
         setIsProcessing(true);
         try {
-            await db.collection('auctions').doc(auctionId).update({
+            await updateAuctionDoc({
                 status: 'FINISHED',
                 'draftBoardState.roundStatus': 'COMPLETED',
                 'draftBoardState.broadcastView': 'SUMMARY',
@@ -354,7 +433,7 @@ export const DraftAdminControls: React.FC<Props> = ({
         if (!auctionId) return;
         setIsProcessing(true);
         try {
-            await db.collection('auctions').doc(auctionId).update({
+            await updateAuctionDoc({
                 status: 'ACTIVE',
                 'draftBoardState.roundStatus': 'IN_PROGRESS',
                 'draftBoardState.broadcastView': 'PLAYERS',
@@ -370,7 +449,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     // Switch Projector Layout Mode: ROWS, COLUMNS, GRID, TABLE
     const handleSetProjectorLayoutMode = async (mode: 'ROWS' | 'COLUMNS' | 'GRID' | 'TABLE') => {
         if (!auctionId) return;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.projectorLayoutMode': mode,
             'draftBoardState.updatedAt': Date.now()
         }).catch(console.error);
@@ -379,7 +458,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     // Switch Category Broadcast Filter ("Show only necessary category")
     const handleSetBroadcastCategoryFilter = async (categoryName: string) => {
         if (!auctionId) return;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.broadcastCategoryFilter': categoryName,
             'draftBoardState.updatedAt': Date.now()
         }).catch(console.error);
@@ -388,7 +467,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     // Switch Focused Team Squad
     const handleSetSelectedTeamSquad = async (teamId: string | number | 'ALL') => {
         if (!auctionId) return;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.selectedTeamSquadId': teamId,
             'draftBoardState.updatedAt': Date.now()
         }).catch(console.error);
@@ -397,7 +476,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     // OBS Overlay Display Controls (Video-safe minimal overlays)
     const handleSetObsDisplayMode = async (mode: ObsDraftDisplayMode) => {
         if (!auctionId) return;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.obsDisplayMode': mode,
             'draftBoardState.updatedAt': Date.now()
         }).catch(console.error);
@@ -405,7 +484,7 @@ export const DraftAdminControls: React.FC<Props> = ({
 
     const handleSetObsCategoryFilter = async (categoryName: string) => {
         if (!auctionId) return;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.obsCategoryFilter': categoryName,
             'draftBoardState.updatedAt': Date.now()
         }).catch(console.error);
@@ -413,7 +492,7 @@ export const DraftAdminControls: React.FC<Props> = ({
 
     const handleToggleObsTransparent = async () => {
         if (!auctionId) return;
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.obsTransparentBg': !draftState.obsTransparentBg,
             'draftBoardState.updatedAt': Date.now()
         }).catch(console.error);
@@ -424,7 +503,7 @@ export const DraftAdminControls: React.FC<Props> = ({
         if (!auctionId) return;
         const clamped = Math.max(0, Math.min(60, Math.round(seconds)));
         setCustomPopupSec(String(clamped));
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             'draftBoardState.soldPopupDurationSeconds': clamped,
             soldPopupDurationSeconds: clamped,
             'draftBoardState.updatedAt': Date.now()
@@ -455,7 +534,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                 updateData[`customAudio.${nameField}`] = '';
             }
 
-            await db.collection('auctions').doc(auctionId).update(updateData);
+            await updateAuctionDoc(updateData);
             setAudioFeedback({ type: 'success', text: `Uploaded "${file.name}" for ${soundKey.toUpperCase()}!` });
         } catch (err: any) {
             console.error('Failed to upload custom audio:', err);
@@ -471,7 +550,7 @@ export const DraftAdminControls: React.FC<Props> = ({
         setAudioFeedback(null);
         const urlField = soundKey === 'sold' ? 'soldMusicUrl' : soundKey === 'timeup' ? 'timeUpMusicUrl' : 'unsoldMusicUrl';
         const nameField = soundKey === 'sold' ? 'soldMusicName' : soundKey === 'timeup' ? 'timeUpMusicName' : 'unsoldMusicName';
-        await db.collection('auctions').doc(auctionId).update({
+        await updateAuctionDoc({
             [`draftBoardState.customAudio.${urlField}`]: '',
             [`draftBoardState.customAudio.${nameField}`]: '',
             [`customAudio.${urlField}`]: '',
@@ -491,7 +570,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                     status: 'UNSOLD'
                 }).catch(() => {});
             }
-            await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+            await updateAuctionDoc(JSON.parse(JSON.stringify({
                 'draftBoardState.lastUnsoldEvent': {
                     playerId: selectedP?.id || '',
                     playerName: selectedP?.name || 'Lot Passed (Unsold)',
@@ -547,15 +626,15 @@ export const DraftAdminControls: React.FC<Props> = ({
             <div className="space-y-3 border-b pb-3 border-zinc-800">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        <Shield className="w-5 h-5 text-blue-500" />
+                        <Shield className={`w-5 h-5 ${isCurator ? 'text-emerald-400' : 'text-blue-500'}`} />
                         <div>
-                            <h3 className="text-sm font-black uppercase text-white tracking-wider">
-                                Draft Admin Controls
+                            <h3 className="text-sm font-black uppercase text-white tracking-wider flex items-center gap-1.5">
+                                {isCurator ? 'Curator Draft Controls' : 'Draft Admin Controls'}
                             </h3>
                             <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-widest">
                                 {activeSection === 'MAIN'
                                     ? 'Round Selection • OBS • Projector'
-                                    : 'Audio • Automation • Order • Reset'}
+                                    : 'Audio • Automation • Order • Access'}
                             </p>
                         </div>
                     </div>
@@ -717,7 +796,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                                     if (val !== 'CURRENT_TURN') {
                                         updatePayload['draftBoardState.currentTeamId'] = val;
                                     }
-                                    await db.collection('auctions').doc(auctionId).update(updatePayload);
+                                    await updateAuctionDoc(updatePayload);
                                 }}
                                 className="w-full bg-black/80 border border-amber-500/40 rounded-xl px-3 py-2 text-xs font-black text-white focus:outline-none focus:border-amber-400 uppercase tracking-wide cursor-pointer shadow-inner"
                             >
@@ -748,7 +827,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                                 type="button"
                                 onClick={async () => {
                                     if (!auctionId) return;
-                                    await db.collection('auctions').doc(auctionId).update({
+                                    await updateAuctionDoc({
                                         'draftBoardState.pickRequestApprovalEnabled': !draftState.pickRequestApprovalEnabled,
                                         'draftBoardState.updatedAt': Date.now()
                                     });
@@ -821,7 +900,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                                     <button
                                         type="button"
                                         onClick={async () => {
-                                            await db.collection('auctions').doc(auctionId).update({
+                                            await updateAuctionDoc({
                                                 'draftBoardState.isTimerRunning': false,
                                                 'draftBoardState.updatedAt': Date.now()
                                             });
@@ -1241,7 +1320,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                                 type="button"
                                 onClick={async () => {
                                     if (!auctionId) return;
-                                    await db.collection('auctions').doc(auctionId).update({
+                                    await updateAuctionDoc({
                                         'draftBoardState.autoAllotEnabled': !draftState.autoAllotEnabled,
                                         'draftBoardState.updatedAt': Date.now()
                                     });
@@ -1281,7 +1360,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                                 onClick={async () => {
                                     if (!auctionId) return;
                                     const nextState = draftState.teamPickingEnabled === false ? true : false;
-                                    await db.collection('auctions').doc(auctionId).update({
+                                    await updateAuctionDoc({
                                         'draftBoardState.teamPickingEnabled': nextState,
                                         'draftBoardState.updatedAt': Date.now()
                                     });
@@ -1326,7 +1405,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                                 type="button"
                                 onClick={async () => {
                                     if (!auctionId) return;
-                                    await db.collection('auctions').doc(auctionId).update({
+                                    await updateAuctionDoc({
                                         'draftBoardState.pickRequestApprovalEnabled': !draftState.pickRequestApprovalEnabled,
                                         'draftBoardState.updatedAt': Date.now()
                                     });
@@ -1349,6 +1428,96 @@ export const DraftAdminControls: React.FC<Props> = ({
                             </button>
                         </div>
                     </div>
+
+                    {/* 2C. CURATOR PORTAL ACCESS & PASSWORD (Admin Only) */}
+                    {!isCurator && (
+                        <div className="p-4 rounded-2xl border-2 border-indigo-500/35 bg-gradient-to-b from-indigo-950/30 to-zinc-900/90 space-y-3 shadow-xl">
+                            <div className="flex items-center justify-between gap-2">
+                                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                                    <Lock className="w-4 h-4 text-indigo-400" /> Curator Portal Access
+                                </h4>
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-lg border ${
+                                    curatorPassword && curatorPassword.trim()
+                                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                                        : 'bg-zinc-800 border-zinc-700 text-zinc-400'
+                                }`}>
+                                    {curatorPassword && curatorPassword.trim() ? 'Password Locked' : 'Open Access'}
+                                </span>
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <label className="text-[9px] font-black uppercase tracking-wider text-zinc-400">
+                                    Curator Portal Password:
+                                </label>
+                                <div className="flex items-center gap-1.5">
+                                    <div className="relative flex-1">
+                                        <input
+                                            type={showCuratorPass ? 'text' : 'password'}
+                                            value={curatorPassInput}
+                                            onChange={(e) => setCuratorPassInput(e.target.value)}
+                                            placeholder="Enter password (leave blank for none)"
+                                            className="w-full bg-black/75 border border-indigo-500/40 rounded-xl pl-3 pr-9 py-2 text-xs font-bold text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-400"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowCuratorPass(!showCuratorPass)}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
+                                            title={showCuratorPass ? 'Hide password' : 'Show password'}
+                                        >
+                                            {showCuratorPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                        </button>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        disabled={savingCuratorPass}
+                                        onClick={() => handleSaveCuratorPassword(curatorPassInput)}
+                                        className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-[10px] font-black uppercase tracking-wider shrink-0 shadow active:scale-95 transition-all"
+                                    >
+                                        {savingCuratorPass ? 'Saving...' : 'Save'}
+                                    </button>
+                                    {curatorPassword && curatorPassword.trim() && (
+                                        <button
+                                            type="button"
+                                            disabled={savingCuratorPass}
+                                            onClick={() => handleSaveCuratorPassword('')}
+                                            className="p-2 rounded-xl bg-zinc-800 hover:bg-red-600 text-red-400 hover:text-white border border-zinc-700 transition-all shrink-0"
+                                            title="Remove Curator Password"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {curatorPassNotice && (
+                                <div className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border ${
+                                    curatorPassNotice.type === 'error'
+                                        ? 'bg-red-950/80 border-red-500/60 text-red-200'
+                                        : 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200'
+                                }`}>
+                                    {curatorPassNotice.text}
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/5">
+                                <button
+                                    type="button"
+                                    onClick={handleOpenCurator}
+                                    className="p-2 rounded-xl border border-indigo-500/40 bg-indigo-600/20 hover:bg-indigo-600 text-white font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
+                                >
+                                    <ExternalLink className="w-3.5 h-3.5" /> Open Curator
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleCopyCurator}
+                                    className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                                >
+                                    {copiedCurator ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                    {copiedCurator ? 'Copied' : 'Copy Curator'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* 3. SOLD POPUP TIMING & CUSTOM MUSIC (SOLD / TIME UP / UNSOLD) */}
                     <div className="p-4 rounded-2xl border-2 border-emerald-500/35 bg-gradient-to-b from-emerald-950/25 to-zinc-900/90 space-y-4 shadow-xl">
@@ -1563,7 +1732,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                             <button
                                 type="button"
                                 onClick={async () => {
-                                    await db.collection('auctions').doc(auctionId).update({
+                                    await updateAuctionDoc({
                                         'draftBoardState.orderType': 'SNAKE',
                                         'draftBoardState.updatedAt': Date.now()
                                     });
@@ -1581,7 +1750,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                             <button
                                 type="button"
                                 onClick={async () => {
-                                    await db.collection('auctions').doc(auctionId).update({
+                                    await updateAuctionDoc({
                                         'draftBoardState.orderType': 'LINEAR',
                                         'draftBoardState.updatedAt': Date.now()
                                     });

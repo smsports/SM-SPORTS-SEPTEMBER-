@@ -111,7 +111,7 @@ export interface AuctionLog {
   id?: string;
   message: string;
   timestamp: number;
-  type: 'SYSTEM' | 'BID' | 'SOLD' | 'UNSOLD' | 'TRADE' | 'DRAFT_PICK_REQUEST';
+  type: 'SYSTEM' | 'BID' | 'SOLD' | 'UNSOLD' | 'TRADE' | 'DRAFT_PICK_REQUEST' | 'CURATOR_ACTION';
   requestId?: string;
   auctionId?: string;
   playerId?: string;
@@ -282,6 +282,7 @@ export interface AuctionState {
   draftBoardState?: DraftBoardState | null; // Dedicated draft board round, turn, timer, and pick state
   customAudio?: CustomAudioConfig; // Uploaded custom sounds for Sold, Time Up, Unsold
   soldPopupDurationSeconds?: number; // Configurable duration (seconds) for SOLD popup across screens
+  curatorPassword?: string; // Optional password set by Admin to lock Curator Portal access
 }
 
 export type AuctionType = 'BIDDING' | 'DRAFT_BOARD';

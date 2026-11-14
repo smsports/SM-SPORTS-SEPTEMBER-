@@ -4,14 +4,16 @@ import { useAuction } from '../hooks/useAuction';
 import { useTheme } from '../contexts/ThemeContext';
 import { calculateMaxBid, getEffectiveBasePrice } from '../utils';
 import { Player, Team, AuctionStatus } from '../types';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import confetti from 'canvas-confetti';
 import { 
     Trophy, Search, Filter, Compass, AlertCircle, RefreshCw, 
     TrendingUp, Users, HeartPulse, Wallet, ArrowLeft, ArrowUpRight,
-    SearchCode, Timer, Eye, CheckCircle2, XCircle, ChevronRight, FileText, Info
+    SearchCode, Timer, Eye, EyeOff, CheckCircle2, XCircle, ChevronRight, FileText, Info,
+    Lock, Unlock, Shield
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import CategoryDraftBoard from '../components/DraftBoard/CategoryDraftBoard';
 
 const CuratorPortal: React.FC = () => {
     const { id: auctionId } = useParams<{ id: string }>();
@@ -25,11 +27,34 @@ const CuratorPortal: React.FC = () => {
     const [roleFilter, setRoleFilter] = useState('ALL');
     const [categoryFilter, setCategoryFilter] = useState('ALL');
 
+    const storageKey = auctionId ? `sm_curator_auth_${auctionId}` : '';
+    const [unlockedPassword, setUnlockedPassword] = useState<string>(() => {
+        try {
+            return storageKey ? (sessionStorage.getItem(storageKey) || '') : '';
+        } catch {
+            return '';
+        }
+    });
+    const [passwordInput, setPasswordInput] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [authError, setAuthError] = useState<string | null>(null);
+
     useEffect(() => {
         if (auctionId) {
             joinAuction(auctionId);
+            try {
+                setUnlockedPassword(sessionStorage.getItem(`sm_curator_auth_${auctionId}`) || '');
+            } catch {
+                // ignore
+            }
         }
     }, [auctionId]);
+
+    useEffect(() => {
+        if (!auth.currentUser) {
+            auth.signInAnonymously().catch(() => {});
+        }
+    }, []);
 
     const lastStateStatusRef = useRef<AuctionStatus | null>(null);
     const lastPlayerIdRef = useRef<string | number | null>(null);
@@ -144,6 +169,189 @@ const CuratorPortal: React.FC = () => {
         );
     }
 
+    const requiredPassword = (state.curatorPassword || '').trim();
+    const isUnlocked = !requiredPassword || unlockedPassword === requiredPassword;
+
+    const handleUnlockCurator = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setAuthError(null);
+        const entered = passwordInput.trim();
+        if (!entered) {
+            setAuthError('Please enter the Curator Password.');
+            return;
+        }
+        if (entered !== requiredPassword) {
+            setAuthError('Incorrect Curator Password. Please verify with the Admin.');
+            return;
+        }
+        try {
+            if (!auth.currentUser) {
+                await auth.signInAnonymously();
+            }
+        } catch {
+            // proceed even if anonymous auth is unavailable
+        }
+        try {
+            if (storageKey) {
+                sessionStorage.setItem(storageKey, requiredPassword);
+            }
+        } catch {
+            // ignore
+        }
+        setUnlockedPassword(requiredPassword);
+        setPasswordInput('');
+    };
+
+    const handleLockCurator = () => {
+        try {
+            if (storageKey) sessionStorage.removeItem(storageKey);
+        } catch {
+            // ignore
+        }
+        setUnlockedPassword('');
+        setPasswordInput('');
+        setAuthError(null);
+    };
+
+    if (requiredPassword && !isUnlocked) {
+        return (
+            <div className={`min-h-screen flex items-center justify-center p-4 font-sans ${isDark ? 'bg-zinc-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
+                <div className={`w-full max-w-md rounded-3xl border p-6 sm:p-8 shadow-2xl space-y-6 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-slate-200'}`}>
+                    <div className="text-center space-y-2">
+                        <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-lg">
+                            <Lock className="w-7 h-7" />
+                        </div>
+                        <h1 className="text-xl font-black uppercase tracking-tight">
+                            {state.tournamentName || 'CURATOR PORTAL'}
+                        </h1>
+                        <p className={`text-[11px] font-black uppercase tracking-[0.2em] ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
+                            Curator Access Locked • Password Required
+                        </p>
+                    </div>
+
+                    <form onSubmit={handleUnlockCurator} className="space-y-4">
+                        <div className="space-y-1.5">
+                            <label className={`block text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
+                                Enter Curator Password
+                            </label>
+                            <div className="relative">
+                                <input
+                                    type={showPassword ? 'text' : 'password'}
+                                    value={passwordInput}
+                                    onChange={(e) => {
+                                        setPasswordInput(e.target.value);
+                                        if (authError) setAuthError(null);
+                                    }}
+                                    placeholder="Curator password..."
+                                    autoFocus
+                                    className={`w-full rounded-2xl border px-4 py-3 pr-11 text-sm font-bold focus:outline-none focus:ring-2 transition-all ${
+                                        isDark
+                                            ? 'bg-zinc-950 border-zinc-700 text-white focus:ring-amber-500/50 focus:border-amber-500'
+                                            : 'bg-slate-50 border-slate-200 text-slate-900 focus:ring-blue-500/40 focus:border-blue-500'
+                                    }`}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg ${isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}
+                                    title={showPassword ? 'Hide password' : 'Show password'}
+                                >
+                                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </button>
+                            </div>
+                        </div>
+
+                        {authError && (
+                            <div className="px-3.5 py-2.5 rounded-xl bg-red-500/15 border border-red-500/40 text-red-400 text-xs font-bold flex items-center gap-2">
+                                <AlertCircle className="w-4 h-4 shrink-0" />
+                                <span>{authError}</span>
+                            </div>
+                        )}
+
+                        <button
+                            type="submit"
+                            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2"
+                        >
+                            <Unlock className="w-4 h-4" /> Unlock Curator Console
+                        </button>
+                    </form>
+
+                    <button
+                        type="button"
+                        onClick={() => navigate(`/auction/${auctionId}`)}
+                        className={`w-full py-2.5 rounded-xl border text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 transition-all ${
+                            isDark ? 'border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-white' : 'border-slate-200 text-slate-500 hover:bg-slate-100'
+                        }`}
+                    >
+                        <ArrowLeft className="w-3.5 h-3.5" /> Back to Spectator Screen
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // DRAFT BOARD CURATOR CONSOLE: Full interactive draft board controls for Curator
+    if (state.auctionType === 'DRAFT_BOARD') {
+        return (
+            <div className={`h-screen flex flex-col overflow-hidden font-sans ${isDark ? 'bg-zinc-950 text-white' : 'bg-slate-50 text-slate-800'}`}>
+                <header className={`shrink-0 border-b z-40 ${isDark ? 'bg-zinc-900 border-zinc-800/80' : 'bg-white border-slate-200'}`}>
+                    <div className="px-4 py-2.5 sm:px-6 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                            <button
+                                type="button"
+                                onClick={() => navigate(`/auction/${auctionId}`)}
+                                className={`p-2 rounded-xl border transition-all ${isDark ? 'hover:bg-zinc-800 border-zinc-800 text-zinc-400' : 'hover:bg-slate-100 border-slate-200 text-slate-500'}`}
+                                title="Back to Spectator Screen"
+                            >
+                                <ArrowLeft className="w-4 h-4" />
+                            </button>
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <span className="flex h-2.5 w-2.5 relative shrink-0">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                                    </span>
+                                    <h1 className="text-base sm:text-lg font-black uppercase tracking-tight leading-none truncate">
+                                        {state.tournamentName || 'LIVE DRAFT AUCTION'}
+                                    </h1>
+                                </div>
+                                <p className={`text-[9px] font-black uppercase tracking-[0.2em] mt-1 ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>
+                                    Curator Console • Draft Board Control
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <span className="px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                                <Shield className="w-3.5 h-3.5" /> Curator Access Active
+                            </span>
+                            {requiredPassword && (
+                                <button
+                                    type="button"
+                                    onClick={handleLockCurator}
+                                    className={`px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all active:scale-95 ${
+                                        isDark ? 'bg-zinc-800 border-zinc-700 text-amber-400 hover:bg-zinc-700' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                                    }`}
+                                    title="Lock Curator Console"
+                                >
+                                    <Lock className="w-3.5 h-3.5" /> Lock
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </header>
+
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    <CategoryDraftBoard
+                        isAdmin={true}
+                        isCurator={true}
+                        auctionId={auctionId}
+                    />
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className={`min-h-screen font-sans transition-colors duration-500 ${isDark ? 'bg-zinc-950 text-white' : 'bg-slate-50 text-slate-800'}`}>
             
@@ -190,6 +398,18 @@ const CuratorPortal: React.FC = () => {
                             <p className={`text-[8px] font-black uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>Total Spent Purse</p>
                             <p className="text-xs font-black tabular-nums text-emerald-500">₹{totalPurseSpent.toLocaleString()}</p>
                         </div>
+                        {requiredPassword && (
+                            <button
+                                type="button"
+                                onClick={handleLockCurator}
+                                className={`px-3 py-2 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all active:scale-95 ${
+                                    isDark ? 'bg-zinc-900 border-zinc-800 text-amber-400 hover:bg-zinc-800' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                                }`}
+                                title="Lock Curator Console"
+                            >
+                                <Lock className="w-3.5 h-3.5" /> Lock
+                            </button>
+                        )}
                     </div>
                 </div>
             </header>
