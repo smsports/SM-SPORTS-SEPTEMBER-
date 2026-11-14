@@ -87,6 +87,9 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     const [pickError, setPickError] = useState<string | null>(null);
     const [pickNotice, setPickNotice] = useState<string | null>(null);
     const [pendingPickRequests, setPendingPickRequests] = useState<PendingDraftPickRequest[]>([]);
+    const [isRequestPopupMinimized, setIsRequestPopupMinimized] = useState<boolean>(false);
+    const [isApprovingPopup, setIsApprovingPopup] = useState<boolean>(false);
+    const lastTopRequestIdRef = useRef<string | null>(null);
     const [lastProcessedRequestNotice, setLastProcessedRequestNotice] = useState<string | null>(null);
     const dismissedRequestIdsRef = useRef<Set<string>>(new Set());
     const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,6 +108,14 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             setPickNotice(null);
         }, 7000);
     };
+
+    useEffect(() => {
+        const topId = pendingPickRequests[0]?.requestId || null;
+        if (topId && topId !== lastTopRequestIdRef.current) {
+            setIsRequestPopupMinimized(false);
+        }
+        lastTopRequestIdRef.current = topId;
+    }, [pendingPickRequests]);
     const [activeUnsoldBanner, setActiveUnsoldBanner] = useState<{
         playerName: string;
         role?: string;
@@ -1232,9 +1243,9 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         const soldTeamId = pickInfo?.teamId || player.soldToId || player.teamId;
         const soldPrice = Number(pickInfo?.soldPrice ?? player.soldPrice ?? 0);
 
-        // 1. Revert player in players subcollection
+        // 1. Revert player in players subcollection back to POOL
         const playerResetData = {
-            status: 'UNSOLD',
+            status: 'POOL',
             soldTo: null,
             soldToId: null,
             teamId: null,
@@ -1356,7 +1367,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 if (history.length > 0) {
                     const lastPick = history[history.length - 1];
                     await db.collection('auctions').doc(auctionId).collection('players').doc(String(lastPick.playerId)).update({
-                        status: 'UNSOLD',
+                        status: 'POOL',
                         soldTo: null,
                         soldToId: null,
                         teamId: null,
@@ -1386,7 +1397,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 const currentRoundPicks = (currentDraft.history || []).filter(h => h.round === currentRound);
                 for (const pick of currentRoundPicks) {
                     await db.collection('auctions').doc(auctionId).collection('players').doc(String(pick.playerId)).update({
-                        status: 'UNSOLD', soldTo: null, soldToId: null, teamId: null, soldPrice: null, soldAt: null
+                        status: 'POOL', soldTo: null, soldToId: null, teamId: null, soldPrice: null, soldAt: null
                     });
                     const t = teamsRef.current.find(tm => String(tm.id) === String(pick.teamId));
                     if (t) {
@@ -1410,10 +1421,24 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             } else if (action === 'RESET_FULL_DRAFT') {
                 const currentDraft = draftStateRef.current;
                 const allDraftPicks = currentDraft.history || [];
-                for (const pick of allDraftPicks) {
-                    await db.collection('auctions').doc(auctionId).collection('players').doc(String(pick.playerId)).update({
-                        status: 'UNSOLD', soldTo: null, soldToId: null, teamId: null, soldPrice: null, soldAt: null
+                const playersCol = db.collection('auctions').doc(auctionId).collection('players');
+                const playerIdsToReset = new Set<string>();
+                playersRef.current.forEach(p => {
+                    if (p.id !== undefined && p.id !== null) playerIdsToReset.add(String(p.id));
+                });
+                allDraftPicks.forEach(pick => {
+                    if (pick.playerId !== undefined && pick.playerId !== null) playerIdsToReset.add(String(pick.playerId));
+                });
+                const resetList = Array.from(playerIdsToReset);
+                const batchSize = 300;
+                for (let i = 0; i < resetList.length; i += batchSize) {
+                    const batch = db.batch();
+                    resetList.slice(i, i + batchSize).forEach(pid => {
+                        batch.update(playersCol.doc(pid), {
+                            status: 'POOL', soldTo: null, soldToId: null, teamId: null, soldPrice: null, soldAt: null
+                        });
                     });
+                    await batch.commit();
                 }
                 for (const t of teamsRef.current) {
                     const spent = allDraftPicks.filter(p => String(p.teamId) === String(t.id)).reduce((s, p) => s + (p.soldPrice || 0), 0);
@@ -2070,8 +2095,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             </div>
                         )}
 
-                        {/* Broadcast Copy Links: Projector & OBS (Admin Only) */}
-                        {isAdmin && !isProjectorView && !isOBSView && (
+                        {/* Broadcast Copy Links: Projector & OBS (Admin Only — hidden for Curator) */}
+                        {isAdmin && !isCurator && !isProjectorView && !isOBSView && (
                             <div className="flex items-center gap-2">
                                 <div className="flex items-center rounded-xl overflow-hidden border border-blue-500/30 shadow-sm">
                                     <button
@@ -2297,13 +2322,24 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         )}
                         {isAdmin && !isProjectorView && !isOBSView && pendingPickRequests.length > 0 && (
                             <div className="p-3.5 rounded-2xl border-2 border-emerald-400 bg-gradient-to-r from-emerald-950/90 via-zinc-950 to-emerald-950/90 space-y-2.5 shadow-xl">
-                                <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
                                     <span className="text-xs font-black uppercase tracking-wider text-emerald-300 flex items-center gap-2">
                                         <Sparkles className="w-4 h-4 text-amber-400" /> Incoming Team Pick Requests ({pendingPickRequests.length})
                                     </span>
-                                    <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-500 text-black animate-pulse">
-                                        Approve or Auto-Finalize
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        {isRequestPopupMinimized && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsRequestPopupMinimized(false)}
+                                                className="px-3 py-1 rounded-full bg-amber-500 hover:bg-amber-400 text-black text-[10px] font-black uppercase tracking-wider shadow active:scale-95 transition-all"
+                                            >
+                                                Open Big Popup
+                                            </button>
+                                        )}
+                                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-500 text-black animate-pulse">
+                                            Approve or Auto-Finalize
+                                        </span>
+                                    </div>
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                     {pendingPickRequests.map(req => (
@@ -2678,6 +2714,159 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             )}
 
             {renderUnsoldBannerOverlay()}
+
+            {/* BIG TEAM PICK REQUEST APPROVAL POPUP (ADMIN & CURATOR DASHBOARD) */}
+            {isAdmin && !isProjectorView && !isOBSView && pendingPickRequests.length > 0 && !isRequestPopupMinimized && (() => {
+                const activeReq = pendingPickRequests[0];
+                const reqPlayer = players.find(p => String(p.id) === String(activeReq.playerId));
+                const reqTeam = teams.find(t => String(t.id) === String(activeReq.teamId));
+
+                return (
+                    <div className="fixed inset-0 z-[900] flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+                        <div className="relative w-full max-w-2xl rounded-[2rem] border-2 border-emerald-400 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black shadow-[0_0_80px_rgba(16,185,129,0.45)] overflow-hidden animate-in zoom-in-95 duration-200">
+                            {/* Top Glowing Header Banner */}
+                            <div className="px-6 py-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-9 h-9 rounded-xl bg-black/25 border border-white/25 flex items-center justify-center text-amber-300 shrink-0">
+                                        <Sparkles className="w-5 h-5 animate-pulse" />
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-100">
+                                            Incoming Team Pick Request
+                                        </p>
+                                        <h3 className="text-base sm:text-lg font-black uppercase tracking-tight text-white leading-tight">
+                                            Approval Required • Round {activeReq.round}
+                                        </h3>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                    {pendingPickRequests.length > 1 && (
+                                        <span className="px-2.5 py-1 rounded-full bg-black/40 border border-white/20 text-amber-300 text-[10px] font-black uppercase tracking-wider">
+                                            1 of {pendingPickRequests.length} Pending
+                                        </span>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsRequestPopupMinimized(true)}
+                                        className="px-2.5 py-1.5 rounded-xl bg-black/30 hover:bg-black/50 text-white text-[10px] font-black uppercase tracking-wider border border-white/20 transition-all"
+                                        title="Minimize popup to bar"
+                                    >
+                                        Minimize
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Body Content: Player Card + Requesting Team Showcase */}
+                            <div className="p-6 sm:p-8 space-y-6">
+                                <div className="flex flex-col sm:flex-row items-center gap-6">
+                                    {/* Big Player Photo */}
+                                    <div className="relative w-32 h-32 sm:w-40 sm:h-40 rounded-3xl overflow-hidden border-2 border-amber-400/70 bg-zinc-900 shadow-2xl shrink-0">
+                                        {reqPlayer?.photoUrl ? (
+                                            <img
+                                                src={reqPlayer.photoUrl}
+                                                alt={activeReq.playerName}
+                                                className="w-full h-full object-cover object-top"
+                                            />
+                                        ) : (
+                                            <div className="w-full h-full flex items-center justify-center text-4xl font-black text-zinc-500 bg-zinc-900">
+                                                {activeReq.playerName.charAt(0)}
+                                            </div>
+                                        )}
+                                        {reqPlayer?.jerseyNumber && (
+                                            <span className="absolute top-2 right-2 px-2 py-0.5 rounded-lg bg-black/80 border border-amber-400/50 text-amber-300 font-black text-xs">
+                                                #{reqPlayer.jerseyNumber}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {/* Player & Team Details */}
+                                    <div className="flex-1 min-w-0 text-center sm:text-left space-y-3 w-full">
+                                        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                                            <span className="px-2.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-black uppercase tracking-wider">
+                                                {reqPlayer?.category || 'Draft Pool'}
+                                            </span>
+                                            <span className="px-2.5 py-0.5 rounded-lg bg-blue-500/20 border border-blue-400/40 text-blue-300 text-[10px] font-black uppercase tracking-wider">
+                                                {reqPlayer?.role || 'Player'}
+                                            </span>
+                                        </div>
+
+                                        <h2 className="text-2xl sm:text-4xl font-black uppercase tracking-tight text-white leading-none truncate">
+                                            {activeReq.playerName}
+                                        </h2>
+
+                                        {/* Requesting Franchise Box */}
+                                        <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-emerald-500/40 flex items-center justify-between gap-3">
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                {reqTeam?.logoUrl ? (
+                                                    <img
+                                                        src={reqTeam.logoUrl}
+                                                        alt={activeReq.teamName}
+                                                        className="w-11 h-11 rounded-xl object-contain bg-white p-1 border border-emerald-400/50 shrink-0 shadow"
+                                                    />
+                                                ) : (
+                                                    <div className="w-11 h-11 rounded-xl bg-emerald-600 text-white font-black text-lg flex items-center justify-center shrink-0">
+                                                        {activeReq.teamName.charAt(0)}
+                                                    </div>
+                                                )}
+                                                <div className="min-w-0 text-left">
+                                                    <p className="text-[9px] font-black uppercase tracking-widest text-emerald-400">
+                                                        Requested By Team
+                                                    </p>
+                                                    <p className="text-base sm:text-lg font-black uppercase tracking-tight text-white truncate">
+                                                        {activeReq.teamName}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="text-right shrink-0 pl-3 border-l border-zinc-800">
+                                                <p className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Squad</p>
+                                                <p className="text-sm font-black text-amber-300 tabular-nums">
+                                                    {reqTeam?.players?.length || 0} Picks
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {activeReq.errorMessage && (
+                                    <div className="px-4 py-3 rounded-2xl bg-red-950/90 border border-red-500/70 text-red-200 text-xs font-bold flex items-center gap-2">
+                                        <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                                        <span>{activeReq.errorMessage}</span>
+                                    </div>
+                                )}
+
+                                {/* Big Action Buttons */}
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                                    <button
+                                        type="button"
+                                        disabled={isApprovingPopup}
+                                        onClick={() => handleDismissPickRequest(activeReq.requestId)}
+                                        className="sm:col-span-1 py-4 px-4 rounded-2xl bg-zinc-900 hover:bg-red-600/90 text-zinc-300 hover:text-white border-2 border-zinc-700 hover:border-red-500 font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                                    >
+                                        <X className="w-4 h-4 stroke-[3]" /> Dismiss
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={isApprovingPopup}
+                                        onClick={async () => {
+                                            setIsApprovingPopup(true);
+                                            try {
+                                                await handleApprovePickRequest(activeReq);
+                                            } finally {
+                                                setIsApprovingPopup(false);
+                                            }
+                                        }}
+                                        className="sm:col-span-2 py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-500 hover:from-emerald-400 hover:to-green-400 text-black font-black text-sm sm:text-base uppercase tracking-wider shadow-[0_10px_35px_rgba(16,185,129,0.5)] flex items-center justify-center gap-2.5 transition-all active:scale-95 disabled:opacity-60"
+                                    >
+                                        <Check className="w-5 h-5 stroke-[3]" />
+                                        {isApprovingPopup ? 'Processing SOLD...' : 'Approve & Mark SOLD'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* CONFIGURABLE SOLD CELEBRATION POPUP ACROSS ALL SCREENS */}
             <SoldCelebrationPopup

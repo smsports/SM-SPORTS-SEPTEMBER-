@@ -217,9 +217,9 @@ export const DraftAdminControls: React.FC<Props> = ({
         setIsProcessing(true);
 
         try {
-            // 1. Revert player status to UNSOLD
+            // 1. Revert player status to POOL
             await db.collection('auctions').doc(auctionId).collection('players').doc(String(lastPick.playerId)).update({
-                status: 'UNSOLD',
+                status: 'POOL',
                 soldTo: null,
                 soldToId: null,
                 teamId: null,
@@ -273,10 +273,10 @@ export const DraftAdminControls: React.FC<Props> = ({
 
         setIsProcessing(true);
         try {
-            // Revert all picks in current round
+            // Revert all picks in current round to POOL
             for (const pick of currentRoundPicks) {
                 await db.collection('auctions').doc(auctionId).collection('players').doc(String(pick.playerId)).update({
-                    status: 'UNSOLD',
+                    status: 'POOL',
                     soldTo: null,
                     soldToId: null,
                     teamId: null,
@@ -324,17 +324,32 @@ export const DraftAdminControls: React.FC<Props> = ({
     const handleResetFullDraft = async () => {
         setIsProcessing(true);
         try {
-            // Revert ALL draft-sold players back to UNSOLD
+            // Revert ALL players in the tournament back into POOL (batch-committed for speed & completeness)
             const allDraftPicks = draftState.history || [];
-            for (const pick of allDraftPicks) {
-                await db.collection('auctions').doc(auctionId).collection('players').doc(String(pick.playerId)).update({
-                    status: 'UNSOLD',
-                    soldTo: null,
-                    soldToId: null,
-                    teamId: null,
-                    soldPrice: null,
-                    soldAt: null
+            const playersCol = db.collection('auctions').doc(auctionId).collection('players');
+            const playerIdsToReset = new Set<string>();
+            players.forEach(p => {
+                if (p.id !== undefined && p.id !== null) playerIdsToReset.add(String(p.id));
+            });
+            allDraftPicks.forEach(pick => {
+                if (pick.playerId !== undefined && pick.playerId !== null) playerIdsToReset.add(String(pick.playerId));
+            });
+
+            const resetList = Array.from(playerIdsToReset);
+            const batchSize = 300;
+            for (let i = 0; i < resetList.length; i += batchSize) {
+                const batch = db.batch();
+                resetList.slice(i, i + batchSize).forEach(pid => {
+                    batch.update(playersCol.doc(pid), {
+                        status: 'POOL',
+                        soldTo: null,
+                        soldToId: null,
+                        teamId: null,
+                        soldPrice: null,
+                        soldAt: null
+                    });
                 });
+                await batch.commit();
             }
 
             // Restore all team budgets and squad
@@ -629,10 +644,12 @@ export const DraftAdminControls: React.FC<Props> = ({
                         <Shield className={`w-5 h-5 ${isCurator ? 'text-emerald-400' : 'text-blue-500'}`} />
                         <div>
                             <h3 className="text-sm font-black uppercase text-white tracking-wider flex items-center gap-1.5">
-                                {isCurator ? 'Curator Draft Controls' : 'Draft Admin Controls'}
+                                {isCurator ? 'Curator Round Controls' : 'Draft Admin Controls'}
                             </h3>
                             <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-widest">
-                                {activeSection === 'MAIN'
+                                {isCurator
+                                    ? 'Round Selection • Turn Timer • Approvals'
+                                    : activeSection === 'MAIN'
                                     ? 'Round Selection • OBS • Projector'
                                     : 'Audio • Automation • Order • Access'}
                             </p>
@@ -640,33 +657,35 @@ export const DraftAdminControls: React.FC<Props> = ({
                     </div>
                 </div>
 
-                {/* Main Page vs Separate Settings Section Navigation */}
-                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-black/70 border border-zinc-800">
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('MAIN')}
-                        className={`py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
-                            activeSection === 'MAIN'
-                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                                : 'text-zinc-400 hover:text-white'
-                        }`}
-                    >
-                        <Monitor className="w-3.5 h-3.5" />
-                        <span>Main Controls</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('SETTINGS')}
-                        className={`py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
-                            activeSection === 'SETTINGS'
-                                ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30'
-                                : 'text-zinc-400 hover:text-white'
-                        }`}
-                    >
-                        <Settings className="w-3.5 h-3.5" />
-                        <span>Settings</span>
-                    </button>
-                </div>
+                {/* Main Page vs Separate Settings Section Navigation (Admin Only — hidden for Curator) */}
+                {!isCurator && (
+                    <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-black/70 border border-zinc-800">
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('MAIN')}
+                            className={`py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                                activeSection === 'MAIN'
+                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                                    : 'text-zinc-400 hover:text-white'
+                            }`}
+                        >
+                            <Monitor className="w-3.5 h-3.5" />
+                            <span>Main Controls</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('SETTINGS')}
+                            className={`py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                                activeSection === 'SETTINGS'
+                                    ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30'
+                                    : 'text-zinc-400 hover:text-white'
+                            }`}
+                        >
+                            <Settings className="w-3.5 h-3.5" />
+                            <span>Settings</span>
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* LIVE TEAM OWNER PICK REQUESTS & CONFIRMATION NOTICE */}
@@ -743,9 +762,9 @@ export const DraftAdminControls: React.FC<Props> = ({
                 </div>
             )}
 
-            {activeSection === 'MAIN' ? (
+            {(isCurator || activeSection === 'MAIN') ? (
                 /* =====================================================================
-                   MAIN PAGE: ONLY ROUND SELECTION, OBS SETTINGS, AND PROJECTOR SETTINGS
+                   MAIN PAGE: ROUND SELECTION (+ OBS & PROJECTOR FOR ADMIN ONLY)
                    ===================================================================== */
                 <div className="space-y-5">
                     {/* 1. ROUND SELECTION & TURN CONTROL */}
@@ -759,7 +778,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                             </span>
                         </div>
 
-                        {draftState.roundStatus === 'ROUND_COMPLETED' && (
+                        {draftState.roundStatus === 'ROUND_COMPLETED' ? (
                             <div className="p-3 rounded-xl bg-gradient-to-br from-blue-900/50 via-indigo-900/40 to-zinc-900 border border-blue-500/50 text-center space-y-2">
                                 <p className="text-[11px] font-black uppercase tracking-wider text-blue-300">
                                     🎉 Round {draftState.currentRound} Complete!
@@ -772,6 +791,28 @@ export const DraftAdminControls: React.FC<Props> = ({
                                     <Play className="w-3.5 h-3.5 fill-white" /> Start Round {draftState.currentRound + 1}
                                 </button>
                             </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setConfirmAction({
+                                        title: `Start New Round (Round ${draftState.currentRound + 1})?`,
+                                        message: `This will advance the draft to Round ${draftState.currentRound + 1}, reset the turn order to Pick #1, and start the turn timer.`,
+                                        action: async () => {
+                                            setIsProcessing(true);
+                                            try {
+                                                await onStartNextRound();
+                                            } finally {
+                                                setIsProcessing(false);
+                                                setConfirmAction(null);
+                                            }
+                                        }
+                                    });
+                                }}
+                                className="w-full py-2 px-3 rounded-xl font-black text-[10px] uppercase tracking-widest bg-blue-600/20 hover:bg-blue-600/35 text-blue-300 border border-blue-500/40 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                            >
+                                <FastForward className="w-3.5 h-3.5" /> Start New Round (Round {draftState.currentRound + 1})
+                            </button>
                         )}
 
                         {/* Picking Team Selector */}
@@ -934,7 +975,93 @@ export const DraftAdminControls: React.FC<Props> = ({
                         </div>
                     </div>
 
-                    {/* 2. OBS SETTINGS */}
+                    {/* CURATOR ONLY: COMPACT ROUND ORDER & ROUND ROLLBACK (NO BROADCAST / NO RESET FULL) */}
+                    {isCurator && (
+                        <div className="p-4 rounded-2xl border border-zinc-800 bg-zinc-900/80 space-y-3">
+                            <div className="flex items-center justify-between">
+                                <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-400 flex items-center gap-1.5">
+                                    <Shuffle className="w-3.5 h-3.5 text-blue-500" /> Round Order &amp; Round Undo
+                                </h4>
+                                <span className="text-[9px] font-black text-blue-400 uppercase">
+                                    {draftState.orderType || 'SNAKE'}
+                                </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        await updateAuctionDoc({
+                                            'draftBoardState.orderType': 'SNAKE',
+                                            'draftBoardState.updatedAt': Date.now()
+                                        });
+                                    }}
+                                    className={`p-2 rounded-xl border text-center transition-all ${
+                                        draftState.orderType === 'SNAKE'
+                                            ? 'bg-blue-600/20 border-blue-500 text-blue-400 font-black'
+                                            : 'bg-zinc-800/60 border-zinc-700 text-zinc-400 font-bold'
+                                    }`}
+                                >
+                                    <p className="text-[10px] uppercase">Snake Draft</p>
+                                    <p className="text-[8px] opacity-70">1&rarr;N then N&rarr;1</p>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        await updateAuctionDoc({
+                                            'draftBoardState.orderType': 'LINEAR',
+                                            'draftBoardState.updatedAt': Date.now()
+                                        });
+                                    }}
+                                    className={`p-2 rounded-xl border text-center transition-all ${
+                                        draftState.orderType === 'LINEAR'
+                                            ? 'bg-blue-600/20 border-blue-500 text-blue-400 font-black'
+                                            : 'bg-zinc-800/60 border-zinc-700 text-zinc-400 font-bold'
+                                    }`}
+                                >
+                                    <p className="text-[10px] uppercase">Linear Draft</p>
+                                    <p className="text-[8px] opacity-70">1&rarr;N each round</p>
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
+                                <button
+                                    type="button"
+                                    disabled={(draftState.history || []).length === 0 || isProcessing}
+                                    onClick={() => {
+                                        const lastPick = draftState.history[draftState.history.length - 1];
+                                        setConfirmAction({
+                                            title: `Undo Last Pick: ${lastPick.playerName}?`,
+                                            message: `This will return ${lastPick.playerName} to the POOL and restore the turn to ${lastPick.teamName}.`,
+                                            action: handleUndoLastPick
+                                        });
+                                    }}
+                                    className="py-2 px-2.5 rounded-xl font-bold text-[10px] uppercase tracking-wider bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-40"
+                                >
+                                    <Undo2 className="w-3.5 h-3.5 text-amber-400" /> Undo Pick
+                                </button>
+
+                                <button
+                                    type="button"
+                                    disabled={isProcessing}
+                                    onClick={() => {
+                                        setConfirmAction({
+                                            title: `Reset Round ${draftState.currentRound}?`,
+                                            message: `This will return ALL players drafted in Round ${draftState.currentRound} back to POOL and restart the round turn order.`,
+                                            action: handleResetCurrentRound
+                                        });
+                                    }}
+                                    className="py-2 px-2.5 rounded-xl font-bold text-[10px] uppercase tracking-wider bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-40"
+                                >
+                                    <RotateCcw className="w-3.5 h-3.5" /> Reset Round
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 2. OBS SETTINGS (Admin Only — hidden for Curator) */}
+                    {!isCurator && (
                     <div className="p-4 rounded-2xl border-2 border-purple-500/40 bg-gradient-to-b from-purple-950/30 to-zinc-900/90 space-y-3 shadow-xl">
                         <div className="flex items-center justify-between">
                             <h4 className="text-xs font-black uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
@@ -1021,8 +1148,10 @@ export const DraftAdminControls: React.FC<Props> = ({
                             </button>
                         </div>
                     </div>
+                    )}
 
-                    {/* 3. PROJECTOR SETTINGS */}
+                    {/* 3. PROJECTOR SETTINGS (Admin Only — hidden for Curator) */}
+                    {!isCurator && (
                     <div className="p-4 rounded-2xl border-2 border-blue-500/40 bg-gradient-to-b from-blue-950/30 to-zinc-900/90 space-y-4 shadow-xl">
                         <div className="flex items-center justify-between">
                             <h4 className="text-xs font-black uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
@@ -1297,8 +1426,9 @@ export const DraftAdminControls: React.FC<Props> = ({
                             </button>
                         </div>
                     </div>
+                    )}
                 </div>
-            ) : (
+            ) : !isCurator ? (
                 /* =====================================================================
                    SEPARATE SETTINGS SECTION: ALL OTHER SETTINGS & ADMIN CONFIGURATION
                    ===================================================================== */
@@ -1859,7 +1989,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                             onClick={() => {
                                 setConfirmAction({
                                     title: `Reset Round ${draftState.currentRound}?`,
-                                    message: `This will revert ALL players drafted during Round ${draftState.currentRound} back to UNSOLD and restore them to the draft pool.`,
+                                    message: `This will return ALL players drafted during Round ${draftState.currentRound} back to POOL and restore them to the draft pool.`,
                                     action: handleResetCurrentRound
                                 });
                             }}
@@ -1874,7 +2004,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                             onClick={() => {
                                 setConfirmAction({
                                     title: 'RESET ENTIRE DRAFT AUCTION?',
-                                    message: 'WARNING: This will reset all rounds, set all drafted players back to UNSOLD, and reset team squads. This cannot be undone.',
+                                    message: 'WARNING: This will reset all rounds, set ALL players status to POOL, and reset team squads. This cannot be undone.',
                                     action: handleResetFullDraft
                                 });
                             }}
@@ -1884,7 +2014,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                         </button>
                     </div>
                 </div>
-            )}
+            ) : null}
 
             {/* CONFIRMATION MODAL */}
             {confirmAction && (

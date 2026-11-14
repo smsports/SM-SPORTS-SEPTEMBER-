@@ -617,15 +617,28 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
         const defaultPurse = auctionSnap.data()?.purseValue || 10000;
         const playersSnap = await auctionRef.collection('players').get();
         const teamsSnap = await auctionRef.collection('teams').get();
-        const modifiedPlayers = playersSnap.docs.filter(d => { const data = d.data(); return data.status !== undefined || data.soldPrice !== undefined || data.soldTo !== undefined; });
+        const modifiedPlayers = playersSnap.docs.filter(d => {
+            const data = d.data();
+            return data.status !== 'POOL' || data.soldPrice !== undefined || data.soldTo !== undefined || data.soldToId !== undefined || data.teamId !== undefined || data.soldAt !== undefined;
+        });
         const batchSize = 300;
         const allDocs = [ ...modifiedPlayers.map(d => ({ type: 'PLAYER', ref: d.ref })), ...teamsSnap.docs.map(d => ({ type: 'TEAM', ref: d.ref })) ];
         for (let i = 0; i < allDocs.length; i += batchSize) {
             const batch = db.batch();
             const chunk = allDocs.slice(i, i + batchSize);
             chunk.forEach(item => {
-                if (item.type === 'PLAYER') { batch.update(item.ref, { status: firebase.firestore.FieldValue.delete(), soldPrice: firebase.firestore.FieldValue.delete(), soldTo: firebase.firestore.FieldValue.delete() }); }
-                else { batch.update(item.ref, { budget: defaultPurse, players: [] }); }
+                if (item.type === 'PLAYER') {
+                    batch.update(item.ref, {
+                        status: 'POOL',
+                        soldPrice: firebase.firestore.FieldValue.delete(),
+                        soldTo: firebase.firestore.FieldValue.delete(),
+                        soldToId: firebase.firestore.FieldValue.delete(),
+                        teamId: firebase.firestore.FieldValue.delete(),
+                        soldAt: firebase.firestore.FieldValue.delete()
+                    });
+                } else {
+                    batch.update(item.ref, { budget: defaultPurse, players: [] });
+                }
             });
             if (i === 0) { 
                 batch.update(auctionRef, { 
