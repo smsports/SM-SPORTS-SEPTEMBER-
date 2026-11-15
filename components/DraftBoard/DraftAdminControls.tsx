@@ -9,7 +9,7 @@ import {
     Users, Shuffle, ArrowRight, Monitor, Cast, ExternalLink, Copy, Check,
     LayoutGrid, Columns, Table as TableIcon, LayoutList, Eye, Filter,
     Trophy, Palette, Sparkles, Zap, Lock, Music, Upload, Volume2, Square,
-    Trash2, Timer, Layers, EyeOff, Ban, X
+    Trash2, Timer, Layers, EyeOff, Ban, X, ArrowUp, ArrowDown
 } from 'lucide-react';
 import { DRAFT_THEMES, DraftThemeKey, getDraftTheme } from '../../utils/draftThemes';
 
@@ -392,18 +392,66 @@ export const DraftAdminControls: React.FC<Props> = ({
         }
     };
 
-    // Extract all unique categories present in tournament
-    const availableCategories = useMemo(() => {
+    // Extract all unique categories present in tournament (sorted by admin categoryOrder)
+    const defaultCategories = useMemo(() => {
         const set = new Set<string>();
         (categories || []).forEach(c => {
             if (c.name) set.add(c.name);
         });
+        if (set.size === 0) {
+            set.add('Batsman');
+            set.add('Bowler');
+            set.add('All-Rounder');
+            set.add('Wicketkeeper');
+        }
         players.forEach(p => {
             const cat = p.category || p.role;
             if (cat) set.add(cat);
         });
         return Array.from(set);
     }, [categories, players]);
+
+    const availableCategories = useMemo(() => {
+        const customOrder = draftState.categoryOrder || [];
+        if (customOrder.length === 0) return defaultCategories;
+
+        const orderMap = new Map<string, number>();
+        customOrder.forEach((name, idx) => {
+            orderMap.set(name.trim().toLowerCase(), idx);
+        });
+
+        return [...defaultCategories].sort((a, b) => {
+            const idxA = orderMap.get(a.trim().toLowerCase());
+            const idxB = orderMap.get(b.trim().toLowerCase());
+            if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+            if (idxA !== undefined) return -1;
+            if (idxB !== undefined) return 1;
+            return 0;
+        });
+    }, [defaultCategories, draftState.categoryOrder]);
+
+    const handleMoveCategoryOrder = async (index: number, direction: 'UP' | 'DOWN') => {
+        if (!auctionId) return;
+        const targetIndex = direction === 'UP' ? index - 1 : index + 1;
+        if (targetIndex < 0 || targetIndex >= availableCategories.length) return;
+
+        const nextOrder = [...availableCategories];
+        const [moved] = nextOrder.splice(index, 1);
+        nextOrder.splice(targetIndex, 0, moved);
+
+        await updateAuctionDoc({
+            'draftBoardState.categoryOrder': nextOrder,
+            'draftBoardState.updatedAt': Date.now()
+        }).catch(console.error);
+    };
+
+    const handleResetCategoryOrder = async () => {
+        if (!auctionId) return;
+        await updateAuctionDoc({
+            'draftBoardState.categoryOrder': [],
+            'draftBoardState.updatedAt': Date.now()
+        }).catch(console.error);
+    };
 
     // Switch Projector & OBS View: Players Draft Board vs Team Squads vs Summary
     const handleSetBroadcastView = async (view: 'PLAYERS' | 'SQUADS' | 'SUMMARY') => {
@@ -1894,6 +1942,73 @@ export const DraftAdminControls: React.FC<Props> = ({
                                 <p className="text-[10px] uppercase">Linear Draft</p>
                                 <p className="text-[8px] opacity-70">1&rarr;N each round</p>
                             </button>
+                        </div>
+                    </div>
+
+                    {/* 4B. CATEGORY DISPLAY ORDER ORGANIZER */}
+                    <div className="p-4 rounded-2xl border-2 border-cyan-500/30 bg-gradient-to-b from-cyan-950/20 to-zinc-900/90 space-y-3 shadow-xl">
+                        <div className="flex items-center justify-between gap-2">
+                            <h4 className="text-[10px] font-black uppercase tracking-widest text-cyan-300 flex items-center gap-1.5">
+                                <Layers className="w-3.5 h-3.5 text-cyan-400" /> Category Display Order
+                            </h4>
+                            {(draftState.categoryOrder && draftState.categoryOrder.length > 0) ? (
+                                <button
+                                    type="button"
+                                    onClick={handleResetCategoryOrder}
+                                    className="px-2 py-0.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[9px] font-black uppercase tracking-wider border border-zinc-700 transition-all"
+                                    title="Restore original category order"
+                                >
+                                    Reset Order
+                                </button>
+                            ) : (
+                                <span className="text-[8.5px] font-bold text-cyan-400/80 uppercase">Default Order</span>
+                            )}
+                        </div>
+                        <p className="text-[9px] text-zinc-400 leading-snug">
+                            Arrange categories top-to-bottom for Draft Board, Projector, OBS Overlay, Team Login &amp; Curator Console.
+                        </p>
+                        <div className="space-y-1.5 max-h-60 overflow-y-auto custom-scrollbar pr-0.5">
+                            {availableCategories.map((catName, idx) => {
+                                const catCount = players.filter(p => (p.category || p.role || '').trim().toLowerCase() === catName.trim().toLowerCase()).length;
+                                return (
+                                    <div
+                                        key={catName}
+                                        className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-black/60 border border-zinc-800 hover:border-cyan-500/40 transition-colors"
+                                    >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="w-5 h-5 rounded-md bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-mono text-[10px] font-black flex items-center justify-center shrink-0">
+                                                {idx + 1}
+                                            </span>
+                                            <span className="text-[11px] font-black uppercase text-white truncate">
+                                                {catName}
+                                            </span>
+                                            <span className="text-[9px] font-bold text-zinc-500 shrink-0">
+                                                ({catCount})
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            <button
+                                                type="button"
+                                                disabled={idx === 0}
+                                                onClick={() => handleMoveCategoryOrder(idx, 'UP')}
+                                                className="p-1 rounded-lg bg-zinc-800 hover:bg-cyan-600 text-zinc-300 hover:text-white disabled:opacity-25 disabled:pointer-events-none transition-all"
+                                                title="Move category up"
+                                            >
+                                                <ArrowUp className="w-3.5 h-3.5" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={idx === availableCategories.length - 1}
+                                                onClick={() => handleMoveCategoryOrder(idx, 'DOWN')}
+                                                className="p-1 rounded-lg bg-zinc-800 hover:bg-cyan-600 text-zinc-300 hover:text-white disabled:opacity-25 disabled:pointer-events-none transition-all"
+                                                title="Move category down"
+                                            >
+                                                <ArrowDown className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
 

@@ -371,6 +371,7 @@ export interface DraftBoardState {
   obsDisplayMode?: ObsDraftDisplayMode; // OBS overlay minimal/video-friendly display mode
   obsCategoryFilter?: string; // Specific category shown in OBS bottom strip
   obsTransparentBg?: boolean; // Keep OBS canvas transparent for live video feed
+  categoryOrder?: string[]; // Custom category display order set by Admin
   history: DraftPickHistory[]; // supports undo
   updatedAt?: number;
 }

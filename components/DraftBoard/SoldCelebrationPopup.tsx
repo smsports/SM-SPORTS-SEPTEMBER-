@@ -210,7 +210,7 @@ export const SoldCelebrationPopup: React.FC<Props> = ({
                                 <img
                                     src={resolvedPlayerPhoto}
                                     alt={displayData.playerName}
-                                    className="w-full h-full object-cover object-top"
+                                    className="w-full h-full object-contain"
                                 />
                             ) : (
                                 <div className="w-full h-full flex items-center justify-center font-black text-6xl text-zinc-600 bg-zinc-900">

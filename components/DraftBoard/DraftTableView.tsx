@@ -153,7 +153,7 @@ export const DraftTableView: React.FC<Props> = ({
                                                 <img 
                                                     src={player.photoUrl} 
                                                     alt="" 
-                                                    className={`w-9 h-9 md:w-10 md:h-10 rounded-xl object-cover shrink-0 border border-zinc-700 ${
+                                                    className={`w-9 h-9 md:w-10 md:h-10 rounded-xl object-contain bg-zinc-950 shrink-0 border border-zinc-700 ${
                                                         isSold ? 'grayscale contrast-125 opacity-60' : ''
                                                     }`} 
                                                 />

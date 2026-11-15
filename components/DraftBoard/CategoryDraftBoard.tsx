@@ -409,29 +409,43 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         return map;
     }, [draftState.history]);
 
-    // Group players by Category / Role
-    const categoryGroups = useMemo(() => {
-        // Collect all distinct category/role names
+    // Canonical ordered list of all category names respecting Admin Category Display Order
+    const orderedCategoryNames = useMemo(() => {
         const namesSet = new Set<string>();
-        
-        // Add configured categories first
-        categories.forEach(c => namesSet.add(c.name));
-
-        // Add standard roles if no categories
+        categories.forEach(c => c.name && namesSet.add(c.name));
         if (namesSet.size === 0) {
             namesSet.add('Batsman');
             namesSet.add('Bowler');
             namesSet.add('All-Rounder');
             namesSet.add('Wicketkeeper');
         }
-
-        // Add any categories present on players
         players.forEach(p => {
             const cat = p.category || p.role || 'Uncategorized';
             if (cat) namesSet.add(cat);
         });
 
-        const list = Array.from(namesSet);
+        const baseList = Array.from(namesSet);
+        const customOrder = draftState.categoryOrder || [];
+        if (customOrder.length === 0) return baseList;
+
+        const orderMap = new Map<string, number>();
+        customOrder.forEach((name, idx) => {
+            orderMap.set(name.trim().toLowerCase(), idx);
+        });
+
+        return [...baseList].sort((a, b) => {
+            const idxA = orderMap.get(a.trim().toLowerCase());
+            const idxB = orderMap.get(b.trim().toLowerCase());
+            if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+            if (idxA !== undefined) return -1;
+            if (idxB !== undefined) return 1;
+            return 0;
+        });
+    }, [categories, players, draftState.categoryOrder]);
+
+    // Group players by Category / Role
+    const categoryGroups = useMemo(() => {
+        const list = orderedCategoryNames;
 
         // Filter players according to query and status
         const filtered = players.filter(p => {
@@ -483,7 +497,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         }
 
         return groups;
-    }, [categories, players, draftPickMap, searchQuery, statusFilter, selectedCategoryFilter]);
+    }, [orderedCategoryNames, players, draftPickMap, searchQuery, statusFilter, selectedCategoryFilter]);
 
     const playersRef = useRef(players);
     playersRef.current = players;
@@ -1719,7 +1733,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 <div className="flex items-center gap-3.5 px-5 py-3.5 rounded-2xl bg-red-950/95 border-2 border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.5)] backdrop-blur-xl">
                     <div className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-900 border border-red-400/50 shrink-0 flex items-center justify-center">
                         {activeUnsoldBanner.playerPhoto ? (
-                            <img src={activeUnsoldBanner.playerPhoto} alt={activeUnsoldBanner.playerName} className="w-full h-full object-cover object-top" />
+                            <img src={activeUnsoldBanner.playerPhoto} alt={activeUnsoldBanner.playerName} className="w-full h-full object-contain" />
                         ) : (
                             <Ban className="w-6 h-6 text-red-400" />
                         )}
@@ -1877,9 +1891,9 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                 : 'bg-zinc-900/90 border-zinc-700/80'
                                         }`}
                                     >
-                                        <div className="w-full h-11 rounded overflow-hidden bg-zinc-950 relative">
+                                        <div className="w-full h-14 rounded overflow-hidden bg-zinc-950 relative flex items-center justify-center">
                                             {player.photoUrl ? (
-                                                <img src={player.photoUrl} alt={player.name} className="w-full h-full object-cover object-top" />
+                                                <img src={player.photoUrl} alt={player.name} className="w-full h-full object-contain" />
                                             ) : (
                                                 <div className="w-full h-full flex items-center justify-center font-black text-xs text-zinc-500">
                                                     {player.name.charAt(0)}
@@ -2188,19 +2202,19 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             >
                                 All Categories ({players.length})
                             </button>
-                            {categories.map(cat => {
-                                const count = players.filter(p => (p.category || p.role || '').toLowerCase() === cat.name.toLowerCase()).length;
+                            {orderedCategoryNames.map(catName => {
+                                const count = players.filter(p => (p.category || p.role || 'Uncategorized').trim().toLowerCase() === catName.trim().toLowerCase()).length;
                                 return (
                                     <button
-                                        key={cat.id || cat.name}
-                                        onClick={() => setSelectedCategoryFilter(cat.name)}
+                                        key={catName}
+                                        onClick={() => setSelectedCategoryFilter(catName)}
                                         className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
-                                            selectedCategoryFilter === cat.name
+                                            selectedCategoryFilter.trim().toLowerCase() === catName.trim().toLowerCase()
                                                 ? 'bg-blue-600 text-white shadow-md'
                                                 : isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                         }`}
                                     >
-                                        {cat.name} ({count})
+                                        {catName} ({count})
                                     </button>
                                 );
                             })}
@@ -2499,12 +2513,12 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                     </div>
 
                                                     {/* Player Photo with BOLD SOLD Box Overlay */}
-                                                    <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 my-1">
+                                                    <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 my-1 flex items-center justify-center">
                                                         {player.photoUrl ? (
                                                             <img 
                                                                 src={player.photoUrl} 
                                                                 alt={player.name}
-                                                                className={`w-full h-full object-cover object-top transition-transform duration-300 ${
+                                                                className={`w-full h-full object-contain transition-transform duration-300 ${
                                                                     !isProjectorView && !isOBSView ? 'group-hover:scale-105' : ''
                                                                 }`} 
                                                             />
@@ -2659,7 +2673,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                             <div key={h.id} className="p-2 rounded-xl border border-zinc-800 bg-zinc-800/40 flex items-center justify-between gap-2 text-xs">
                                                 <div className="flex items-center gap-2 min-w-0">
                                                     {h.playerPhoto ? (
-                                                        <img src={h.playerPhoto} alt="" className="w-7 h-7 rounded-lg object-cover shrink-0" />
+                                                        <img src={h.playerPhoto} alt="" className="w-7 h-7 rounded-lg object-contain bg-zinc-950 shrink-0" />
                                                     ) : (
                                                         <div className="w-7 h-7 rounded-lg bg-zinc-700 flex items-center justify-center font-bold text-[10px]">
                                                             {h.playerName.charAt(0)}
@@ -2766,7 +2780,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                             <img
                                                 src={reqPlayer.photoUrl}
                                                 alt={activeReq.playerName}
-                                                className="w-full h-full object-cover object-top"
+                                                className="w-full h-full object-contain"
                                             />
                                         ) : (
                                             <div className="w-full h-full flex items-center justify-center text-4xl font-black text-zinc-500 bg-zinc-900">

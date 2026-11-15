@@ -75,7 +75,7 @@ export const DraftNominationModal: React.FC<Props> = ({
                 <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
                     <div className="relative w-28 h-28 sm:w-32 sm:h-32 rounded-2xl overflow-hidden bg-zinc-900 border-2 border-zinc-700 shrink-0 shadow-xl">
                         {player.photoUrl ? (
-                            <img src={player.photoUrl} alt={player.name} className="w-full h-full object-cover" />
+                            <img src={player.photoUrl} alt={player.name} className="w-full h-full object-contain bg-zinc-950" />
                         ) : (
                             <div className="w-full h-full flex items-center justify-center text-4xl font-black text-zinc-600">
                                 {player.name.charAt(0)}

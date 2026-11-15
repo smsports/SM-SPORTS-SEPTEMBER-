@@ -30,23 +30,21 @@ function computeOptimalGrid(
     count: number,
     containerWidth: number = 1600,
     containerHeight: number = 800,
-    targetCardAspect: number = 0.85
+    targetCardAspect: number = 0.82,
+    gapPx: number = 4
 ): { rows: number; cols: number } {
     if (count <= 0) return { rows: 1, cols: 1 };
     let bestRows = 1;
     let bestCols = count;
     let bestScore = Infinity;
 
-    // Search row counts from 1 up to min(count, 50)
-    const maxRows = Math.min(count, 50);
+    const maxRows = Math.min(count, 60);
     for (let r = 1; r <= maxRows; r++) {
         const c = Math.ceil(count / r);
-        const cellW = containerWidth / c;
-        const cellH = containerHeight / r;
+        const cellW = Math.max(10, (containerWidth - (c - 1) * gapPx) / c);
+        const cellH = Math.max(10, (containerHeight - (r - 1) * gapPx) / r);
         const aspect = cellW / cellH;
 
-        // Heavily penalize cards wider than 1.25 (which flatten photos into horizontal slits)
-        // and cards narrower than 0.60 (which squeeze photos into tall slivers)
         let penalty = 0;
         if (aspect > 1.25) penalty = (aspect - 1.25) * 8;
         if (aspect < 0.60) penalty = (0.60 - aspect) * 6;
@@ -92,7 +90,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
         const updateSize = () => {
             if (containerRef.current) {
                 const rect = containerRef.current.getBoundingClientRect();
-                if (rect.width > 200 && rect.height > 200) {
+                if (rect.width > 120 && rect.height > 120) {
                     setContainerSize({ width: rect.width, height: rect.height });
                     return;
                 }
@@ -106,9 +104,17 @@ export const ProjectorFitBoard: React.FC<Props> = ({
         };
 
         updateSize();
+        let ro: ResizeObserver | null = null;
+        if (typeof ResizeObserver !== 'undefined' && containerRef.current) {
+            ro = new ResizeObserver(updateSize);
+            ro.observe(containerRef.current);
+        }
         window.addEventListener('resize', updateSize);
-        return () => window.removeEventListener('resize', updateSize);
-    }, []);
+        return () => {
+            window.removeEventListener('resize', updateSize);
+            if (ro) ro.disconnect();
+        };
+    }, [effectiveLayoutMode, effectiveCategoryFilter]);
 
     // Team logo and color map
     const teamLogoMap = useMemo(() => {
@@ -166,39 +172,40 @@ export const ProjectorFitBoard: React.FC<Props> = ({
     // UNIVERSAL BULLETPROOF PLAYER CARD (PROPER PHOTO, NAME, ROLE)
     // Fits gracefully whether there are 10 players or 1000 players!
     // =========================================================================
-    const renderPlayerCard = (player: Player, index: number) => {
+    const renderPlayerCard = (player: Player, index: number, densityCount: number = totalPlayers) => {
         const pickInfo = draftPickMap.get(String(player.id));
         const isSold = player.status === 'SOLD' || !!pickInfo;
         const soldTeamName = pickInfo?.teamName || player.soldTo || '';
         const soldTeamLogo = pickInfo?.teamLogo || (soldTeamName ? teamLogoMap.get(soldTeamName.trim().toLowerCase()) : undefined);
 
         const hasValidPhoto = !!(player.photoUrl && player.photoUrl.trim() !== '');
+        const isDense = densityCount > 40 || totalPlayers > 55;
+        const isUltraDense = densityCount > 80 || totalPlayers > 110;
 
         return (
             <div
                 key={player.id}
-                className={`h-full min-h-0 w-full rounded-xl border p-0.5 md:p-1 flex flex-col justify-between overflow-hidden shadow-md transition-all relative select-none ${
+                className={`h-full min-h-0 w-full ${isUltraDense ? 'rounded-md p-[1px]' : isDense ? 'rounded-lg p-0.5' : 'rounded-xl p-0.5 md:p-1'} border flex flex-col justify-between overflow-hidden shadow-md transition-all relative select-none ${
                     isSold
                         ? 'bg-gradient-to-b from-red-950/90 via-zinc-950 to-black border-red-500/80 shadow-red-500/20 ring-1 ring-red-500/40'
                         : `${themeConfig.cardBg} ${themeConfig.cardBorder} hover:border-amber-400`
                 }`}
             >
-                {/* HERO PHOTO AREA (70-75% OF CARD HEIGHT) */}
-                <div className="relative flex-1 min-h-0 w-full rounded-lg overflow-hidden bg-zinc-950 flex items-center justify-center">
+                {/* HERO PHOTO AREA: Full uncropped photo with object-contain */}
+                <div className="relative flex-1 min-h-0 w-full rounded-md overflow-hidden bg-zinc-950 flex items-center justify-center">
                     {hasValidPhoto ? (
                         <img 
                             src={player.photoUrl} 
                             alt={player.name} 
-                            className="w-full h-full object-cover object-top filter contrast-105"
+                            className="w-full h-full object-contain filter contrast-105"
                             onError={(e) => {
-                                // If image fails to load, gracefully fall back to initial
                                 const target = e.currentTarget;
                                 target.style.display = 'none';
                                 const parent = target.parentElement;
                                 if (parent && !parent.querySelector('.fallback-avatar')) {
                                     const fallback = document.createElement('div');
                                     fallback.className = 'fallback-avatar w-full h-full flex flex-col items-center justify-center bg-zinc-900 text-zinc-400 font-black';
-                                    fallback.innerHTML = `<span style="font-size: clamp(10px, 1.2vw, 18px);">${player.name.charAt(0)}</span>`;
+                                    fallback.innerHTML = `<span style="font-size: clamp(9px, 1.1vw, 18px);">${player.name.charAt(0)}</span>`;
                                     parent.appendChild(fallback);
                                 }
                             }}
@@ -206,107 +213,122 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                     ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-850 to-zinc-950 text-zinc-400 font-black">
                             <User className="w-1/3 h-1/3 opacity-40 mb-0.5 text-amber-400" />
-                            <span className="text-[clamp(9px,1.2vw,16px)]">{player.name.charAt(0)}</span>
+                            <span className="text-[clamp(8px,1.1vw,16px)]">{player.name.charAt(0)}</span>
                         </div>
                     )}
 
-                    {/* TOP BADGES INSIDE PHOTO AREA: Role on left, Number on right */}
-                    <div className="absolute top-0.5 left-0.5 right-0.5 flex items-center justify-between gap-1 pointer-events-none z-10">
-                        <span className="px-1 py-0.2 rounded bg-black/85 text-amber-300 font-black text-[clamp(6px,0.55vw,8px)] uppercase border border-amber-400/30 truncate max-w-[65%] leading-tight drop-shadow">
-                            {player.role || player.category || 'PLAYER'}
-                        </span>
-                        <span className="px-1 py-0.2 rounded bg-black/85 text-zinc-200 font-bold text-[clamp(6px,0.55vw,8px)] border border-white/10 shrink-0 leading-tight">
-                            #{player.jerseyNumber ? player.jerseyNumber : index + 1}
-                        </span>
-                    </div>
+                    {/* TOP BADGES INSIDE PHOTO AREA: Only when not dense so faces remain 100% clear */}
+                    {!isDense && (
+                        <div className="absolute top-0.5 left-0.5 right-0.5 flex items-center justify-between gap-1 pointer-events-none z-10">
+                            <span className="px-1 py-0.2 rounded bg-black/85 text-amber-300 font-black text-[clamp(6px,0.55vw,8px)] uppercase border border-amber-400/30 truncate max-w-[65%] leading-tight drop-shadow">
+                                {player.role || player.category || 'PLAYER'}
+                            </span>
+                            <span className="px-1 py-0.2 rounded bg-black/85 text-zinc-200 font-bold text-[clamp(6px,0.55vw,8px)] border border-white/10 shrink-0 leading-tight">
+                                #{player.jerseyNumber ? player.jerseyNumber : index + 1}
+                            </span>
+                        </div>
+                    )}
 
-                    {/* SOLD BADGE & WINNING FRANCHISE OVERLAY */}
+                    {/* SOLD BADGE: Compact & non-obscuring on dense grids */}
                     {isSold && (
-                        <>
-                            {/* Prominent SOLD Badge */}
-                            <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black text-[clamp(7px,0.6vw,9px)] uppercase tracking-wider shadow-xl border border-red-300 z-20 whitespace-nowrap drop-shadow">
+                        isDense ? (
+                            <div className="absolute top-0.5 left-0.5 px-1 py-[1px] rounded bg-red-600/95 text-white font-black text-[clamp(5px,0.5vw,8px)] uppercase tracking-wider shadow border border-red-300/80 z-20 whitespace-nowrap leading-none">
                                 SOLD
                             </div>
+                        ) : (
+                            <>
+                                <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black text-[clamp(7px,0.6vw,9px)] uppercase tracking-wider shadow-xl border border-red-300 z-20 whitespace-nowrap drop-shadow">
+                                    SOLD
+                                </div>
 
-                            {/* Winning Franchise Bottom Strip with Gradient Backdrop (Preserves player face) */}
-                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-0.5 px-0.5 flex flex-col items-center justify-center text-center z-20">
-                                {soldTeamLogo ? (
-                                    <img 
-                                        src={soldTeamLogo} 
-                                        alt="" 
-                                        className="w-4 h-4 md:w-5 md:h-5 rounded-full object-contain bg-white p-0.5 mb-0.5 border border-amber-400 shrink-0 shadow" 
-                                    />
-                                ) : (
-                                    <div className="w-4 h-4 rounded-full bg-blue-600 text-white font-black text-[7px] flex items-center justify-center mb-0.5 border border-amber-400 shrink-0">
-                                        {soldTeamName.charAt(0) || '★'}
-                                    </div>
-                                )}
-                                <p className="text-[clamp(7px,0.6vw,9px)] font-black text-amber-300 uppercase tracking-tight truncate max-w-full drop-shadow leading-none">
-                                    {soldTeamName}
-                                </p>
-                            </div>
-                        </>
+                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-0.5 px-0.5 flex flex-col items-center justify-center text-center z-20">
+                                    {soldTeamLogo ? (
+                                        <img 
+                                            src={soldTeamLogo} 
+                                            alt="" 
+                                            className="w-4 h-4 md:w-5 md:h-5 rounded-full object-contain bg-white p-0.5 mb-0.5 border border-amber-400 shrink-0 shadow" 
+                                        />
+                                    ) : (
+                                        <div className="w-4 h-4 rounded-full bg-blue-600 text-white font-black text-[7px] flex items-center justify-center mb-0.5 border border-amber-400 shrink-0">
+                                            {soldTeamName.charAt(0) || '★'}
+                                        </div>
+                                    )}
+                                    <p className="text-[clamp(7px,0.6vw,9px)] font-black text-amber-300 uppercase tracking-tight truncate max-w-full drop-shadow leading-none">
+                                        {soldTeamName}
+                                    </p>
+                                </div>
+                            </>
+                        )
                     )}
                 </div>
 
                 {/* BOTTOM BAR: Player Name and Role/Status */}
-                <div className="shrink-0 px-0.5 pt-0.5 text-center leading-tight">
-                    <h4 className={`font-black uppercase tracking-tight text-[clamp(7px,0.75vw,11px)] truncate ${
+                <div className={`shrink-0 px-0.5 ${isUltraDense ? 'pt-[1px]' : 'pt-0.5'} text-center leading-tight`}>
+                    <h4 className={`font-black uppercase tracking-tight ${
+                        isUltraDense ? 'text-[clamp(6px,0.6vw,9px)]' : 'text-[clamp(7px,0.75vw,11px)]'
+                    } truncate ${
                         themeConfig.isLightMode ? 'text-slate-900 font-extrabold' : 'text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]'
                     }`}>
                         {player.name}
                     </h4>
 
                     {isSold ? (
-                        <p className="text-[clamp(6px,0.6vw,8px)] font-bold text-amber-300 uppercase truncate leading-none mt-0.5">
+                        <p className="text-[clamp(5.5px,0.55vw,8px)] font-bold text-amber-300 uppercase truncate leading-none mt-[1px]">
                             ★ {soldTeamName}
                         </p>
-                    ) : (
+                    ) : !isUltraDense ? (
                         <p className="text-[clamp(6px,0.6vw,8px)] font-bold text-emerald-400 uppercase truncate leading-none mt-0.5 flex items-center justify-center gap-0.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0 animate-pulse"></span>
                             {player.role || 'Available'}
                         </p>
-                    )}
+                    ) : null}
                 </div>
             </div>
         );
     };
 
     // =========================================================================
-    // MODE 1 (DEFAULT): CATEGORIES IN ROWS ON LEFT (100% Mathematical Fit)
+    // MODE 1 (DEFAULT): CATEGORIES IN ROWS ON LEFT (100% Proportional Mathematical Fit)
     // =========================================================================
     if (effectiveLayoutMode === 'ROWS') {
         const numGroups = Math.max(1, displayedGroups.length);
-        const sidebarWidth = numGroups <= 2 ? 140 : 120;
+        const sidebarWidth = numGroups <= 2 ? 132 : 112;
         const availableHeight = containerSize.height;
         const availableWidth = containerSize.width;
-        const categoryHeight = Math.max(120, (availableHeight - (numGroups - 1) * 8) / numGroups);
-        const playersWidth = Math.max(300, availableWidth - sidebarWidth - 24);
+        const usableHeight = Math.max(200, availableHeight - (numGroups - 1) * 8 - 8);
+        const playersWidth = Math.max(300, availableWidth - sidebarWidth - 28);
+
+        const groupWeights = displayedGroups.map(g => Math.max(1, Math.ceil(Math.sqrt(Math.max(1, g.players.length)))));
+        const totalWeight = Math.max(1, groupWeights.reduce((acc, w) => acc + w, 0));
 
         return (
             <div 
                 ref={containerRef}
                 className={`w-full h-full min-h-0 flex flex-col gap-2 p-1 overflow-hidden select-none ${outerBgClass}`}
             >
-                {displayedGroups.map(group => {
+                {displayedGroups.map((group, groupIdx) => {
                     const groupCount = group.players.length;
-                    const { rows, cols } = computeOptimalGrid(groupCount, playersWidth, categoryHeight - 16, 0.85);
+                    const weight = groupWeights[groupIdx] || 1;
+                    const categoryHeight = Math.max(72, (usableHeight * weight) / totalWeight);
+                    const gapPx = groupCount > 70 ? 2 : groupCount > 35 ? 3 : 5;
+                    const { rows, cols } = computeOptimalGrid(groupCount, playersWidth, Math.max(56, categoryHeight - 12), 0.82, gapPx);
 
                     return (
                         <div 
                             key={group.category}
-                            className={`flex-1 min-h-0 w-full flex flex-row items-stretch rounded-2xl border-2 ${themeConfig.headerBorder} ${themeConfig.headerBg} p-1.5 overflow-hidden shadow-2xl gap-2`}
+                            style={{ flexGrow: weight, flexShrink: 1, flexBasis: 0 }}
+                            className={`min-h-0 w-full flex flex-row items-stretch rounded-2xl border-2 ${themeConfig.headerBorder} ${themeConfig.headerBg} p-1.5 overflow-hidden shadow-2xl gap-2`}
                         >
                             {/* LEFT SIDE: COMPACT CATEGORY BANNER */}
                             <div 
                                 style={{ width: `${sidebarWidth}px` }}
-                                className={`shrink-0 rounded-xl ${themeConfig.categoryStripBg} border ${themeConfig.categoryStripBorder} p-2 flex flex-col justify-between items-center text-center shadow-lg`}
+                                className={`shrink-0 rounded-xl ${themeConfig.categoryStripBg} border ${themeConfig.categoryStripBorder} p-2 flex flex-col justify-between items-center text-center shadow-lg overflow-hidden`}
                             >
                                 <div className="w-full">
-                                    <div className={`w-7 h-7 rounded-full mx-auto mb-1 flex items-center justify-center shadow ${
+                                    <div className={`w-6 h-6 rounded-full mx-auto mb-1 flex items-center justify-center shadow ${
                                         themeConfig.isLightMode ? 'bg-blue-600 text-white' : 'bg-amber-500/20 border border-amber-500/50 text-amber-400'
                                     }`}>
-                                        <Trophy className="w-3.5 h-3.5" />
+                                        <Trophy className="w-3 h-3" />
                                     </div>
                                     <h3 className={`text-xs md:text-sm font-black uppercase tracking-wider ${themeConfig.categoryText} break-words leading-tight drop-shadow`}>
                                         {group.category}
@@ -316,7 +338,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                                     </span>
                                 </div>
 
-                                <div className={`w-full space-y-1 pt-1.5 border-t ${themeConfig.isLightMode ? 'border-slate-300' : 'border-white/10'}`}>
+                                <div className={`w-full space-y-1 pt-1 border-t ${themeConfig.isLightMode ? 'border-slate-300' : 'border-white/10'}`}>
                                     <div className={`py-0.5 px-2 rounded-md text-[9px] font-black uppercase flex items-center justify-between ${
                                         themeConfig.isLightMode ? 'bg-emerald-100 border border-emerald-300 text-emerald-800' : 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
                                     }`}>
@@ -332,19 +354,19 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                                 </div>
                             </div>
 
-                            {/* RIGHT SIDE: MATHEMATICALLY PERFECT PLAYER GRID (ZERO SCROLL, PROPER PHOTOS) */}
+                            {/* RIGHT SIDE: MATHEMATICALLY PERFECT PLAYER GRID (ZERO SCROLL, FULL PHOTOS) */}
                             <div 
                                 style={{
                                     display: 'grid',
                                     gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
                                     gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
-                                    gap: groupCount > 70 ? '2px' : groupCount > 35 ? '3px' : '5px',
+                                    gap: `${gapPx}px`,
                                     width: '100%',
                                     height: '100%',
                                 }}
                                 className="flex-1 min-h-0 overflow-hidden"
                             >
-                                {group.players.map((player, idx) => renderPlayerCard(player, idx))}
+                                {group.players.map((player, idx) => renderPlayerCard(player, idx, groupCount))}
                             </div>
                         </div>
                     );
@@ -368,7 +390,8 @@ export const ProjectorFitBoard: React.FC<Props> = ({
             >
                 {displayedGroups.map(group => {
                     const groupCount = group.players.length;
-                    const { rows, cols } = computeOptimalGrid(groupCount, colWidth, colHeight, 0.85);
+                    const gapPx = groupCount > 70 ? 2 : groupCount > 35 ? 3 : 5;
+                    const { rows, cols } = computeOptimalGrid(groupCount, colWidth, colHeight, 0.82, gapPx);
 
                     return (
                         <div 
@@ -398,13 +421,13 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                                     display: 'grid',
                                     gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
                                     gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
-                                    gap: groupCount > 70 ? '2px' : groupCount > 35 ? '3px' : '5px',
+                                    gap: `${gapPx}px`,
                                     width: '100%',
                                     height: '100%',
                                 }}
                                 className="flex-1 min-h-0 overflow-hidden"
                             >
-                                {group.players.map((player, idx) => renderPlayerCard(player, idx))}
+                                {group.players.map((player, idx) => renderPlayerCard(player, idx, groupCount))}
                             </div>
                         </div>
                     );
@@ -417,7 +440,8 @@ export const ProjectorFitBoard: React.FC<Props> = ({
     // MODE 3: UNIFIED AUTO-FIT GRID MATRIX (100% Mathematical Fit)
     // =========================================================================
     if (effectiveLayoutMode === 'GRID') {
-        const { rows, cols } = computeOptimalGrid(totalPlayers, containerSize.width, containerSize.height, 0.85);
+        const gapPx = totalPlayers > 100 ? 2 : totalPlayers > 50 ? 3 : 5;
+        const { rows, cols } = computeOptimalGrid(totalPlayers, containerSize.width, containerSize.height, 0.82, gapPx);
 
         return (
             <div 
@@ -429,13 +453,13 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                         display: 'grid',
                         gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
                         gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
-                        gap: totalPlayers > 100 ? '2px' : totalPlayers > 50 ? '3px' : '5px',
+                        gap: `${gapPx}px`,
                         width: '100%',
                         height: '100%',
                     }}
                     className="w-full h-full min-h-0 overflow-hidden"
                 >
-                    {displayedPlayers.map((player, idx) => renderPlayerCard(player, idx))}
+                    {displayedPlayers.map((player, idx) => renderPlayerCard(player, idx, totalPlayers))}
                 </div>
             </div>
         );
@@ -486,7 +510,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                                                 <img 
                                                     src={player.photoUrl} 
                                                     alt="" 
-                                                    className="w-8 h-8 rounded-lg object-cover object-top shrink-0 border border-zinc-700 shadow" 
+                                                    className="w-8 h-8 rounded-lg object-contain bg-zinc-950 shrink-0 border border-zinc-700 shadow" 
                                                 />
                                             ) : (
                                                 <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center font-black text-xs text-zinc-400 shrink-0">

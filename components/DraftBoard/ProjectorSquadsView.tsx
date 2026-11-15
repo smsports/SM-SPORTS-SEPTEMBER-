@@ -182,7 +182,7 @@ export const ProjectorSquadsView: React.FC<Props> = ({
                                     {/* Player Avatar */}
                                     <div className="relative flex-1 min-h-0 rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 my-1 flex items-center justify-center">
                                         {player.photoUrl ? (
-                                            <img src={player.photoUrl} alt="" className="w-full h-full object-cover" />
+                                            <img src={player.photoUrl} alt="" className="w-full h-full object-contain" />
                                         ) : (
                                             <div className="w-full h-full flex items-center justify-center text-zinc-600 font-black text-2xl">
                                                 {player.name.charAt(0)}
@@ -284,7 +284,7 @@ export const ProjectorSquadsView: React.FC<Props> = ({
                                                     <img 
                                                         src={player.photoUrl} 
                                                         alt="" 
-                                                        className="w-5 h-5 rounded-md object-cover border border-zinc-700 shrink-0" 
+                                                        className="w-5 h-5 rounded-md object-contain bg-zinc-950 border border-zinc-700 shrink-0" 
                                                     />
                                                 ) : (
                                                     <div className="w-5 h-5 rounded-md bg-zinc-800 text-zinc-400 font-black text-[9px] flex items-center justify-center shrink-0">

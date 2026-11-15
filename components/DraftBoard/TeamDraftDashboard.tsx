@@ -16,18 +16,19 @@ function computeOptimalGrid(
     count: number,
     containerWidth: number = 1600,
     containerHeight: number = 800,
-    targetCardAspect: number = 0.85
+    targetCardAspect: number = 0.82,
+    gapPx: number = 4
 ): { rows: number; cols: number } {
     if (count <= 0) return { rows: 1, cols: 1 };
     let bestRows = 1;
     let bestCols = count;
     let bestScore = Infinity;
 
-    const maxRows = Math.min(count, 50);
+    const maxRows = Math.min(count, 60);
     for (let r = 1; r <= maxRows; r++) {
         const c = Math.ceil(count / r);
-        const cellW = containerWidth / c;
-        const cellH = containerHeight / r;
+        const cellW = Math.max(10, (containerWidth - (c - 1) * gapPx) / c);
+        const cellH = Math.max(10, (containerHeight - (r - 1) * gapPx) / r);
         const aspect = cellW / cellH;
 
         let penalty = 0;
@@ -95,7 +96,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
         const updateSize = () => {
             if (boardContainerRef.current) {
                 const rect = boardContainerRef.current.getBoundingClientRect();
-                if (rect.width > 200 && rect.height > 150) {
+                if (rect.width > 120 && rect.height > 120) {
                     setBoardSize({ width: rect.width, height: rect.height });
                     return;
                 }
@@ -109,9 +110,17 @@ export const TeamDraftDashboard: React.FC<Props> = ({
         };
 
         updateSize();
+        let ro: ResizeObserver | null = null;
+        if (typeof ResizeObserver !== 'undefined' && boardContainerRef.current) {
+            ro = new ResizeObserver(updateSize);
+            ro.observe(boardContainerRef.current);
+        }
         window.addEventListener('resize', updateSize);
-        return () => window.removeEventListener('resize', updateSize);
-    }, [activeTab, selectedCategory]);
+        return () => {
+            window.removeEventListener('resize', updateSize);
+            if (ro) ro.disconnect();
+        };
+    }, [activeTab, selectedCategory, viewFormat]);
     
     // Target Wishlist (bookmarked player IDs stored in local state)
     const [wishlistIds, setWishlistIds] = useState<Set<string>>(() => {
@@ -231,7 +240,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
         return counts;
     }, [mySquad]);
 
-    // Categories list
+    // Categories list sorted by admin Category Display Order
     const availableCategories = useMemo(() => {
         const set = new Set<string>();
         categories.forEach(c => c.name && set.add(c.name));
@@ -239,8 +248,24 @@ export const TeamDraftDashboard: React.FC<Props> = ({
             const cat = p.category || p.role;
             if (cat) set.add(cat);
         });
-        return Array.from(set);
-    }, [categories, players]);
+        const baseList = Array.from(set);
+        const customOrder = draftState.categoryOrder || [];
+        if (customOrder.length === 0) return baseList;
+
+        const orderMap = new Map<string, number>();
+        customOrder.forEach((name, idx) => {
+            orderMap.set(name.trim().toLowerCase(), idx);
+        });
+
+        return [...baseList].sort((a, b) => {
+            const idxA = orderMap.get(a.trim().toLowerCase());
+            const idxB = orderMap.get(b.trim().toLowerCase());
+            if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+            if (idxA !== undefined) return -1;
+            if (idxB !== undefined) return 1;
+            return 0;
+        });
+    }, [categories, players, draftState.categoryOrder]);
 
     // Filtered players for the Full Draft Board tab
     const filteredPlayers = useMemo(() => {
@@ -638,177 +663,201 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                 ref={boardContainerRef}
                                 className="flex-1 min-h-0 w-full overflow-hidden flex flex-col gap-1.5 p-0.5"
                             >
-                                {categoryGroups.filter(g => g.players.length > 0).map(group => {
-                                    const groupPlayers = group.players;
-                                    const activeGroupsCount = categoryGroups.filter(g => g.players.length > 0).length || 1;
-                                    
-                                    // Compute row dimensions to pass to optimal grid calculator
-                                    const rowWidth = Math.max(300, boardSize.width - 160);
-                                    const rowHeight = Math.max(70, (boardSize.height - (activeGroupsCount - 1) * 8) / activeGroupsCount);
-                                    const { rows, cols } = computeOptimalGrid(groupPlayers.length, rowWidth, rowHeight, 0.85);
+                                {(() => {
+                                    const activeGroups = categoryGroups.filter(g => g.players.length > 0);
+                                    const activeCount = Math.max(1, activeGroups.length);
+                                    const weights = activeGroups.map(g => Math.max(1, Math.ceil(Math.sqrt(Math.max(1, g.players.length)))));
+                                    const totalWeight = Math.max(1, weights.reduce((acc, w) => acc + w, 0));
+                                    const usableHeight = Math.max(180, boardSize.height - (activeCount - 1) * 6 - 4);
+                                    const rowWidth = Math.max(260, boardSize.width - 144);
+                                    const totalVisibleCount = activeGroups.reduce((acc, g) => acc + g.players.length, 0);
 
-                                    return (
-                                        <div
-                                            key={group.category}
-                                            className="flex-1 min-h-0 w-full rounded-xl border border-zinc-800 bg-zinc-900/60 p-1 md:p-1.5 flex flex-row items-stretch gap-1.5 md:gap-2 overflow-hidden shadow-lg"
-                                        >
-                                            {/* LEFT COLUMN: CATEGORY NAME & STATS */}
-                                            <div className="w-24 sm:w-28 md:w-32 lg:w-36 shrink-0 h-full rounded-lg bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-900 border border-amber-500/40 p-1 md:p-1.5 flex flex-col justify-between items-center text-center shadow-md select-none overflow-hidden">
-                                                <div className="flex flex-col items-center gap-0.5 w-full">
-                                                    <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 shadow shrink-0">
-                                                        <Trophy className="w-3 h-3" />
-                                                    </div>
-                                                    <h3 className="text-[10px] md:text-[11px] font-black uppercase tracking-wider text-amber-400 line-clamp-2 leading-tight w-full break-words">
-                                                        {group.category}
-                                                    </h3>
-                                                    <span className="text-[8px] font-bold text-zinc-400 uppercase leading-none">
-                                                        ({groupPlayers.length} P)
-                                                    </span>
-                                                </div>
+                                    return activeGroups.map((group, groupIdx) => {
+                                        const groupPlayers = group.players;
+                                        const weight = weights[groupIdx] || 1;
+                                        const rowHeight = Math.max(68, (usableHeight * weight) / totalWeight);
+                                        const isDenseBoard = totalVisibleCount > 45 || groupPlayers.length > 24;
+                                        const isUltraDense = totalVisibleCount > 85 || groupPlayers.length > 50;
+                                        const gapPx = isUltraDense ? 2 : isDenseBoard ? 3 : 4;
+                                        const { rows, cols } = computeOptimalGrid(groupPlayers.length, rowWidth, Math.max(54, rowHeight - 8), 0.82, gapPx);
 
-                                                <div className="w-full flex flex-col gap-0.5 pt-1 border-t border-white/10 shrink-0">
-                                                    <div className="py-0.2 px-1 rounded bg-emerald-500/15 border border-emerald-500/30 text-[8px] font-black text-emerald-400 uppercase flex items-center justify-between">
-                                                        <span>Avail</span>
-                                                        <span>{group.availableCount}</span>
-                                                    </div>
-                                                    <div className="py-0.2 px-1 rounded bg-red-500/15 border border-red-500/30 text-[8px] font-black text-red-400 uppercase flex items-center justify-between">
-                                                        <span>Sold</span>
-                                                        <span>{group.soldCount}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {/* RIGHT MAIN AREA: MATHEMATICALLY FITTED PLAYERS IN THIS CATEGORY */}
-                                            <div 
-                                                className="flex-1 min-w-0 h-full w-full overflow-hidden"
-                                                style={{
-                                                    display: 'grid',
-                                                    gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-                                                    gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
-                                                    gap: '4px',
-                                                    width: '100%',
-                                                    height: '100%'
-                                                }}
+                                        return (
+                                            <div
+                                                key={group.category}
+                                                style={{ flexGrow: weight, flexShrink: 1, flexBasis: 0 }}
+                                                className="min-h-0 w-full rounded-xl border border-zinc-800 bg-zinc-900/60 p-1 md:p-1.5 flex flex-row items-stretch gap-1.5 md:gap-2 overflow-hidden shadow-lg"
                                             >
-                                                {groupPlayers.map(player => {
-                                                    const pickInfo = draftPickMap.get(String(player.id));
-                                                    const isSold = player.status === 'SOLD' || !!pickInfo;
-                                                    const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
-                                                    const isWishlisted = wishlistIds.has(String(player.id));
+                                                {/* LEFT COLUMN: CATEGORY NAME & STATS */}
+                                                <div className="w-24 sm:w-28 md:w-32 shrink-0 h-full rounded-lg bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-900 border border-amber-500/40 p-1 md:p-1.5 flex flex-col justify-between items-center text-center shadow-md select-none overflow-hidden">
+                                                    <div className="flex flex-col items-center gap-0.5 w-full">
+                                                        <div className="w-5 h-5 rounded-full bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 shadow shrink-0">
+                                                            <Trophy className="w-2.5 h-2.5" />
+                                                        </div>
+                                                        <h3 className="text-[10px] md:text-[11px] font-black uppercase tracking-wider text-amber-400 line-clamp-2 leading-tight w-full break-words">
+                                                            {group.category}
+                                                        </h3>
+                                                        <span className="text-[8px] font-bold text-zinc-400 uppercase leading-none">
+                                                            ({groupPlayers.length} P)
+                                                        </span>
+                                                    </div>
 
-                                                    return (
-                                                        <div
-                                                            key={player.id}
-                                                            onClick={() => {
-                                                                if (!isSold && canPickNow) {
-                                                                    onNominatePlayer(player);
-                                                                }
-                                                            }}
-                                                            className={`group relative rounded-lg border p-1 flex flex-col justify-between overflow-hidden shadow transition-all duration-150 ${
-                                                                isSold
-                                                                    ? 'bg-zinc-950 border-red-500/60 opacity-85 cursor-default'
-                                                                    : canPickNow
-                                                                    ? 'bg-zinc-900 border-emerald-500 hover:border-emerald-300 hover:ring-2 hover:ring-emerald-400/50 cursor-pointer'
-                                                                    : 'bg-zinc-900 border-zinc-700/80 hover:border-zinc-500 cursor-default'
-                                                            }`}
-                                                            style={{ width: '100%', height: '100%' }}
-                                                        >
-                                                            {/* Top Bar on Card: Role, Jersey #, and Wishlist Star */}
-                                                            <div className="flex items-center justify-between gap-0.5 z-10 shrink-0 mb-0.5">
-                                                                <span className="text-[7px] md:text-[8px] font-black uppercase px-1 py-0.2 rounded bg-black/85 text-amber-300 border border-amber-400/30 truncate max-w-[65%] leading-tight">
-                                                                    {player.role || player.category || 'PLAYER'}
-                                                                </span>
-                                                                <div className="flex items-center gap-0.5">
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            toggleWishlist(player.id);
-                                                                        }}
-                                                                        className={`p-0.5 rounded transition-all ${
-                                                                            isWishlisted ? 'text-yellow-400 bg-yellow-400/20' : 'text-zinc-600 hover:text-zinc-300'
-                                                                        }`}
-                                                                        title={isWishlisted ? 'Remove from Wishlist' : 'Add to Wishlist'}
-                                                                    >
-                                                                        <Star className={`w-2.5 h-2.5 ${isWishlisted ? 'fill-yellow-400' : ''}`} />
-                                                                    </button>
-                                                                    {player.jerseyNumber && (
-                                                                        <span className="text-[7px] font-bold text-zinc-300 bg-zinc-800 px-0.5 rounded">
-                                                                            #{player.jerseyNumber}
+                                                    <div className="w-full flex flex-col gap-0.5 pt-1 border-t border-white/10 shrink-0">
+                                                        <div className="py-0.2 px-1 rounded bg-emerald-500/15 border border-emerald-500/30 text-[8px] font-black text-emerald-400 uppercase flex items-center justify-between">
+                                                            <span>Avail</span>
+                                                            <span>{group.availableCount}</span>
+                                                        </div>
+                                                        <div className="py-0.2 px-1 rounded bg-red-500/15 border border-red-500/30 text-[8px] font-black text-red-400 uppercase flex items-center justify-between">
+                                                            <span>Sold</span>
+                                                            <span>{group.soldCount}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* RIGHT MAIN AREA: MATHEMATICALLY FITTED PLAYERS IN THIS CATEGORY */}
+                                                <div 
+                                                    className="flex-1 min-w-0 h-full w-full overflow-hidden"
+                                                    style={{
+                                                        display: 'grid',
+                                                        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                                                        gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+                                                        gap: `${gapPx}px`,
+                                                        width: '100%',
+                                                        height: '100%'
+                                                    }}
+                                                >
+                                                    {groupPlayers.map(player => {
+                                                        const pickInfo = draftPickMap.get(String(player.id));
+                                                        const isSold = player.status === 'SOLD' || !!pickInfo;
+                                                        const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
+                                                        const isWishlisted = wishlistIds.has(String(player.id));
+
+                                                        return (
+                                                            <div
+                                                                key={player.id}
+                                                                onClick={() => {
+                                                                    if (!isSold && canPickNow) {
+                                                                        onNominatePlayer(player);
+                                                                    }
+                                                                }}
+                                                                className={`group relative rounded-lg border ${isUltraDense ? 'p-[2px]' : 'p-1'} flex flex-col justify-between overflow-hidden shadow transition-all duration-150 ${
+                                                                    isSold
+                                                                        ? 'bg-zinc-950 border-red-500/60 opacity-90 cursor-default'
+                                                                        : canPickNow
+                                                                        ? 'bg-zinc-900 border-emerald-500 hover:border-emerald-300 hover:ring-2 hover:ring-emerald-400/50 cursor-pointer'
+                                                                        : 'bg-zinc-900 border-zinc-700/80 hover:border-zinc-500 cursor-default'
+                                                                }`}
+                                                                style={{ width: '100%', height: '100%' }}
+                                                            >
+                                                                {/* Top Bar on Card: Only show full bar when not dense so photo maximizes height */}
+                                                                {!isDenseBoard && (
+                                                                    <div className="flex items-center justify-between gap-0.5 z-10 shrink-0 mb-0.5">
+                                                                        <span className="text-[7px] md:text-[8px] font-black uppercase px-1 py-0.2 rounded bg-black/85 text-amber-300 border border-amber-400/30 truncate max-w-[65%] leading-tight">
+                                                                            {player.role || player.category || 'PLAYER'}
                                                                         </span>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-
-                                                            {/* Player Photo Area */}
-                                                            <div className="flex-1 min-h-0 relative w-full rounded overflow-hidden bg-zinc-950 flex items-center justify-center">
-                                                                {player.photoUrl ? (
-                                                                    <img 
-                                                                        src={player.photoUrl} 
-                                                                        alt={player.name}
-                                                                        className="w-full h-full object-cover object-top"
-                                                                        loading="lazy"
-                                                                    />
-                                                                ) : (
-                                                                    <div className="w-full h-full flex items-center justify-center font-black text-xs md:text-sm text-zinc-500 bg-zinc-900">
-                                                                        {player.name.charAt(0)}
+                                                                        <div className="flex items-center gap-0.5">
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    toggleWishlist(player.id);
+                                                                                }}
+                                                                                className={`p-0.5 rounded transition-all ${
+                                                                                    isWishlisted ? 'text-yellow-400 bg-yellow-400/20' : 'text-zinc-600 hover:text-zinc-300'
+                                                                                }`}
+                                                                                title={isWishlisted ? 'Remove from Wishlist' : 'Add to Wishlist'}
+                                                                            >
+                                                                                <Star className={`w-2.5 h-2.5 ${isWishlisted ? 'fill-yellow-400' : ''}`} />
+                                                                            </button>
+                                                                            {player.jerseyNumber && (
+                                                                                <span className="text-[7px] font-bold text-zinc-300 bg-zinc-800 px-0.5 rounded">
+                                                                                    #{player.jerseyNumber}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
                                                                 )}
 
-                                                                {/* High-Contrast SOLD Badge Overlay (Photo stays visible) */}
-                                                                {isSold && (
-                                                                    <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-between p-0.5 z-20 pointer-events-none">
-                                                                        <div className="px-1.5 py-0.2 rounded bg-red-600 text-white font-black text-[7px] md:text-[8px] uppercase tracking-wider shadow">
+                                                                {/* Player Photo Area (Full uncropped with object-contain) */}
+                                                                <div className="flex-1 min-h-0 relative w-full rounded overflow-hidden bg-zinc-950 flex items-center justify-center">
+                                                                    {player.photoUrl ? (
+                                                                        <img 
+                                                                            src={player.photoUrl} 
+                                                                            alt={player.name}
+                                                                            className="w-full h-full object-contain"
+                                                                            loading="lazy"
+                                                                        />
+                                                                    ) : (
+                                                                        <div className="w-full h-full flex items-center justify-center font-black text-xs md:text-sm text-zinc-500 bg-zinc-900">
+                                                                            {player.name.charAt(0)}
+                                                                        </div>
+                                                                    )}
+
+                                                                    {isDenseBoard && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                toggleWishlist(player.id);
+                                                                            }}
+                                                                            className={`absolute top-0.5 right-0.5 p-0.5 rounded bg-black/70 z-20 transition-opacity ${
+                                                                                isWishlisted ? 'text-yellow-400 opacity-100' : 'text-zinc-400 opacity-0 group-hover:opacity-100'
+                                                                            }`}
+                                                                            title={isWishlisted ? 'Remove from Wishlist' : 'Add to Wishlist'}
+                                                                        >
+                                                                            <Star className={`w-2.5 h-2.5 ${isWishlisted ? 'fill-yellow-400' : ''}`} />
+                                                                        </button>
+                                                                    )}
+
+                                                                    {/* Compact non-obscuring SOLD tag */}
+                                                                    {isSold && (
+                                                                        <div className="absolute top-0.5 left-0.5 px-1 py-[1px] rounded bg-red-600/95 text-white font-black text-[clamp(5px,0.55vw,8px)] uppercase tracking-wider shadow z-20 pointer-events-none leading-none">
                                                                             SOLD
                                                                         </div>
-                                                                        <div className="w-full bg-black/85 px-0.5 py-0.2 rounded text-center">
-                                                                            <p className="text-[7.5px] md:text-[8.5px] font-black text-amber-300 uppercase truncate leading-tight">
-                                                                                {soldTeamName}
-                                                                            </p>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Player Name & Action Footer */}
+                                                                <div className={`shrink-0 ${isUltraDense ? 'mt-[1px]' : 'mt-0.5'} flex flex-col gap-0.5`}>
+                                                                    <h4 className={`${
+                                                                        isUltraDense ? 'text-[7px] md:text-[8px]' : 'text-[8px] md:text-[9px]'
+                                                                    } font-black uppercase text-white truncate drop-shadow text-center leading-tight`}>
+                                                                        {player.name}
+                                                                    </h4>
+
+                                                                    {/* Bottom Action: Draft Button (If My Turn & Allowed) or Status */}
+                                                                    {isSold ? (
+                                                                        <div className="py-0.2 px-0.5 rounded bg-red-950/80 border border-red-500/30 text-center text-[6.5px] md:text-[7px] font-bold text-amber-300 uppercase truncate leading-tight">
+                                                                            ★ {soldTeamName}
                                                                         </div>
-                                                                    </div>
-                                                                )}
+                                                                    ) : canPickNow ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onNominatePlayer(player);
+                                                                            }}
+                                                                            className="w-full py-0.5 rounded bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[7.5px] md:text-[8px] uppercase tracking-wider shadow flex items-center justify-center gap-0.5 active:scale-95 transition-all"
+                                                                        >
+                                                                            <Check className="w-2.5 h-2.5 stroke-[3]" /> {isPickRequestMode ? 'Request' : 'Draft'}
+                                                                        </button>
+                                                                    ) : isMyTurn && !isPickingAllowed ? (
+                                                                        <div className="py-0.2 rounded bg-amber-500/20 border border-amber-500/30 text-center text-[6.5px] font-bold text-amber-300 uppercase flex items-center justify-center gap-0.5">
+                                                                            <Lock className="w-2 h-2" /> Admin Pick
+                                                                        </div>
+                                                                    ) : !isUltraDense ? (
+                                                                        <div className="py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 text-center text-[7px] font-bold text-emerald-400 uppercase">
+                                                                            Available
+                                                                        </div>
+                                                                    ) : null}
+                                                                </div>
                                                             </div>
-
-                                                            {/* Player Name & Action Footer */}
-                                                            <div className="shrink-0 mt-0.5 flex flex-col gap-0.5">
-                                                                <h4 className="text-[8px] md:text-[9px] font-black uppercase text-white truncate drop-shadow text-center leading-tight">
-                                                                    {player.name}
-                                                                </h4>
-
-                                                                {/* Bottom Action: Draft Button (If My Turn & Allowed) or Status */}
-                                                                {isSold ? (
-                                                                    <div className="py-0.2 px-0.5 rounded bg-red-950/80 border border-red-500/30 text-center text-[7px] font-bold text-red-300 uppercase truncate">
-                                                                        ★ {soldTeamName}
-                                                                    </div>
-                                                                ) : canPickNow ? (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            onNominatePlayer(player);
-                                                                        }}
-                                                                        className="w-full py-0.5 rounded bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[8px] uppercase tracking-wider shadow flex items-center justify-center gap-0.5 active:scale-95 transition-all"
-                                                                    >
-                                                                        <Check className="w-2.5 h-2.5 stroke-[3]" /> {isPickRequestMode ? 'Request' : 'Draft'}
-                                                                    </button>
-                                                                ) : isMyTurn && !isPickingAllowed ? (
-                                                                    <div className="py-0.2 rounded bg-amber-500/20 border border-amber-500/30 text-center text-[7px] font-bold text-amber-300 uppercase flex items-center justify-center gap-0.5">
-                                                                        <Lock className="w-2 h-2" /> Admin Pick
-                                                                    </div>
-                                                                ) : (
-                                                                    <div className="py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 text-center text-[7px] font-bold text-emerald-400 uppercase">
-                                                                        Available
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
+                                                        );
+                                                    })}
+                                                </div>
                                             </div>
-                                        </div>
-                                    );
-                                })}
+                                        );
+                                    });
+                                })()}
 
                                 {categoryGroups.every(g => g.players.length === 0) && (
                                     <div className="p-8 text-center rounded-2xl border border-zinc-800 bg-zinc-900/40 text-zinc-500">
@@ -917,7 +966,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                         <img 
                                                                             src={player.photoUrl} 
                                                                             alt={player.name}
-                                                                            className="w-full h-full object-cover object-top"
+                                                                            className="w-full h-full object-contain"
                                                                         />
                                                                     ) : (
                                                                         <div className="w-full h-full flex items-center justify-center font-black text-2xl text-zinc-600 bg-zinc-900">
@@ -1070,7 +1119,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
 
                                             <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 border border-white/5 my-1">
                                                 {player.photoUrl ? (
-                                                    <img src={player.photoUrl} alt="" className="w-full h-full object-cover" />
+                                                    <img src={player.photoUrl} alt="" className="w-full h-full object-contain" />
                                                 ) : (
                                                     <div className="w-full h-full flex items-center justify-center font-black text-2xl text-zinc-600">
                                                         {player.name.charAt(0)}
@@ -1169,7 +1218,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                 <div key={pick.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-2 text-center space-y-1.5">
                                                     <div className="aspect-square w-full rounded-xl overflow-hidden bg-zinc-900 mx-auto">
                                                         {pick.playerPhoto ? (
-                                                            <img src={pick.playerPhoto} alt="" className="w-full h-full object-cover" />
+                                                            <img src={pick.playerPhoto} alt="" className="w-full h-full object-contain" />
                                                         ) : (
                                                             <div className="w-full h-full flex items-center justify-center text-zinc-600 font-black">
                                                                 {pick.playerName.charAt(0)}
@@ -1216,7 +1265,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                     <div className="flex items-center gap-3 min-w-0">
                                         <div className="w-10 h-10 rounded-xl overflow-hidden bg-zinc-950 shrink-0 border border-white/10">
                                             {h.playerPhoto ? (
-                                                <img src={h.playerPhoto} alt="" className="w-full h-full object-cover" />
+                                                <img src={h.playerPhoto} alt="" className="w-full h-full object-contain" />
                                             ) : (
                                                 <div className="w-full h-full flex items-center justify-center font-black text-sm text-zinc-600">
                                                     {h.playerName.charAt(0)}
@@ -1300,7 +1349,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
 
                                             <div className="aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 my-1 relative">
                                                 {player.photoUrl ? (
-                                                    <img src={player.photoUrl} alt="" className={`w-full h-full object-cover ${isSold ? 'grayscale opacity-30' : ''}`} />
+                                                    <img src={player.photoUrl} alt="" className={`w-full h-full object-contain ${isSold ? 'grayscale opacity-30' : ''}`} />
                                                 ) : (
                                                     <div className="w-full h-full flex items-center justify-center font-black text-xl text-zinc-600">
                                                         {player.name.charAt(0)}
