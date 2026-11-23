@@ -22,7 +22,7 @@ import SoldCelebrationPopup from './SoldCelebrationPopup';
 import { getDraftTheme } from '../../utils/draftThemes';
 import confetti from 'canvas-confetti';
 import { playCountdownTickSound, playHeartbeatSound, playTimeUpSound, playUnsoldSoundTrack, isDraftAudioMuted, setDraftAudioMuted, mergeCustomAudioConfig } from '../../utils/draftAudio';
-import { compactTeamPlayerEntry, safeBuildTeamUpdatePayload } from '../../utils';
+import { compactTeamPlayerEntry, safeBuildTeamUpdatePayload, resolveDraftTeamSquad } from '../../utils';
 
 interface Props {
     isAdmin?: boolean;
@@ -1223,31 +1223,76 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         }
     }, [isAdmin, pendingPickRequests, players, teams, draftPickMap, draftState.pickRequestApprovalEnabled]);
 
-    // ADMIN AUTO-RECONCILE: Keep /players and /teams subcollections synced whenever a Team Owner pick updated draftBoardState.history
+    // ADMIN AUTO-RECONCILE: Keep /players and /teams subcollections synced with draftBoardState.history AND scrub stale undone players
     useEffect(() => {
-        if (!isAdmin || !auctionId || !draftState.history?.length) return;
+        if (!isAdmin || isCurator || !auctionId || players.length === 0) return;
 
-        draftState.history.forEach(async (pick) => {
-            const p = playersRef.current.find(pl => String(pl.id) === String(pick.playerId));
-            const t = teamsRef.current.find(tm => String(tm.id) === String(pick.teamId));
-            if (!p || !t) return;
+        // 1. Ensure picks recorded in draftBoardState.history are synced to /players and /teams
+        if (draftState.history?.length) {
+            draftState.history.forEach(async (pick) => {
+                const p = playersRef.current.find(pl => String(pl.id) === String(pick.playerId));
+                const t = teamsRef.current.find(tm => String(tm.id) === String(pick.teamId));
+                if (!p || !t) return;
 
-            const playerNeedsSync = p.status !== 'SOLD' || String(p.soldToId || p.teamId || '') !== String(t.id);
-            const teamNeedsSync = !(t.players || []).some(tp => String(tp.id) === String(p.id));
-            if (!playerNeedsSync && !teamNeedsSync) return;
+                const playerNeedsSync = p.status !== 'SOLD' || String(p.soldToId || p.teamId || '') !== String(t.id);
+                const teamNeedsSync = !(t.players || []).some(tp => String(tp.id) === String(p.id));
+                if (!playerNeedsSync && !teamNeedsSync) return;
 
-            const reconcileKey = `${pick.id}_${p.id}_${t.id}`;
-            if (reconcilingKeysRef.current.has(reconcileKey)) return;
-            reconcilingKeysRef.current.add(reconcileKey);
+                const reconcileKey = `${pick.id}_${p.id}_${t.id}`;
+                if (reconcilingKeysRef.current.has(reconcileKey)) return;
+                reconcilingKeysRef.current.add(reconcileKey);
+
+                try {
+                    await syncPlayerAndTeamDocs(p, t, Number(pick.soldPrice || 0));
+                } catch (err) {
+                    reconcilingKeysRef.current.delete(reconcileKey);
+                    console.warn('Admin auto-reconcile notice:', err);
+                }
+            });
+        }
+
+        // 2. Automatically scrub any stale undone/POOL/UNSOLD entries remaining inside team.players
+        const historyPlayerIds = new Set((draftState.history || []).map(h => String(h.playerId)));
+        const playerByIdMap = new Map<string, Player>();
+        const playerByNameMap = new Map<string, Player>();
+        players.forEach(pl => {
+            if (pl.id !== undefined && pl.id !== null) playerByIdMap.set(String(pl.id).trim().toLowerCase(), pl);
+            if (pl.name) playerByNameMap.set(pl.name.trim().toLowerCase(), pl);
+        });
+
+        teams.forEach(async (t) => {
+            const rawSquad = t.players || [];
+            if (rawSquad.length === 0) return;
+
+            const hasStaleEntry = rawSquad.some((tp: any) => {
+                const tpIdKey = String(tp?.id ?? '').trim().toLowerCase();
+                const tpNameKey = String(tp?.name || '').trim().toLowerCase();
+                if (historyPlayerIds.has(String(tp?.id))) return false;
+                const authP = (tpIdKey && playerByIdMap.get(tpIdKey)) || (tpNameKey && playerByNameMap.get(tpNameKey));
+                if (!authP) return false;
+                return (
+                    authP.status === 'POOL' ||
+                    authP.status === 'UNSOLD' ||
+                    (!authP.status && !authP.soldTo && !(authP as any).soldToId && !authP.teamId)
+                );
+            });
+
+            if (!hasStaleEntry) return;
+
+            const cleanSquad = resolveDraftTeamSquad(t, players, draftState.history || []);
+            const scrubKey = `scrub_${t.id}_${rawSquad.length}_${cleanSquad.length}`;
+            if (reconcilingKeysRef.current.has(scrubKey)) return;
+            reconcilingKeysRef.current.add(scrubKey);
 
             try {
-                await syncPlayerAndTeamDocs(p, t, Number(pick.soldPrice || 0));
+                const cleanPayload = await safeBuildTeamUpdatePayload(t, undefined, cleanSquad);
+                await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(cleanPayload);
             } catch (err) {
-                reconcilingKeysRef.current.delete(reconcileKey);
-                console.warn('Admin auto-reconcile notice:', err);
+                reconcilingKeysRef.current.delete(scrubKey);
+                console.warn('Admin stale-squad scrub notice:', err);
             }
         });
-    }, [isAdmin, auctionId, draftState.history, players, teams]);
+    }, [isAdmin, isCurator, auctionId, draftState.history, players, teams]);
 
     // Core Undo executor (reusable for both direct clicks and Curator relay)
     const executeUndoPlayerById = async (playerId: string | number) => {
@@ -1257,6 +1302,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         const pickInfo = draftPickMapRef.current.get(String(player.id));
         const soldTeamId = pickInfo?.teamId || player.soldToId || player.teamId;
         const soldPrice = Number(pickInfo?.soldPrice ?? player.soldPrice ?? 0);
+        const undoneNameLower = String(player.name || '').trim().toLowerCase();
 
         // 1. Revert player in players subcollection back to POOL
         const playerResetData = {
@@ -1271,16 +1317,22 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             JSON.parse(JSON.stringify(playerResetData))
         );
 
-        // 2. Refund team budget and remove player from team's squad
-        if (soldTeamId) {
-            const targetTeam = teamsRef.current.find(t => String(t.id) === String(soldTeamId));
-            if (targetTeam) {
-                const restoredBudget = Number(targetTeam.budget || 0) + soldPrice;
-                const updatedSquad = (targetTeam.players || []).filter(p => String(p.id) !== String(player.id));
-                const teamPayload = await safeBuildTeamUpdatePayload(targetTeam, restoredBudget, updatedSquad);
+        // 2. Refund primary team budget and remove player from ALL teams that may hold stale entries
+        for (const t of teamsRef.current) {
+            const isSoldTeam = soldTeamId && String(t.id) === String(soldTeamId);
+            const hasEntry = (t.players || []).some(p =>
+                String(p.id) === String(player.id) ||
+                (undoneNameLower && String(p.name || '').trim().toLowerCase() === undoneNameLower)
+            );
+            if (!isSoldTeam && !hasEntry) continue;
 
-                await db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id)).update(teamPayload);
-            }
+            const updatedBudget = isSoldTeam ? Number(t.budget || 0) + soldPrice : undefined;
+            const updatedSquad = (t.players || []).filter(p =>
+                String(p.id) !== String(player.id) &&
+                (!undoneNameLower || String(p.name || '').trim().toLowerCase() !== undoneNameLower)
+            );
+            const teamPayload = await safeBuildTeamUpdatePayload(t, updatedBudget, updatedSquad);
+            await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
         }
 
         // 3. Remove pick from draftBoardState.history
@@ -1410,16 +1462,32 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 const currentDraft = draftStateRef.current;
                 const currentRound = currentDraft.currentRound;
                 const currentRoundPicks = (currentDraft.history || []).filter(h => h.round === currentRound);
+                const roundRefundsByTeam = new Map<string, { refund: number; removedIds: Set<string>; removedNames: Set<string> }>();
                 for (const pick of currentRoundPicks) {
                     await db.collection('auctions').doc(auctionId).collection('players').doc(String(pick.playerId)).update({
                         status: 'POOL', soldTo: null, soldToId: null, teamId: null, soldPrice: null, soldAt: null
                     });
-                    const t = teamsRef.current.find(tm => String(tm.id) === String(pick.teamId));
+                    const tKey = String(pick.teamId || '');
+                    if (tKey) {
+                        if (!roundRefundsByTeam.has(tKey)) {
+                            roundRefundsByTeam.set(tKey, { refund: 0, removedIds: new Set(), removedNames: new Set() });
+                        }
+                        const entry = roundRefundsByTeam.get(tKey)!;
+                        entry.refund += Number(pick.soldPrice || 0);
+                        entry.removedIds.add(String(pick.playerId));
+                        if (pick.playerName) entry.removedNames.add(String(pick.playerName).trim().toLowerCase());
+                    }
+                }
+                for (const [tKey, info] of roundRefundsByTeam.entries()) {
+                    const t = teamsRef.current.find(tm => String(tm.id) === tKey);
                     if (t) {
                         const teamPayload = await safeBuildTeamUpdatePayload(
                             t,
-                            Number(t.budget || 0) + Number(pick.soldPrice || 0),
-                            (t.players || []).filter(p => String(p.id) !== String(pick.playerId))
+                            Number(t.budget || 0) + info.refund,
+                            (t.players || []).filter(p =>
+                                !info.removedIds.has(String(p.id)) &&
+                                !info.removedNames.has(String(p.name || '').trim().toLowerCase())
+                            )
                         );
                         await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
                     }
@@ -1459,11 +1527,10 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 }
                 for (const t of teamsRef.current) {
                     const spent = allDraftPicks.filter(p => String(p.teamId) === String(t.id)).reduce((s, p) => s + (p.soldPrice || 0), 0);
-                    const draftIds = new Set(allDraftPicks.map(p => String(p.playerId)));
                     const teamPayload = await safeBuildTeamUpdatePayload(
                         t,
                         Number(t.budget || 0) + spent,
-                        (t.players || []).filter(p => !draftIds.has(String(p.id)))
+                        []
                     );
                     await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
                 }
@@ -1684,6 +1751,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     <DraftNominationModal
                         player={activePlayerForModal}
                         teams={teams}
+                        allPlayers={players}
+                        draftHistory={draftState.history || []}
                         currentTurnTeam={currentTurnTeam}
                         myTeam={myTeam}
                         isAdmin={isAdmin}
@@ -1806,7 +1875,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                 </h3>
                                 {currentTurnTeam && (
                                     <p className="text-[10px] font-bold text-blue-300 uppercase tracking-wider">
-                                        Squad: {currentTurnTeam.players?.length || 0} Players
+                                        Squad: {resolveDraftTeamSquad(currentTurnTeam, players, draftState.history || []).length} Players
                                     </p>
                                 )}
                             </div>
@@ -2651,29 +2720,32 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         <div className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l p-4 overflow-y-auto custom-scrollbar border-zinc-800 bg-zinc-900/30">
                             <div className="space-y-5">
                                 {/* Team Owner's Active Squad Summary */}
-                                {myTeam && (
-                                    <div className={`p-4 rounded-2xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-gray-200'}`}>
-                                        <div className="flex items-center justify-between mb-3 border-b pb-2 border-white/5">
-                                            <div className="flex items-center gap-2">
-                                                <Crown className="w-4 h-4 text-amber-500" />
-                                                <h4 className="text-xs font-black uppercase text-white">Your Squad ({myTeam.players?.length || 0})</h4>
+                                {myTeam && (() => {
+                                    const resolvedMySquad = resolveDraftTeamSquad(myTeam, players, draftState.history || []);
+                                    return (
+                                        <div className={`p-4 rounded-2xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-gray-200'}`}>
+                                            <div className="flex items-center justify-between mb-3 border-b pb-2 border-white/5">
+                                                <div className="flex items-center gap-2">
+                                                    <Crown className="w-4 h-4 text-amber-500" />
+                                                    <h4 className="text-xs font-black uppercase text-white">Your Squad ({resolvedMySquad.length})</h4>
+                                                </div>
+                                                <span className="text-xs font-black text-blue-400">{resolvedMySquad.length} Drafted</span>
                                             </div>
-                                            <span className="text-xs font-black text-blue-400">{myTeam.players?.length || 0} Drafted</span>
+                                            <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
+                                                {resolvedMySquad.length > 0 ? (
+                                                    resolvedMySquad.map(p => (
+                                                        <div key={p.id} className="flex items-center justify-between text-xs p-1.5 rounded-lg bg-zinc-800/60">
+                                                            <span className="font-bold text-white text-[11px] truncate">{p.name}</span>
+                                                            <span className="text-[9px] text-zinc-400 font-bold uppercase">{p.role || 'Player'}</span>
+                                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <p className="text-[10px] text-zinc-500 font-bold uppercase text-center py-4">No picks yet</p>
+                                                )}
+                                            </div>
                                         </div>
-                                        <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
-                                            {(myTeam.players || []).length > 0 ? (
-                                                myTeam.players.map(p => (
-                                                    <div key={p.id} className="flex items-center justify-between text-xs p-1.5 rounded-lg bg-zinc-800/60">
-                                                        <span className="font-bold text-white text-[11px] truncate">{p.name}</span>
-                                                        <span className="text-[9px] text-zinc-400 font-bold uppercase">{p.role || 'Player'}</span>
-                                                    </div>
-                                                ))
-                                            ) : (
-                                                <p className="text-[10px] text-zinc-500 font-bold uppercase text-center py-4">No picks yet</p>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
+                                    );
+                                })()}
 
                                 {/* Recent Draft Picks Feed */}
                                 <div className={`p-4 rounded-2xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-gray-200'}`}>
@@ -2721,6 +2793,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 <DraftNominationModal
                     player={activePlayerForModal}
                     teams={teams}
+                    allPlayers={players}
+                    draftHistory={draftState.history || []}
                     currentTurnTeam={currentTurnTeam}
                     myTeam={myTeam}
                     isAdmin={isAdmin}

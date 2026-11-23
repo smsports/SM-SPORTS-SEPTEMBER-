@@ -12,6 +12,7 @@ import confetti from 'canvas-confetti';
 import { SpinningWheelModal } from '../components/SpinningWheelModal';
 import TeamStrategyCalculator from '../components/TeamStrategyCalculator';
 import CategoryDraftBoard from '../components/DraftBoard/CategoryDraftBoard';
+import { resolveTeamSquad, resolveDraftTeamSquad } from '../utils';
 
 import { useTheme } from '../contexts/ThemeContext';
 import ThemeToggle from '../components/ThemeToggle';
@@ -118,13 +119,16 @@ const Dashboard: React.FC = () => {
              </div>
           </div>
 
-           {isTeamOwner && myTeam && state.status !== AuctionStatus.Finished && (
-               state.auctionType === 'DRAFT_BOARD' ? (
+           {isTeamOwner && myTeam && state.status !== AuctionStatus.Finished && (() => {
+               const resolvedHeaderSquadCount = state.auctionType === 'DRAFT_BOARD'
+                   ? resolveDraftTeamSquad(myTeam, state.players, state.draftBoardState?.history || []).length
+                   : resolveTeamSquad(myTeam, state.players).length;
+               return state.auctionType === 'DRAFT_BOARD' ? (
                    <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl border shadow-inner ml-auto mr-4 transition-colors ${isDark ? 'bg-primary/50 border-zinc-800' : 'bg-gray-50 border-gray-200'}`}>
                        <div className="flex items-center gap-2">
                            <Users className="w-4 h-4 text-amber-400" />
                            <span className={`uppercase text-[10px] font-black tracking-widest ${isDark ? 'text-zinc-400' : 'text-gray-500'}`}>Drafted Squad:</span>
-                           <b className={`text-lg font-black tracking-tighter leading-none ${isDark ? 'text-white' : 'text-gray-900'}`}>{myTeam.players.length}</b>
+                           <b className={`text-lg font-black tracking-tighter leading-none ${isDark ? 'text-white' : 'text-gray-900'}`}>{resolvedHeaderSquadCount}</b>
                        </div>
                    </div>
                ) : (
@@ -137,7 +141,7 @@ const Dashboard: React.FC = () => {
                        <div className="hidden md:flex items-center gap-3">
                            <Users className="w-4 h-4 text-blue-500" />
                            <span className={`uppercase text-[10px] font-black tracking-widest ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Squad:</span>
-                           <b className={`text-xl md:text-2xl font-black tracking-tighter leading-none ${isDark ? 'text-white' : 'text-gray-900'}`}>{myTeam.players.length}</b>
+                           <b className={`text-xl md:text-2xl font-black tracking-tighter leading-none ${isDark ? 'text-white' : 'text-gray-900'}`}>{resolvedHeaderSquadCount}</b>
                        </div>
                        <div className={`w-px h-8 hidden sm:block ${isDark ? 'bg-zinc-800' : 'bg-gray-200'}`}></div>
                        <button
@@ -149,8 +153,8 @@ const Dashboard: React.FC = () => {
                            <span className="hidden sm:inline">Strategy Calculator</span>
                        </button>
                    </div>
-               )
-           )}
+               );
+           })()}
 
            <div className="flex items-center space-x-4">
              <ThemeToggle />

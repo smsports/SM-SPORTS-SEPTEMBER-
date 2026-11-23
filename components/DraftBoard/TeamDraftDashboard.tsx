@@ -6,6 +6,7 @@ import {
     CheckCircle2, AlertCircle, ChevronRight, Lock, Maximize2
 } from 'lucide-react';
 import SoldCelebrationPopup from './SoldCelebrationPopup';
+import { resolveDraftTeamSquad } from '../../utils';
 
 /**
  * Calculates optimal (rows, cols) for any number of players N to guarantee
@@ -168,55 +169,9 @@ export const TeamDraftDashboard: React.FC<Props> = ({
         return teams.find(t => String(t.id) === String(draftState.currentTeamId)) || null;
     }, [teams, draftState.currentTeamId]);
 
-    // My team's drafted squad
+    // My team's drafted squad (resolved against authoritative players & draft history)
     const mySquad = useMemo(() => {
-        const picks = (draftState.history || []).filter(h => String(h.teamId) === String(myTeam.id));
-        const pickIds = new Set(picks.map(p => String(p.playerId)));
-        
-        // Combine full player info
-        const result: {
-            id: string | number;
-            name: string;
-            role: string;
-            category: string;
-            photoUrl: string;
-            jerseyNumber: string | number;
-            soldPrice: number;
-            pickNumber?: number;
-            round?: number;
-        }[] = [];
-
-        picks.forEach(p => {
-            const fullP = players.find(pl => String(pl.id) === String(p.playerId));
-            result.push({
-                id: p.playerId,
-                name: p.playerName,
-                role: p.playerRole || fullP?.role || 'Player',
-                category: p.playerCategory || fullP?.category || 'General',
-                photoUrl: p.playerPhoto || fullP?.photoUrl || '',
-                jerseyNumber: fullP?.jerseyNumber || '',
-                soldPrice: p.soldPrice || 0,
-                pickNumber: p.pickNumber,
-                round: p.round
-            });
-        });
-
-        // Add any other players in team.players
-        (myTeam.players || []).forEach(p => {
-            if (!pickIds.has(String(p.id))) {
-                result.push({
-                    id: p.id,
-                    name: p.name,
-                    role: p.role || p.category || 'Player',
-                    category: p.category || p.role || 'General',
-                    photoUrl: p.photoUrl || '',
-                    jerseyNumber: p.jerseyNumber || '',
-                    soldPrice: p.soldPrice || 0
-                });
-            }
-        });
-
-        return result;
+        return resolveDraftTeamSquad(myTeam, players, draftState.history || []);
     }, [myTeam, players, draftState.history]);
 
     // Role breakdown for My Squad
@@ -1160,7 +1115,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                         <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar pb-2">
                             {teams.map(t => {
                                 const isSelected = String(t.id) === String(viewedTeamId);
-                                const count = (draftState.history || []).filter(h => String(h.teamId) === String(t.id)).length;
+                                const count = resolveDraftTeamSquad(t, players, draftState.history || []).length;
                                 return (
                                     <button
                                         key={t.id}
@@ -1186,7 +1141,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                         {/* Selected Rival Team Roster */}
                         {(() => {
                             const targetTeam = teams.find(t => String(t.id) === String(viewedTeamId)) || myTeam;
-                            const targetPicks = (draftState.history || []).filter(h => String(h.teamId) === String(targetTeam.id));
+                            const targetRoster = resolveDraftTeamSquad(targetTeam, players, draftState.history || []);
                             return (
                                 <div className="space-y-4 p-4 rounded-3xl bg-zinc-900/60 border border-zinc-800">
                                     <div className="flex items-center justify-between pb-3 border-b border-white/10">
@@ -1201,36 +1156,38 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                             <div>
                                                 <h3 className="text-base font-black uppercase text-white">{targetTeam.name}</h3>
                                                 <p className="text-[10px] text-zinc-400">
-                                                    Owner: {targetTeam.owner || 'Franchise'} • {targetPicks.length} Drafted Players
+                                                    Owner: {targetTeam.owner || 'Franchise'} • {targetRoster.length} Drafted Players
                                                 </p>
                                             </div>
                                         </div>
                                         <div className="text-right">
                                             <p className="text-[9px] uppercase font-bold text-zinc-400">Squad Fill</p>
-                                            <p className="text-sm font-black text-amber-400">{targetPicks.length} Players</p>
+                                            <p className="text-sm font-black text-amber-400">{targetRoster.length} Players</p>
                                         </div>
                                     </div>
 
-                                    {targetPicks.length === 0 ? (
+                                    {targetRoster.length === 0 ? (
                                         <p className="text-xs text-zinc-500 py-8 text-center uppercase tracking-wider">
                                             This team has not made any draft picks yet.
                                         </p>
                                     ) : (
                                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-                                            {targetPicks.map(pick => (
+                                            {targetRoster.map(pick => (
                                                 <div key={pick.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-2 text-center space-y-1.5">
                                                     <div className="aspect-square w-full rounded-xl overflow-hidden bg-zinc-900 mx-auto">
-                                                        {pick.playerPhoto ? (
-                                                            <img src={pick.playerPhoto} alt="" className="w-full h-full object-contain" />
+                                                        {pick.photoUrl ? (
+                                                            <img src={pick.photoUrl} alt="" className="w-full h-full object-contain" />
                                                         ) : (
                                                             <div className="w-full h-full flex items-center justify-center text-zinc-600 font-black">
-                                                                {pick.playerName.charAt(0)}
+                                                                {pick.name.charAt(0)}
                                                             </div>
                                                         )}
                                                     </div>
-                                                    <h5 className="text-xs font-black uppercase text-white truncate">{pick.playerName}</h5>
-                                                    <p className="text-[9px] text-amber-400 uppercase font-bold">{pick.playerRole || pick.playerCategory}</p>
-                                                    <span className="text-[8px] text-zinc-500 block">R{pick.round}{!hideNumbers ? ` Pick #${pick.pickNumber}` : ''}</span>
+                                                    <h5 className="text-xs font-black uppercase text-white truncate">{pick.name}</h5>
+                                                    <p className="text-[9px] text-amber-400 uppercase font-bold">{pick.role || pick.category}</p>
+                                                    <span className="text-[8px] text-zinc-500 block">
+                                                        {pick.round ? `R${pick.round}${!hideNumbers && pick.pickNumber ? ` Pick #${pick.pickNumber}` : ''}` : 'Official Pick'}
+                                                    </span>
                                                 </div>
                                             ))}
                                         </div>

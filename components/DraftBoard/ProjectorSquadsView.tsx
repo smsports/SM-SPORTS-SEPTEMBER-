@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Team, Player, DraftBoardState, DraftPickHistory } from '../../types';
 import { Users, Shield, Trophy, Check, User } from 'lucide-react';
 import { getDraftTheme } from '../../utils/draftThemes';
+import { resolveDraftTeamSquad } from '../../utils';
 
 interface Props {
     teams: Team[];
@@ -24,74 +25,19 @@ export const ProjectorSquadsView: React.FC<Props> = ({
     const themeConfig = getDraftTheme(draftState.broadcastTheme);
     const hideNumbers = Boolean(draftState.hidePlayerNumbers);
 
-    // Map team id to their drafted players
+    // Map team id to their drafted players (resolved against authoritative players & draft history)
     const teamSquads = useMemo(() => {
-        return teams.map(team => {
-            // Find all players picked by this team either from draft history or squad list
-            const teamPicks = (draftState.history || []).filter(h => String(h.teamId) === String(team.id));
-            const pickedPlayerIds = new Set(teamPicks.map(p => String(p.playerId)));
-            
-            // Also include any players in team.players
-            const existingPlayers = (team.players || []).map(p => ({
+        return teams.map(team => ({
+            team,
+            squad: resolveDraftTeamSquad(team, players, draftState.history || []).map(p => ({
                 id: p.id,
                 name: p.name,
                 role: p.role || p.category || 'Player',
                 category: p.category || p.role || 'Player',
                 photoUrl: p.photoUrl || '',
-                jerseyNumber: p.jerseyNumber || '',
-                soldPrice: p.soldPrice || 0
-            }));
-
-            // Merge with full player profiles
-            const mergedSquad: {
-                id: string | number;
-                name: string;
-                role: string;
-                category: string;
-                photoUrl: string;
-                jerseyNumber: string | number;
-            }[] = [];
-
-            const seenIds = new Set<string>();
-
-            // Add draft picks first
-            teamPicks.forEach(pick => {
-                const fullP = players.find(p => String(p.id) === String(pick.playerId));
-                const pid = String(pick.playerId);
-                if (!seenIds.has(pid)) {
-                    seenIds.add(pid);
-                    mergedSquad.push({
-                        id: pick.playerId,
-                        name: pick.playerName,
-                        role: pick.playerRole || pick.playerCategory || 'Player',
-                        category: pick.playerCategory || 'General',
-                        photoUrl: pick.playerPhoto || fullP?.photoUrl || '',
-                        jerseyNumber: fullP?.jerseyNumber || ''
-                    });
-                }
-            });
-
-            // Add existing squad players if not already added
-            existingPlayers.forEach(p => {
-                const pid = String(p.id);
-                if (!seenIds.has(pid)) {
-                    seenIds.add(pid);
-                    mergedSquad.push({
-                        id: p.id,
-                        name: p.name,
-                        role: p.role,
-                        category: p.category,
-                        photoUrl: p.photoUrl,
-                        jerseyNumber: p.jerseyNumber
-                    });
-                }
-            });
-
-            return {
-                team,
-                squad: mergedSquad
-            };
-        });
+                jerseyNumber: p.jerseyNumber || ''
+            }))
+        }));
     }, [teams, players, draftState.history]);
 
     // If a specific team is focused

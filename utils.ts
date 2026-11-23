@@ -1348,8 +1348,10 @@ export const resolveTeamSquad = (team: Team, allPlayers: Player[] = []): Player[
                 // If player is UNSOLD or POOL in allPlayers, EXCLUDE
                 if (latest.status === 'UNSOLD' || latest.status === 'POOL') return false;
                 if (latest.status && latest.status !== 'SOLD' && latest.status !== 'TRADED') return false;
+                // If latest has no SOLD/TRADED status and no team assignment, they belong to POOL -> EXCLUDE
+                if (!latest.status && !latest.soldTo && !(latest as any).soldToId && !latest.teamId) return false;
                 // If latest soldTo belongs to a different team, EXCLUDE
-                if (latest.soldTo && !isMatchForThisTeam(latest.soldTo, latest.teamId)) return false;
+                if ((latest.soldTo || latest.teamId) && !isMatchForThisTeam(latest.soldTo, latest.teamId)) return false;
                 return true;
             }
 
@@ -1410,4 +1412,91 @@ export const resolveTeamSquad = (team: Team, allPlayers: Player[] = []): Player[
 
     return squad;
 };
+
+/**
+ * Resolves a team's active squad for Draft Board views (Team Portal, Projector Squads, Summary, Sidebar).
+ * Uses `draftHistory` and `allPlayers` as the authoritative source of truth so undone/POOL players
+ * left over in stale `team.players` arrays are strictly excluded, while preserving full player photos & round numbers.
+ */
+export const resolveDraftTeamSquad = (
+    team: Team,
+    allPlayers: Player[] = [],
+    draftHistory: any[] = []
+): (Player & { pickNumber?: number; round?: number })[] => {
+    if (!team) return [];
+
+    const teamIdStr = String(team.id || '').trim();
+    const teamNameLower = (team.name || '').trim().toLowerCase();
+    const teamShortLower = (team.shortName || '').trim().toLowerCase();
+
+    const isMatchForThisTeam = (teamIdentifier?: string, tId?: string | number) => {
+        if (!teamIdentifier && !tId) return false;
+        const norm = (teamIdentifier || '').trim().toLowerCase();
+        const idStr = String(tId || '').trim();
+        return (
+            (norm && (norm === teamNameLower || (teamShortLower && norm === teamShortLower) || norm === teamIdStr)) ||
+            (idStr && idStr === teamIdStr)
+        );
+    };
+
+    const playerById = new Map<string, Player>();
+    const playerByName = new Map<string, Player>();
+    allPlayers.forEach(p => {
+        if (p.id !== undefined && p.id !== null) playerById.set(String(p.id).trim().toLowerCase(), p);
+        if (p.name) playerByName.set(p.name.trim().toLowerCase(), p);
+    });
+
+    const result: (Player & { pickNumber?: number; round?: number })[] = [];
+    const seenKeys = new Set<string>();
+
+    // 1. Draft picks in history for this team (skip if authoritatively reverted to POOL/UNSOLD or assigned elsewhere)
+    const teamPicks = (draftHistory || []).filter(h => String(h?.teamId) === teamIdStr);
+    teamPicks.forEach(pick => {
+        const pIdKey = String(pick.playerId ?? '').trim().toLowerCase();
+        const pNameKey = (pick.playerName || '').trim().toLowerCase();
+        const fullP = (pIdKey && playerById.get(pIdKey)) || (pNameKey && playerByName.get(pNameKey));
+
+        if (fullP) {
+            if (fullP.status === 'POOL' || fullP.status === 'UNSOLD') return;
+            if ((fullP.soldTo || (fullP as any).soldToId || fullP.teamId) &&
+                !isMatchForThisTeam(fullP.soldTo, (fullP as any).soldToId || fullP.teamId)) {
+                return;
+            }
+        }
+
+        const dedupeKey = pIdKey || pNameKey;
+        if (!dedupeKey || seenKeys.has(dedupeKey)) return;
+        seenKeys.add(dedupeKey);
+
+        result.push({
+            ...(fullP || ({} as Player)),
+            id: pick.playerId,
+            name: fullP?.name || pick.playerName || '',
+            role: fullP?.role || pick.playerRole || pick.playerCategory || 'Player',
+            category: fullP?.category || pick.playerCategory || fullP?.role || 'General',
+            photoUrl: fullP?.photoUrl || pick.playerPhoto || '',
+            jerseyNumber: fullP?.jerseyNumber || '',
+            basePrice: Number(fullP?.basePrice || 0),
+            soldPrice: Number(pick.soldPrice ?? fullP?.soldPrice ?? 0),
+            status: 'SOLD',
+            soldTo: team.name,
+            pickNumber: pick.pickNumber,
+            round: pick.round
+        });
+    });
+
+    // 2. Remaining authoritatively valid squad players (e.g., directly assigned captains or pre-sold players)
+    const authoritativeSquad = resolveTeamSquad(team, allPlayers);
+    authoritativeSquad.forEach(p => {
+        const pIdKey = String(p.id ?? '').trim().toLowerCase();
+        const pNameKey = (p.name || '').trim().toLowerCase();
+        const dedupeKey = pIdKey || pNameKey;
+        if (!dedupeKey || seenKeys.has(dedupeKey)) return;
+        seenKeys.add(dedupeKey);
+        result.push(p);
+    });
+
+    return result;
+};
+
 

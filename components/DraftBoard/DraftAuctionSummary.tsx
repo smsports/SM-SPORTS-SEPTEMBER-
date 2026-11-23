@@ -4,6 +4,7 @@ import { Trophy, Users, Download, RotateCcw, Printer, ArrowLeft, Check, Shield, 
 import confetti from 'canvas-confetti';
 import * as XLSX from 'xlsx';
 import { getDraftTheme } from '../../utils/draftThemes';
+import { resolveDraftTeamSquad } from '../../utils';
 
 interface Props {
     tournamentName?: string;
@@ -63,52 +64,17 @@ export const DraftAuctionSummary: React.FC<Props> = ({
         } catch (_) {}
     }, []);
 
-    // Build consolidated team squads
+    // Build consolidated team squads (resolved against authoritative players & draft history)
     const teamSquads = useMemo(() => {
         return teams.map(team => {
-            const teamPicks = (draftState.history || []).filter(h => String(h.teamId) === String(team.id));
-            const seenIds = new Set<string>();
-            const roster: {
-                id: string | number;
-                name: string;
-                role: string;
-                category: string;
-                photoUrl: string;
-                soldPrice: number;
-            }[] = [];
-
-            // Add draft picks
-            teamPicks.forEach(pick => {
-                const pid = String(pick.playerId);
-                if (!seenIds.has(pid)) {
-                    seenIds.add(pid);
-                    const pFull = players.find(p => String(p.id) === pid);
-                    roster.push({
-                        id: pick.playerId,
-                        name: pick.playerName,
-                        role: pick.playerRole || pick.playerCategory || 'Player',
-                        category: pick.playerCategory || 'General',
-                        photoUrl: pick.playerPhoto || pFull?.photoUrl || '',
-                        soldPrice: Number(pick.soldPrice || 0)
-                    });
-                }
-            });
-
-            // Also merge any existing squad players on team object
-            (team.players || []).forEach(p => {
-                const pid = String(p.id);
-                if (!seenIds.has(pid)) {
-                    seenIds.add(pid);
-                    roster.push({
-                        id: p.id,
-                        name: p.name,
-                        role: p.role || p.category || 'Player',
-                        category: p.category || 'General',
-                        photoUrl: p.photoUrl || '',
-                        soldPrice: Number(p.soldPrice || 0)
-                    });
-                }
-            });
+            const roster = resolveDraftTeamSquad(team, players, draftState.history || []).map(p => ({
+                id: p.id,
+                name: p.name,
+                role: p.role || p.category || 'Player',
+                category: p.category || 'General',
+                photoUrl: p.photoUrl || '',
+                soldPrice: Number(p.soldPrice || 0)
+            }));
 
             const totalSpent = roster.reduce((sum, p) => sum + p.soldPrice, 0);
 

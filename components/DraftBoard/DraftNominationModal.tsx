@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
-import { Player, Team } from '../../types';
+import { Player, Team, DraftPickHistory } from '../../types';
 import { 
     X, Check, Shield, Wallet, Trophy, User, CheckCircle2, 
     Crown, Sparkles, AlertCircle, Tag, Undo2, Lock, Loader2
 } from 'lucide-react';
 import { unlockDraftAudio } from '../../utils/draftAudio';
+import { resolveDraftTeamSquad } from '../../utils';
 
 interface Props {
     player: Player;
     teams: Team[];
+    allPlayers?: Player[];
+    draftHistory?: DraftPickHistory[];
     currentTurnTeam: Team | null;
     myTeam?: Team | null;
     isAdmin: boolean;
@@ -27,6 +30,8 @@ interface Props {
 export const DraftNominationModal: React.FC<Props> = ({
     player,
     teams,
+    allPlayers = [],
+    draftHistory = [],
     currentTurnTeam,
     myTeam,
     isAdmin,
@@ -178,12 +183,17 @@ export const DraftNominationModal: React.FC<Props> = ({
                                         disabled={isSubmitting}
                                         className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white font-bold text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     >
-                                        {teams.map(t => (
-                                            <option key={t.id} value={t.id}>
-                                                {t.name} ({t.players?.length || 0} Drafted)
-                                                {currentTurnTeam && String(t.id) === String(currentTurnTeam.id) ? ' ★ Current Turn' : ''}
-                                            </option>
-                                        ))}
+                                        {teams.map(t => {
+                                            const draftedCount = allPlayers.length > 0 || draftHistory.length > 0
+                                                ? resolveDraftTeamSquad(t, allPlayers, draftHistory).length
+                                                : (t.players?.length || 0);
+                                            return (
+                                                <option key={t.id} value={t.id}>
+                                                    {t.name} ({draftedCount} Drafted)
+                                                    {currentTurnTeam && String(t.id) === String(currentTurnTeam.id) ? ' ★ Current Turn' : ''}
+                                                </option>
+                                            );
+                                        })}
                                     </select>
                                 </div>
                             </div>

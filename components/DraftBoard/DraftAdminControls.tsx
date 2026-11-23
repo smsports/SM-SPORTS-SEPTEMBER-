@@ -242,7 +242,11 @@ export const DraftAdminControls: React.FC<Props> = ({
             const targetTeam = teams.find(t => String(t.id) === String(lastPick.teamId));
             if (targetTeam) {
                 const refundedBudget = Number(targetTeam.budget || 0) + Number(lastPick.soldPrice || 0);
-                const updatedSquad = (targetTeam.players || []).filter(p => String(p.id) !== String(lastPick.playerId));
+                const lastNameLower = String(lastPick.playerName || '').trim().toLowerCase();
+                const updatedSquad = (targetTeam.players || []).filter(p =>
+                    String(p.id) !== String(lastPick.playerId) &&
+                    (!lastNameLower || String(p.name || '').trim().toLowerCase() !== lastNameLower)
+                );
                 const teamPayload = await safeBuildTeamUpdatePayload(targetTeam, refundedBudget, updatedSquad);
 
                 await db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id)).update(teamPayload);
@@ -283,6 +287,7 @@ export const DraftAdminControls: React.FC<Props> = ({
         setIsProcessing(true);
         try {
             // Revert all picks in current round to POOL
+            const roundRefundsByTeam = new Map<string, { refund: number; removedIds: Set<string>; removedNames: Set<string> }>();
             for (const pick of currentRoundPicks) {
                 await db.collection('auctions').doc(auctionId).collection('players').doc(String(pick.playerId)).update({
                     status: 'POOL',
@@ -293,10 +298,27 @@ export const DraftAdminControls: React.FC<Props> = ({
                     soldAt: null
                 });
 
-                const t = teams.find(tm => String(tm.id) === String(pick.teamId));
+                const tKey = String(pick.teamId || '');
+                if (tKey) {
+                    if (!roundRefundsByTeam.has(tKey)) {
+                        roundRefundsByTeam.set(tKey, { refund: 0, removedIds: new Set(), removedNames: new Set() });
+                    }
+                    const entry = roundRefundsByTeam.get(tKey)!;
+                    entry.refund += Number(pick.soldPrice || 0);
+                    entry.removedIds.add(String(pick.playerId));
+                    if (pick.playerName) entry.removedNames.add(String(pick.playerName).trim().toLowerCase());
+                }
+            }
+
+            // Update each affected team once so multiple picks by the same team in the round never overwrite each other
+            for (const [tKey, info] of roundRefundsByTeam.entries()) {
+                const t = teams.find(tm => String(tm.id) === tKey);
                 if (t) {
-                    const refundedBudget = Number(t.budget || 0) + Number(pick.soldPrice || 0);
-                    const updatedSquad = (t.players || []).filter(p => String(p.id) !== String(pick.playerId));
+                    const refundedBudget = Number(t.budget || 0) + info.refund;
+                    const updatedSquad = (t.players || []).filter(p =>
+                        !info.removedIds.has(String(p.id)) &&
+                        !info.removedNames.has(String(p.name || '').trim().toLowerCase())
+                    );
                     const teamPayload = await safeBuildTeamUpdatePayload(t, refundedBudget, updatedSquad);
                     await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
                 }
@@ -359,14 +381,11 @@ export const DraftAdminControls: React.FC<Props> = ({
                 await batch.commit();
             }
 
-            // Restore all team budgets and squad
+            // Restore all team budgets and clear squads (since every player in the auction was reset to POOL)
             for (const t of teams) {
-                // Calculate total spent in draft
                 const spentInDraft = allDraftPicks.filter(p => String(p.teamId) === String(t.id)).reduce((sum, p) => sum + (p.soldPrice || 0), 0);
                 const restoredBudget = Number(t.budget || 0) + spentInDraft;
-                const draftPlayerIds = new Set(allDraftPicks.map(p => String(p.playerId)));
-                const remainingSquad = (t.players || []).filter(p => !draftPlayerIds.has(String(p.id)));
-                const teamPayload = await safeBuildTeamUpdatePayload(t, restoredBudget, remainingSquad);
+                const teamPayload = await safeBuildTeamUpdatePayload(t, restoredBudget, []);
 
                 await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
             }
