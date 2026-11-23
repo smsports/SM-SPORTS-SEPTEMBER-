@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory, ObsDraftDisplayMode, CustomAudioConfig, PendingDraftPickRequest } from '../../types';
 import { db } from '../../firebase';
 import { uploadAudioOrFallback, safeBuildTeamUpdatePayload } from '../../utils';
@@ -67,6 +67,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     const [showCuratorPass, setShowCuratorPass] = useState<boolean>(false);
     const [savingCuratorPass, setSavingCuratorPass] = useState<boolean>(false);
     const [curatorPassNotice, setCuratorPassNotice] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+    const resetOnNextStartRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (draftState.soldPopupDurationSeconds !== undefined) {
@@ -159,9 +160,19 @@ export const DraftAdminControls: React.FC<Props> = ({
     const handleToggleTimer = async () => {
         if (!auctionId) return;
         const newRunning = !draftState.isTimerRunning;
+        const defaultSec = Number(draftState.turnTimerSeconds || 45);
+        const shouldResetFromBeginning =
+            newRunning &&
+            (resetOnNextStartRef.current || Number(draftState.timerTimeRemaining || 0) <= 0);
+
+        if (newRunning) {
+            resetOnNextStartRef.current = false;
+        }
+
         await updateAuctionDoc({
             'draftBoardState.isTimerRunning': newRunning,
             'draftBoardState.roundStatus': newRunning ? 'IN_PROGRESS' : 'PAUSED',
+            ...(shouldResetFromBeginning ? { 'draftBoardState.timerTimeRemaining': defaultSec } : {}),
             'draftBoardState.updatedAt': Date.now()
         });
     };
@@ -872,13 +883,21 @@ export const DraftAdminControls: React.FC<Props> = ({
                                 onChange={async (e) => {
                                     const val = e.target.value;
                                     if (!auctionId) return;
+                                    const defaultSec = Number(draftState.turnTimerSeconds || 45);
+                                    resetOnNextStartRef.current = true;
+                                    const currentOrder = draftState.roundOrder && draftState.roundOrder.length > 0
+                                        ? draftState.roundOrder
+                                        : teams.map(t => t.id);
+                                    const fallbackOrderTeamId = currentOrder[Number(draftState.currentTurnIndex || 0)] ?? teams[0]?.id ?? null;
+
                                     const updatePayload: any = {
                                         'draftBoardState.targetPickingTeamId': val,
+                                        'draftBoardState.currentTeamId': val !== 'CURRENT_TURN' ? val : fallbackOrderTeamId,
+                                        'draftBoardState.timerTimeRemaining': defaultSec,
+                                        'draftBoardState.isTimerRunning': false,
+                                        'draftBoardState.roundStatus': 'PAUSED',
                                         'draftBoardState.updatedAt': Date.now()
                                     };
-                                    if (val !== 'CURRENT_TURN') {
-                                        updatePayload['draftBoardState.currentTeamId'] = val;
-                                    }
                                     await updateAuctionDoc(updatePayload);
                                 }}
                                 className="w-full bg-black/80 border border-amber-500/40 rounded-xl px-3 py-2 text-xs font-black text-white focus:outline-none focus:border-amber-400 uppercase tracking-wide cursor-pointer shadow-inner"
