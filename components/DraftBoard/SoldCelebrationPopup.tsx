@@ -11,6 +11,7 @@ interface Props {
     customSoldAudioUrl?: string;
     players?: Player[];
     teams?: Team[];
+    hidePlayerNumbers?: boolean;
     onClose?: () => void;
 }
 
@@ -20,6 +21,7 @@ export const SoldCelebrationPopup: React.FC<Props> = ({
     customSoldAudioUrl,
     players,
     teams,
+    hidePlayerNumbers = false,
     onClose
 }) => {
     const [isVisible, setIsVisible] = useState(false);
@@ -219,7 +221,7 @@ export const SoldCelebrationPopup: React.FC<Props> = ({
                             )}
 
                             {/* Jersey Number Tag */}
-                            {displayData.jerseyNumber ? (
+                            {!hidePlayerNumbers && displayData.jerseyNumber ? (
                                 <div className="absolute top-3 right-3 px-3 py-1 rounded-xl bg-black/80 text-amber-400 font-mono font-black text-base border-2 border-amber-400/50 shadow-lg">
                                     #{displayData.jerseyNumber}
                                 </div>

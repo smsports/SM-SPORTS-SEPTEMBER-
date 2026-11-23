@@ -283,6 +283,7 @@ export interface AuctionState {
   customAudio?: CustomAudioConfig; // Uploaded custom sounds for Sold, Time Up, Unsold
   soldPopupDurationSeconds?: number; // Configurable duration (seconds) for SOLD popup across screens
   curatorPassword?: string; // Optional password set by Admin to lock Curator Portal access
+  hidePlayerNumbers?: boolean; // Admin toggle to hide/show player numbers across all displays
 }
 
 export type AuctionType = 'BIDDING' | 'DRAFT_BOARD';
@@ -372,6 +373,7 @@ export interface DraftBoardState {
   obsCategoryFilter?: string; // Specific category shown in OBS bottom strip
   obsTransparentBg?: boolean; // Keep OBS canvas transparent for live video feed
   categoryOrder?: string[]; // Custom category display order set by Admin
+  hidePlayerNumbers?: boolean; // Toggle to hide player numbers across all displays
   history: DraftPickHistory[]; // supports undo
   updatedAt?: number;
 }

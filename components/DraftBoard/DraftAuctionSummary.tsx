@@ -35,6 +35,7 @@ export const DraftAuctionSummary: React.FC<Props> = ({
     onReopenDraft
 }) => {
     const themeConfig = getDraftTheme(draftState.broadcastTheme);
+    const hideNumbers = Boolean(draftState.hidePlayerNumbers);
 
     // Launch celebratory confetti on summary display
     useEffect(() => {
@@ -314,9 +315,11 @@ export const DraftAuctionSummary: React.FC<Props> = ({
                                             className="flex-1 min-h-[26px] max-h-[40px] flex items-center justify-between px-2 py-0.5 rounded-lg bg-zinc-950/90 border border-white/[0.08] overflow-hidden"
                                         >
                                             <div className="flex items-center gap-1.5 min-w-0 pr-1">
-                                                <span className="text-[8px] font-bold text-zinc-500 w-3.5 shrink-0">
-                                                    #{idx + 1}
-                                                </span>
+                                                {!hideNumbers && (
+                                                    <span className="text-[8px] font-bold text-zinc-500 w-3.5 shrink-0">
+                                                        #{idx + 1}
+                                                    </span>
+                                                )}
                                                 {player.photoUrl ? (
                                                     <img 
                                                         src={player.photoUrl} 

@@ -181,6 +181,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
         const hasValidPhoto = !!(player.photoUrl && player.photoUrl.trim() !== '');
         const isDense = densityCount > 40 || totalPlayers > 55;
         const isUltraDense = densityCount > 80 || totalPlayers > 110;
+        const hideNumbers = Boolean(draftState.hidePlayerNumbers);
 
         return (
             <div
@@ -223,9 +224,11 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                             <span className="px-1 py-0.2 rounded bg-black/85 text-amber-300 font-black text-[clamp(6px,0.55vw,8px)] uppercase border border-amber-400/30 truncate max-w-[65%] leading-tight drop-shadow">
                                 {player.role || player.category || 'PLAYER'}
                             </span>
-                            <span className="px-1 py-0.2 rounded bg-black/85 text-zinc-200 font-bold text-[clamp(6px,0.55vw,8px)] border border-white/10 shrink-0 leading-tight">
-                                #{player.jerseyNumber ? player.jerseyNumber : index + 1}
-                            </span>
+                            {!hideNumbers && (
+                                <span className="px-1 py-0.2 rounded bg-black/85 text-zinc-200 font-bold text-[clamp(6px,0.55vw,8px)] border border-white/10 shrink-0 leading-tight">
+                                    #{player.jerseyNumber ? player.jerseyNumber : index + 1}
+                                </span>
+                            )}
                         </div>
                     )}
 
@@ -503,9 +506,11 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                                         }`}
                                     >
                                         <div className="flex items-center gap-2 min-w-0 pr-2">
-                                            <span className="text-[9px] font-bold text-zinc-500 w-5 shrink-0">
-                                                #{offsetIdx + pIdx + 1}
-                                            </span>
+                                            {!draftState.hidePlayerNumbers && (
+                                                <span className="text-[9px] font-bold text-zinc-500 w-5 shrink-0">
+                                                    #{offsetIdx + pIdx + 1}
+                                                </span>
+                                            )}
                                             {player.photoUrl ? (
                                                 <img 
                                                     src={player.photoUrl} 
@@ -523,7 +528,7 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                                                 </p>
                                                 <p className="text-[8px] font-bold uppercase text-zinc-400 truncate">
                                                     {player.role || player.category || 'Player'}
-                                                    {player.jerseyNumber ? ` • #${player.jerseyNumber}` : ''}
+                                                    {!draftState.hidePlayerNumbers && player.jerseyNumber ? ` • #${player.jerseyNumber}` : ''}
                                                 </p>
                                             </div>
                                         </div>

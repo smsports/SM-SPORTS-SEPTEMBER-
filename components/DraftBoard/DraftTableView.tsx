@@ -13,6 +13,7 @@ interface Props {
     isAdmin?: boolean;
     isProjectorView?: boolean;
     isOBSView?: boolean;
+    hidePlayerNumbers?: boolean;
 }
 
 export const DraftTableView: React.FC<Props> = ({
@@ -25,7 +26,8 @@ export const DraftTableView: React.FC<Props> = ({
     isDark = true,
     isAdmin = false,
     isProjectorView = false,
-    isOBSView = false
+    isOBSView = false,
+    hidePlayerNumbers = false
 }) => {
     const isBroadcast = isProjectorView || isOBSView;
     const [sortField, setSortField] = useState<'name' | 'category' | 'status'>('name');
@@ -98,7 +100,7 @@ export const DraftTableView: React.FC<Props> = ({
                         <tr className={`border-b text-[10px] md:text-xs font-black uppercase tracking-wider ${
                             isDark ? 'bg-zinc-950/95 border-zinc-800 text-zinc-400' : 'bg-gray-100 border-gray-200 text-gray-600'
                         }`}>
-                            <th className="py-3 px-3 w-12 text-center">#</th>
+                            {!hidePlayerNumbers && <th className="py-3 px-3 w-12 text-center">#</th>}
                             <th className="py-3 px-4 w-4/12">Player Name</th>
                             <th 
                                 onClick={() => handleSort('category')}
@@ -142,9 +144,11 @@ export const DraftTableView: React.FC<Props> = ({
                                             : isDark ? 'hover:bg-zinc-800/60 text-zinc-200' : 'hover:bg-blue-50/60 text-gray-800'
                                     }`}
                                 >
-                                    <td className="py-2.5 px-3 font-bold text-gray-400 text-center text-xs">
-                                        {idx + 1}
-                                    </td>
+                                    {!hidePlayerNumbers && (
+                                        <td className="py-2.5 px-3 font-bold text-gray-400 text-center text-xs">
+                                            {idx + 1}
+                                        </td>
+                                    )}
                                     
                                     {/* Player Info with Photo */}
                                     <td className="py-2.5 px-4">
@@ -166,11 +170,11 @@ export const DraftTableView: React.FC<Props> = ({
                                                 <p className="font-black uppercase tracking-tight text-white line-clamp-1 text-xs md:text-sm">
                                                     {player.name}
                                                 </p>
-                                                {player.jerseyNumber ? (
+                                                {!hidePlayerNumbers && (player.jerseyNumber ? (
                                                     <span className="text-[10px] text-amber-400 font-bold">#{player.jerseyNumber}</span>
                                                 ) : (
                                                     <span className="text-[9px] text-zinc-500 font-bold">#{player.id}</span>
-                                                )}
+                                                ))}
                                             </div>
                                         </div>
                                     </td>

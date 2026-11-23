@@ -3,7 +3,7 @@ import React, { createContext, useState, useEffect, useContext, useMemo } from '
 import { AuctionContextType, AuctionState, UserProfile, Team, Player, RegisteredPlayer, AuctionStatus, BiddingStatus, AdminViewOverride, BidIncrementSlab, UserRole, SponsorConfig, AuctionLog, TradeRecord, SpinWheelState } from '../types';
 import { db, auth } from '../firebase';
 import firebase from 'firebase/compat/app';
-import { calculateMaxBid, getEffectiveBasePrice, safeSaveAuctionDocument } from '../utils';
+import { calculateMaxBid, getEffectiveBasePrice, safeSaveAuctionDocument, compactTeamPlayerEntry, compactTeamPlayersList, safeBuildTeamUpdatePayload, getUtf8ByteSize } from '../utils';
 
 // Initial State
 const initialState: AuctionState = {
@@ -493,6 +493,16 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
             }
         }
 
+        // Pre-sanitize target team doc if it is already approaching Firestore's 1 MiB limit
+        if (getUtf8ByteSize(finalTeam) > 760_000) {
+            try {
+                const cleanupPayload = await safeBuildTeamUpdatePayload(finalTeam, undefined, finalTeam.players || []);
+                await db.collection('auctions').doc(activeAuctionId).collection('teams').doc(String(finalTeam.id)).update(cleanupPayload);
+            } catch (e) {
+                console.warn('Pre-sale team cleanup warning:', e);
+            }
+        }
+
         await db.runTransaction(async (transaction) => {
             const auctionRef = db.collection('auctions').doc(activeAuctionId);
             const playerRef = auctionRef.collection('players').doc(String(player.id));
@@ -505,16 +515,19 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
             transaction.update(playerRef, { status: 'SOLD', soldPrice: finalPrice, soldTo: finalTeam.name });
             
             // OPTIMIZATION: Store only essential data in the team's player list to save space
-            const minimalPlayerData = { 
+            const minimalPlayerData = compactTeamPlayerEntry({ 
                 id: player.id, 
                 name: player.name, 
                 role: player.role,
                 category: player.category,
+                basePrice: player.basePrice,
                 soldPrice: finalPrice, 
                 soldTo: finalTeam.name,
-                status: 'SOLD'
-            };
-            const updatedPlayers = [...currentPlayers, minimalPlayerData];
+                status: 'SOLD',
+                jerseyNumber: player.jerseyNumber,
+                jerseyName: player.jerseyName
+            });
+            const updatedPlayers = compactTeamPlayersList([...currentPlayers, minimalPlayerData]);
             const newBudget = currentBudget - finalPrice;
             transaction.update(teamRef, { budget: newBudget, players: updatedPlayers });
             const log = { message: `${player.name} SOLD to ${finalTeam.name} for ${finalPrice}`, timestamp: Date.now(), type: 'SOLD' as const };
@@ -550,10 +563,12 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
                     (!player.name || !p.name || p.name.trim().toLowerCase() !== player.name.trim().toLowerCase())
                 );
                 const refund = player.soldPrice || 0;
-                await db.collection('auctions').doc(activeAuctionId).collection('teams').doc(String(t.id)).update({
-                    players: updatedSquad,
-                    ...(refund > 0 ? { budget: (t.budget || 0) + refund } : {})
-                });
+                const teamPayload = await safeBuildTeamUpdatePayload(
+                    t,
+                    refund > 0 ? (t.budget || 0) + refund : undefined,
+                    updatedSquad
+                );
+                await db.collection('auctions').doc(activeAuctionId).collection('teams').doc(String(t.id)).update(teamPayload);
             }
         }
 
@@ -811,26 +826,26 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
                 });
             });
 
-            const newT1Players = (t1Data.players || []).filter(p => !trade.team1PlayerIds.includes(String(p.id)));
-            t2ToT1Players.forEach(p => {
-                newT1Players.push({
+            const newT1Players = compactTeamPlayersList([
+                ...(t1Data.players || []).filter(p => !trade.team1PlayerIds.includes(String(p.id))),
+                ...t2ToT1Players.map(p => ({
                     ...p,
                     soldTo: t1Data.name,
                     status: 'TRADED',
                     isTraded: true
-                });
-            });
+                }))
+            ]);
             const newT1Budget = t1Data.budget - trade.cashAmount;
 
-            const newT2Players = (t2Data.players || []).filter(p => !trade.team2PlayerIds.includes(String(p.id)));
-            t1ToT2Players.forEach(p => {
-                newT2Players.push({
+            const newT2Players = compactTeamPlayersList([
+                ...(t2Data.players || []).filter(p => !trade.team2PlayerIds.includes(String(p.id))),
+                ...t1ToT2Players.map(p => ({
                     ...p,
                     soldTo: t2Data.name,
                     status: 'TRADED',
                     isTraded: true
-                });
-            });
+                }))
+            ]);
             const newT2Budget = t2Data.budget + trade.cashAmount;
 
             t.update(team1Ref, { players: newT1Players, budget: newT1Budget });
@@ -854,6 +869,17 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
     const correctPlayerSale = async (playerId: string, newTeamId: string | null, newPrice: number) => {
         if (!activeAuctionId) return;
         const auctionRef = db.collection('auctions').doc(activeAuctionId);
+        if (newTeamId) {
+            const targetTeamState = state.teams.find(tm => String(tm.id) === String(newTeamId));
+            if (targetTeamState && getUtf8ByteSize(targetTeamState) > 760_000) {
+                try {
+                    const cleanupPayload = await safeBuildTeamUpdatePayload(targetTeamState, undefined, targetTeamState.players || []);
+                    await auctionRef.collection('teams').doc(String(newTeamId)).update(cleanupPayload);
+                } catch (e) {
+                    console.warn('Pre-correction team cleanup warning:', e);
+                }
+            }
+        }
         await db.runTransaction(async (t) => {
             const playerRef = auctionRef.collection('players').doc(playerId);
             const playerDoc = await t.get(playerRef);
@@ -866,7 +892,10 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
                     if (prevTeamDoc.exists) {
                         const ptData = prevTeamDoc.data() as Team;
                         const refund = playerData.soldPrice || 0;
-                        t.update(prevTeamRef, { budget: (ptData.budget || 0) + refund, players: (ptData.players || []).filter(p => String(p.id) !== playerId) });
+                        t.update(prevTeamRef, {
+                            budget: (ptData.budget || 0) + refund,
+                            players: compactTeamPlayersList((ptData.players || []).filter(p => String(p.id) !== playerId))
+                        });
                     }
                 }
             }
@@ -876,17 +905,23 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
                 const newTeamData = newTeamDoc.data() as Team;
                 
                 // OPTIMIZATION: Store only essential data
-                const minimalPlayerData = { 
+                const minimalPlayerData = compactTeamPlayerEntry({ 
                     id: playerData.id, 
                     name: playerData.name, 
                     role: playerData.role,
                     category: playerData.category,
+                    basePrice: playerData.basePrice,
                     soldPrice: newPrice, 
                     soldTo: newTeamData.name,
-                    status: 'SOLD'
-                };
+                    status: 'SOLD',
+                    jerseyNumber: playerData.jerseyNumber,
+                    jerseyName: playerData.jerseyName
+                });
                 
-                t.update(newTeamRef, { budget: (newTeamData.budget || 0) - newPrice, players: [...(newTeamData.players || []), minimalPlayerData] });
+                t.update(newTeamRef, {
+                    budget: (newTeamData.budget || 0) - newPrice,
+                    players: compactTeamPlayersList([...(newTeamData.players || []), minimalPlayerData])
+                });
                 t.update(playerRef, { status: 'SOLD', soldPrice: newPrice, soldTo: newTeamData.name });
             } else {
                 t.update(playerRef, { status: firebase.firestore.FieldValue.delete(), soldPrice: firebase.firestore.FieldValue.delete(), soldTo: firebase.firestore.FieldValue.delete() });
@@ -898,6 +933,19 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
         if (!activeAuctionId) return;
         try {
             const res = await safeSaveAuctionDocument(activeAuctionId, {}, db);
+            // Also prune any oversized team documents (e.g., legacy bloated team.players or large Base64 logos)
+            try {
+                const teamsSnap = await db.collection('auctions').doc(activeAuctionId).collection('teams').get();
+                for (const tDoc of teamsSnap.docs) {
+                    const tData = tDoc.data() as any;
+                    if (getUtf8ByteSize(tData) > 650_000 || (Array.isArray(tData?.players) && tData.players.some((p: any) => typeof p?.photoUrl === 'string' && p.photoUrl.startsWith('data:')))) {
+                        const cleanPayload = await safeBuildTeamUpdatePayload(tData, undefined, tData?.players || []);
+                        await tDoc.ref.update(cleanPayload);
+                    }
+                }
+            } catch (teamRepairErr) {
+                console.warn('Team subcollection repair notice:', teamRepairErr);
+            }
             console.log(`✅ SM SPORTS: Manual Repair Successful. Clean Size: ${(res.cleanSize / 1024).toFixed(1)} KB (Pruned: ${(res.prunedBytes / 1024).toFixed(1)} KB)`);
             return true;
         } catch (e) {

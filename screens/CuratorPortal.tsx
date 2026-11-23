@@ -455,7 +455,7 @@ const CuratorPortal: React.FC = () => {
                                                     (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentPlayer.name)}`;
                                                 }}
                                             />
-                                            {(currentPlayer as any).playerNumber && (
+                                            {(currentPlayer as any).playerNumber && !(state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers) && (
                                                 <span className="absolute -bottom-2 -right-2 bg-blue-600 text-white font-black text-xs px-2 py-0.5 rounded-lg shadow-md border border-blue-500">
                                                     #{(currentPlayer as any).playerNumber}
                                                 </span>

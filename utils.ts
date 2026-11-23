@@ -1070,6 +1070,232 @@ export const pruneAndRepairAuctionDocument = async (
 };
 
 /**
+ * Estimates UTF-8 byte length of any JSON-serializable object/value.
+ */
+export const getUtf8ByteSize = (value: any): number => {
+    try {
+        const json = JSON.stringify(value ?? '');
+        if (typeof TextEncoder !== 'undefined') {
+            return new TextEncoder().encode(json).length;
+        }
+        return json.length * 2;
+    } catch {
+        return 0;
+    }
+};
+
+/**
+ * Produces a strictly minimal, JSON-safe squad entry for `team.players`.
+ * Never stores Base64 `data:` images inside `team.players` (full player photos live in the `players` subcollection).
+ */
+export const compactTeamPlayerEntry = (player: any): Record<string, any> => {
+    if (!player || typeof player !== 'object') return {};
+    const rawPhoto = typeof player.photoUrl === 'string' ? player.photoUrl : '';
+    const safePhoto = rawPhoto && !rawPhoto.startsWith('data:') && !rawPhoto.startsWith('blob:') && rawPhoto.length <= 1000
+        ? rawPhoto
+        : '';
+
+    const entry: Record<string, any> = {
+        id: player.id ?? '',
+        name: String(player.name || ''),
+        role: String(player.role || 'Player'),
+        category: String(player.category || 'General'),
+        basePrice: Number(player.basePrice || 0),
+        soldPrice: Number(player.soldPrice ?? player.basePrice ?? 0),
+        status: String(player.status || 'SOLD'),
+        soldTo: String(player.soldTo || ''),
+        jerseyNumber: player.jerseyNumber ? String(player.jerseyNumber) : '',
+        jerseyName: player.jerseyName ? String(player.jerseyName) : '',
+        photoUrl: safePhoto
+    };
+
+    if (player.speciality) entry.speciality = String(player.speciality);
+    if (player.isCaptain === true) entry.isCaptain = true;
+    if (player.isTraded === true) entry.isTraded = true;
+
+    return entry;
+};
+
+/**
+ * Compacts and deduplicates a `team.players` array so Base64 images and bloated player metadata
+ * never inflate the `teams/{teamId}` Firestore document toward the 1,048,576-byte limit.
+ */
+export const compactTeamPlayersList = (playersList: any[] = []): Record<string, any>[] => {
+    if (!Array.isArray(playersList) || playersList.length === 0) return [];
+    const byKey = new Map<string, Record<string, any>>();
+    const order: string[] = [];
+
+    for (const raw of playersList) {
+        if (!raw || typeof raw !== 'object') continue;
+        const compact = compactTeamPlayerEntry(raw);
+        const key = String(compact.id !== '' && compact.id !== undefined && compact.id !== null ? compact.id : compact.name)
+            .trim()
+            .toLowerCase();
+        if (!key) continue;
+        if (!byKey.has(key)) {
+            order.push(key);
+        }
+        byKey.set(key, compact);
+    }
+
+    return order.map(k => byKey.get(k)!);
+};
+
+/**
+ * Builds a Firestore `.update()` payload for `/auctions/{id}/teams/{teamId}` that:
+ * 1. Compacts `players` (stripping Base64 photos & redundant blobs from all squad items).
+ * 2. Checks total projected team document UTF-8 byte size against a safe 780 KB threshold.
+ * 3. Automatically re-compresses (or strips if unshrinkable) any oversized `data:` fields on the team doc
+ *    (such as `logoUrl`, `captainPhoto`, `jerseyUrl`, `bannerUrl`) so writes never fail Firestore's 1 MiB limit.
+ */
+export const safeBuildTeamUpdatePayload = async (
+    currentTeamData: Record<string, any> | null | undefined,
+    updatedBudget: number | undefined,
+    rawPlayers: any[],
+    extraUpdates: Record<string, any> = {}
+): Promise<Record<string, any>> => {
+    const compactedPlayers = JSON.parse(JSON.stringify(compactTeamPlayersList(rawPlayers)));
+    const payload: Record<string, any> = {
+        ...extraUpdates,
+        players: compactedPlayers
+    };
+    if (updatedBudget !== undefined) {
+        payload.budget = updatedBudget;
+    }
+
+    const baseDoc: Record<string, any> = {
+        ...(currentTeamData && typeof currentTeamData === 'object' ? currentTeamData : {}),
+        ...payload
+    };
+
+    const SAFE_DOC_BYTES = 780_000;
+    const HARD_DOC_BYTES = 880_000;
+
+    // Check if any top-level data URL field is already huge (> 180 KB) or total doc exceeds 780 KB
+    const hasHugeTopLevelDataUrl = Object.entries(baseDoc).some(
+        ([k, v]) => k !== 'players' && typeof v === 'string' && v.startsWith('data:') && v.length > 180_000
+    );
+
+    if (!hasHugeTopLevelDataUrl && getUtf8ByteSize(baseDoc) <= SAFE_DOC_BYTES) {
+        return JSON.parse(JSON.stringify(payload));
+    }
+
+    const compressNestedValue = async (val: any, maxDim: number, maxChars: number): Promise<{ changed: boolean; value: any }> => {
+        if (typeof val === 'string') {
+            if (val.startsWith('data:') && val.length > maxChars) {
+                try {
+                    const compressed = await compressImage(val, {
+                        maxWidth: maxDim,
+                        maxHeight: maxDim,
+                        maxDataUrlLength: maxChars
+                    });
+                    if (compressed && compressed.length < val.length) {
+                        return { changed: true, value: compressed };
+                    }
+                } catch {
+                    // fall through
+                }
+            }
+            return { changed: false, value: val };
+        }
+        if (Array.isArray(val)) {
+            let anyChanged = false;
+            const nextArr = [];
+            for (const item of val) {
+                const res = await compressNestedValue(item, maxDim, maxChars);
+                if (res.changed) anyChanged = true;
+                nextArr.push(res.value);
+            }
+            return { changed: anyChanged, value: anyChanged ? nextArr : val };
+        }
+        if (val && typeof val === 'object') {
+            let anyChanged = false;
+            const nextObj: Record<string, any> = { ...val };
+            for (const [k, v] of Object.entries(val)) {
+                const res = await compressNestedValue(v, maxDim, maxChars);
+                if (res.changed) {
+                    anyChanged = true;
+                    nextObj[k] = res.value;
+                }
+            }
+            return { changed: anyChanged, value: anyChanged ? nextObj : val };
+        }
+        return { changed: false, value: val };
+    };
+
+    // Pass 1: Compress oversized data URLs on team doc fields down to <= 45 KB
+    for (const [key, val] of Object.entries(baseDoc)) {
+        if (key === 'players') continue;
+        const res = await compressNestedValue(val, 360, 45_000);
+        if (res.changed) {
+            baseDoc[key] = res.value;
+            payload[key] = res.value;
+        }
+    }
+
+    // Pass 2: If still above SAFE_DOC_BYTES, shrink more aggressively (<= 16 KB per image)
+    if (getUtf8ByteSize(baseDoc) > SAFE_DOC_BYTES) {
+        for (const [key, val] of Object.entries(baseDoc)) {
+            if (key === 'players') continue;
+            const res = await compressNestedValue(val, 200, 16_000);
+            if (res.changed) {
+                baseDoc[key] = res.value;
+                payload[key] = res.value;
+            }
+        }
+    }
+
+    // Pass 3: Failsafe — if still near 1 MiB, drop giant uncompressible strings / data URLs and strip player photoUrls
+    if (getUtf8ByteSize(baseDoc) > HARD_DOC_BYTES) {
+        const ultraCompactPlayers = compactedPlayers.map((p: any) => ({ ...p, photoUrl: '' }));
+        payload.players = ultraCompactPlayers;
+        baseDoc.players = ultraCompactPlayers;
+
+        const stripOversizedDataUrls = (val: any): { changed: boolean; value: any } => {
+            if (typeof val === 'string') {
+                if ((val.startsWith('data:') && val.length > 16_000) || val.length > 250_000) {
+                    return { changed: true, value: '' };
+                }
+                return { changed: false, value: val };
+            }
+            if (Array.isArray(val)) {
+                let anyChanged = false;
+                const nextArr = val.map(item => {
+                    const r = stripOversizedDataUrls(item);
+                    if (r.changed) anyChanged = true;
+                    return r.value;
+                });
+                return { changed: anyChanged, value: anyChanged ? nextArr : val };
+            }
+            if (val && typeof val === 'object') {
+                let anyChanged = false;
+                const nextObj: Record<string, any> = { ...val };
+                for (const [k, v] of Object.entries(val)) {
+                    const r = stripOversizedDataUrls(v);
+                    if (r.changed) {
+                        anyChanged = true;
+                        nextObj[k] = r.value;
+                    }
+                }
+                return { changed: anyChanged, value: anyChanged ? nextObj : val };
+            }
+            return { changed: false, value: val };
+        };
+
+        for (const [key, val] of Object.entries(baseDoc)) {
+            if (key === 'players') continue;
+            const res = stripOversizedDataUrls(val);
+            if (res.changed) {
+                baseDoc[key] = res.value;
+                payload[key] = res.value;
+            }
+        }
+    }
+
+    return JSON.parse(JSON.stringify(payload));
+};
+
+/**
  * Resolves the complete squad of players for a team:
  * 1. Uses allPlayers as the authoritative registry for status (SOLD/UNSOLD/POOL) and soldTo assignments.
  * 2. Strictly excludes any player marked UNSOLD, POOL, or assigned to a different team.

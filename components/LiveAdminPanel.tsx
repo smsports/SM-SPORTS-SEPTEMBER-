@@ -602,9 +602,11 @@ const LiveAdminPanel: React.FC = () => {
                                 >
                                     <div className="flex justify-between items-center">
                                         <div className="flex items-center gap-2">
-                                            <span className={`px-1.5 py-0.5 rounded-md border text-[8px] font-black ${isDark ? 'bg-zinc-800 border-zinc-700 text-accent' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
-                                                #{(p as any).playerNumber || '-'}
-                                            </span>
+                                            {!(state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers) && (
+                                                <span className={`px-1.5 py-0.5 rounded-md border text-[8px] font-black ${isDark ? 'bg-zinc-800 border-zinc-700 text-accent' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
+                                                    #{(p as any).playerNumber || '-'}
+                                                </span>
+                                            )}
                                             <span className="uppercase tracking-tight">{p.name} <span className={`opacity-60 text-[8px] ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>({p.category})</span></span>
                                         </div>
                                         <span className="font-black tabular-nums">₹{getEffectiveBasePrice(p, state.categories).toLocaleString()}</span>
@@ -1151,6 +1153,48 @@ const LiveAdminPanel: React.FC = () => {
                 <Clock className={`w-2.5 h-2.5 absolute top-1/2 -translate-y-1/2 right-1.5 ${isDark ? 'text-zinc-600' : 'text-gray-400'} pointer-events-none`} />
               </div>
             </div>
+          </div>
+
+          {/* Player Numbers Visibility Toggle */}
+          <div className={`rounded-xl p-2.5 flex items-center justify-between gap-2 border ${isDark ? 'bg-primary/40 border-accent/10' : 'bg-gray-50 border-blue-500/10'}`}>
+            <div className="flex items-center gap-1.5 min-w-0">
+              {(state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers) ? (
+                <EyeOff className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              ) : (
+                <Eye className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              )}
+              <div className="min-w-0">
+                <p className={`text-[9px] font-black uppercase tracking-widest truncate ${isDark ? 'text-zinc-300' : 'text-gray-700'}`}>
+                  Player Numbers
+                </p>
+                <p className="text-[7px] font-bold text-zinc-500 uppercase truncate">
+                  {(state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers) ? 'Hidden on all displays' : 'Shown across displays'}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!activeAuctionId) return;
+                const nextHide = !(state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers);
+                try {
+                  await db.collection('auctions').doc(activeAuctionId).update({
+                    hidePlayerNumbers: nextHide,
+                    'draftBoardState.hidePlayerNumbers': nextHide
+                  });
+                  showNotification(nextHide ? 'Player numbers hidden everywhere.' : 'Player numbers visible everywhere.', 'success');
+                } catch (e: any) {
+                  showNotification(e?.message || 'Failed to update player numbers setting.');
+                }
+              }}
+              className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider flex items-center gap-1 border transition-all shrink-0 ${
+                (state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers)
+                  ? 'bg-amber-500 text-black border-amber-400'
+                  : 'bg-emerald-600 text-white border-emerald-500'
+              }`}
+            >
+              {(state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers) ? <><EyeOff className="w-3 h-3" /> Hidden</> : <><Eye className="w-3 h-3" /> Visible</>}
+            </button>
           </div>
 
           {/* Curator Portal Access & Password */}

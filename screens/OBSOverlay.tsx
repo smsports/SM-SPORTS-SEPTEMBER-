@@ -432,7 +432,9 @@ const OBSOverlay: React.FC = () => {
                     <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
                         {team.players.map((p, i) => (
                             <div key={i} className="bg-slate-800/60 backdrop-blur-sm p-4 rounded-2xl flex items-center gap-4 border border-white/5 hover:border-cyan-500/50 transition-all shadow-xl group">
-                                <div className="w-10 h-10 rounded-xl bg-cyan-500 text-black flex items-center justify-center font-black text-sm italic shadow-lg group-hover:rotate-6 transition-transform">#{i+1}</div>
+                                {!(state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers) && (
+                                    <div className="w-10 h-10 rounded-xl bg-cyan-500 text-black flex items-center justify-center font-black text-sm italic shadow-lg group-hover:rotate-6 transition-transform">#{i+1}</div>
+                                )}
                                 <img src={p.photoUrl} className="w-12 h-12 rounded-xl object-cover border border-white/10" alt={p.name} />
                                 <div className="min-w-0 flex-1">
                                     <p className="text-white font-black text-sm truncate uppercase tracking-tight italic">{p.name}</p>

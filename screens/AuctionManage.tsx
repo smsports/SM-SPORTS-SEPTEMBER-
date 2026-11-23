@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { AuctionSetup, Team, Player, AuctionCategory, Sponsor, PlayerRole, RegistrationConfig, FormField, RegisteredPlayer, BidIncrementSlab, CaptainCode, RegistrationCode, UserRole } from '../types';
-import { getEffectiveBasePrice, compressImage, uploadImageOrFallback, uploadBase64FieldsToStorage, ensurePayloadWithinLimit, safeSaveAuctionDocument, FORBIDDEN_BLOATED_AUCTION_FIELDS, pruneAndRepairAuctionDocument, resolveTeamSquad } from '../utils';
+import { getEffectiveBasePrice, compressImage, uploadImageOrFallback, uploadBase64FieldsToStorage, ensurePayloadWithinLimit, safeSaveAuctionDocument, FORBIDDEN_BLOATED_AUCTION_FIELDS, pruneAndRepairAuctionDocument, resolveTeamSquad, compactTeamPlayerEntry, compactTeamPlayersList, safeBuildTeamUpdatePayload } from '../utils';
 import { 
     ArrowLeft, Plus, Trash2, Edit, Save, X, Upload, Users, Layers, Trophy, 
     DollarSign, Image as ImageIcon, Briefcase, FileText, Settings, QrCode, 
@@ -946,7 +946,10 @@ const AuctionManage: React.FC = () => {
                     if (targetPlayer) {
                         itemData.captainId = targetPlayer.id;
                         itemData.captainName = targetPlayer.name;
-                        itemData.captainPhoto = targetPlayer.photoUrl || itemData.captainPhoto || '';
+                        const rawCapPhoto = targetPlayer.photoUrl || itemData.captainPhoto || '';
+                        itemData.captainPhoto = (typeof rawCapPhoto === 'string' && rawCapPhoto.startsWith('data:') && rawCapPhoto.length > 60_000)
+                            ? await compressImage(rawCapPhoto, 'LOGO')
+                            : rawCapPhoto;
                         
                         // Mark player as captain in players collection
                         batch.update(db.collection('auctions').doc(id).collection('players').doc(String(targetPlayer.id)), {
@@ -957,21 +960,25 @@ const AuctionManage: React.FC = () => {
                             updatedAt: Date.now()
                         });
 
-                        // Keep team.players array updated
+                        // Keep team.players array updated & compact (never store Base64 player photos inside team.players)
                         const existingSquad = itemData.players || [];
                         const withoutPlayer = existingSquad.filter((p: any) => String(p.id) !== String(targetPlayer.id));
-                        itemData.players = [...withoutPlayer, {
+                        itemData.players = compactTeamPlayersList([...withoutPlayer, {
                             ...targetPlayer,
                             isCaptain: true,
                             soldTo: itemData.name,
                             status: 'SOLD',
                             soldPrice: targetPlayer.soldPrice || targetPlayer.basePrice || 0
-                        }];
+                        }]);
                     }
                 } else if (itemData.isOwnerCaptain) {
                     itemData.captainId = '';
                     itemData.captainName = itemData.owner || itemData.ownerName || '';
                 }
+                if (Array.isArray(itemData.players)) {
+                    itemData.players = compactTeamPlayersList(itemData.players);
+                }
+                itemData = await ensurePayloadWithinLimit(itemData, 650000);
             }
 
             if (modalType === 'PLAYER') {
@@ -989,10 +996,8 @@ const AuctionManage: React.FC = () => {
                                 String(item.id) !== String(itemData.id) && 
                                 (!item.name || !itemData.name || item.name.trim().toLowerCase() !== itemData.name.trim().toLowerCase())
                             );
-                            batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(t.id)), {
-                                players: updatedSquad,
-                                updatedAt: Date.now()
-                            });
+                            const teamPayload = await safeBuildTeamUpdatePayload(t, undefined, updatedSquad, { updatedAt: Date.now() });
+                            batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(t.id)), teamPayload);
                         }
                     }
                 } else if (itemData.status === 'SOLD' && itemData.soldTo) {
@@ -1002,10 +1007,13 @@ const AuctionManage: React.FC = () => {
                             String(item.id) !== String(itemData.id) && 
                             (!item.name || !itemData.name || item.name.trim().toLowerCase() !== itemData.name.trim().toLowerCase())
                         );
-                        batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(targetTeam.id)), {
-                            players: [...currentSquad, itemData],
-                            updatedAt: Date.now()
-                        });
+                        const teamPayload = await safeBuildTeamUpdatePayload(
+                            targetTeam,
+                            undefined,
+                            [...currentSquad, compactTeamPlayerEntry(itemData)],
+                            { updatedAt: Date.now() }
+                        );
+                        batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(targetTeam.id)), teamPayload);
 
                         // Remove from any other teams
                         for (const ot of teams) {
@@ -1019,10 +1027,8 @@ const AuctionManage: React.FC = () => {
                                         String(item.id) !== String(itemData.id) && 
                                         (!item.name || !itemData.name || item.name.trim().toLowerCase() !== itemData.name.trim().toLowerCase())
                                     );
-                                    batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(ot.id)), {
-                                        players: cleanedSquad,
-                                        updatedAt: Date.now()
-                                    });
+                                    const otherPayload = await safeBuildTeamUpdatePayload(ot, undefined, cleanedSquad, { updatedAt: Date.now() });
+                                    batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(ot.id)), otherPayload);
                                 }
                             }
                         }
@@ -1114,10 +1120,8 @@ const AuctionManage: React.FC = () => {
                         const updatedSquad = (t.players || []).filter(
                             p => String(p.id) !== String(playerId) && (!player || !p.name || p.name.trim().toLowerCase() !== player.name.trim().toLowerCase())
                         );
-                        await db.collection('auctions').doc(id).collection('teams').doc(String(t.id)).update({
-                            players: updatedSquad,
-                            updatedAt: Date.now()
-                        });
+                        const tPayload = await safeBuildTeamUpdatePayload(t, undefined, updatedSquad, { updatedAt: Date.now() });
+                        await db.collection('auctions').doc(id).collection('teams').doc(String(t.id)).update(tPayload);
                     }
                 }
             }
@@ -2953,10 +2957,8 @@ const AuctionManage: React.FC = () => {
                                                                                     String(item.id) !== String(p.id) && 
                                                                                     (!item.name || !p.name || item.name.trim().toLowerCase() !== p.name.trim().toLowerCase())
                                                                                 );
-                                                                                await db.collection('auctions').doc(id).collection('teams').doc(String(t.id)).update({
-                                                                                    players: updatedSquad,
-                                                                                    updatedAt: Date.now()
-                                                                                });
+                                                                                const tPayload = await safeBuildTeamUpdatePayload(t, undefined, updatedSquad, { updatedAt: Date.now() });
+                                                                                await db.collection('auctions').doc(id).collection('teams').doc(String(t.id)).update(tPayload);
                                                                             }
                                                                         }
                                                                         showNotification(`Player removed from team`, "success");
@@ -2966,13 +2968,12 @@ const AuctionManage: React.FC = () => {
                                                                     const team = teams.find(t => String(t.id) === teamId);
                                                                     if (team) {
                                                                         const price = p.soldPrice !== undefined && p.soldPrice > 0 ? p.soldPrice : (p.basePrice || 0);
-                                                                        const updatedPlayerObj = {
+                                                                        const updatedPlayerObj = compactTeamPlayerEntry({
                                                                             ...p,
                                                                             status: 'SOLD' as const,
                                                                             soldTo: team.name,
-                                                                            soldPrice: price,
-                                                                            updatedAt: Date.now()
-                                                                        };
+                                                                            soldPrice: price
+                                                                        });
 
                                                                         // 1. Update player doc
                                                                         await db.collection('auctions').doc(id).collection('players').doc(String(p.id)).update({
@@ -2982,15 +2983,13 @@ const AuctionManage: React.FC = () => {
                                                                             updatedAt: Date.now()
                                                                         });
 
-                                                                        // 2. Add to team.players array
+                                                                        // 2. Add to team.players array (compacted & size-guarded)
                                                                         const currentTeamSquad = (team.players || []).filter(item => 
                                                                             String(item.id) !== String(p.id) && 
                                                                             (!item.name || !p.name || item.name.trim().toLowerCase() !== p.name.trim().toLowerCase())
                                                                         );
-                                                                        await db.collection('auctions').doc(id).collection('teams').doc(String(team.id)).update({
-                                                                            players: [...currentTeamSquad, updatedPlayerObj],
-                                                                            updatedAt: Date.now()
-                                                                        });
+                                                                        const teamPayload = await safeBuildTeamUpdatePayload(team, undefined, [...currentTeamSquad, updatedPlayerObj], { updatedAt: Date.now() });
+                                                                        await db.collection('auctions').doc(id).collection('teams').doc(String(team.id)).update(teamPayload);
 
                                                                         // 3. Scrub from all other teams
                                                                         for (const otherTeam of teams) {
@@ -3004,10 +3003,8 @@ const AuctionManage: React.FC = () => {
                                                                                         String(item.id) !== String(p.id) && 
                                                                                         (!item.name || !p.name || item.name.trim().toLowerCase() !== p.name.trim().toLowerCase())
                                                                                     );
-                                                                                    await db.collection('auctions').doc(id).collection('teams').doc(String(otherTeam.id)).update({
-                                                                                        players: cleanedSquad,
-                                                                                        updatedAt: Date.now()
-                                                                                    });
+                                                                                    const otherPayload = await safeBuildTeamUpdatePayload(otherTeam, undefined, cleanedSquad, { updatedAt: Date.now() });
+                                                                                    await db.collection('auctions').doc(id).collection('teams').doc(String(otherTeam.id)).update(otherPayload);
                                                                                 }
                                                                             }
                                                                         }

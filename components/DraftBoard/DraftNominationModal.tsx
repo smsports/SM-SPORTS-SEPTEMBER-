@@ -18,6 +18,7 @@ interface Props {
     isSoldOverride?: boolean;
     soldToTeamName?: string;
     errorMessage?: string | null;
+    hidePlayerNumbers?: boolean;
     onClose: () => void;
     onAssign: (player: Player, teamId: string | number, price: number) => Promise<void> | void;
     onUndoPlayer?: (player: Player) => void;
@@ -35,6 +36,7 @@ export const DraftNominationModal: React.FC<Props> = ({
     isSoldOverride,
     soldToTeamName,
     errorMessage,
+    hidePlayerNumbers = false,
     onClose,
     onAssign,
     onUndoPlayer
@@ -98,7 +100,7 @@ export const DraftNominationModal: React.FC<Props> = ({
                             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-zinc-800 text-zinc-300 border border-zinc-700">
                                 {player.role || 'Player'}
                             </span>
-                            {player.jerseyNumber && (
+                            {!hidePlayerNumbers && player.jerseyNumber && (
                                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/30">
                                     #{player.jerseyNumber}
                                 </span>

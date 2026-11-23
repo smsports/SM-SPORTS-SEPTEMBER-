@@ -22,6 +22,7 @@ import SoldCelebrationPopup from './SoldCelebrationPopup';
 import { getDraftTheme } from '../../utils/draftThemes';
 import confetti from 'canvas-confetti';
 import { playCountdownTickSound, playHeartbeatSound, playTimeUpSound, playUnsoldSoundTrack, isDraftAudioMuted, setDraftAudioMuted, mergeCustomAudioConfig } from '../../utils/draftAudio';
+import { compactTeamPlayerEntry, safeBuildTeamUpdatePayload } from '../../utils';
 
 interface Props {
     isAdmin?: boolean;
@@ -549,6 +550,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
 
         const teamsCol = db.collection('auctions').doc(auctionId).collection('teams');
         let teamDocRef = teamsCol.doc(String(targetTeam.id));
+        let freshData: any = targetTeam;
         let freshPlayers: any[] = targetTeam.players || [];
         let freshBudget = Number(targetTeam.budget || 0);
         try {
@@ -564,12 +566,13 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 }
             }
             if (freshSnap.exists) {
-                const freshData = freshSnap.data() as any;
-                if (Array.isArray(freshData?.players)) {
-                    freshPlayers = freshData.players;
+                const snapData = freshSnap.data() as any;
+                freshData = snapData || targetTeam;
+                if (Array.isArray(snapData?.players)) {
+                    freshPlayers = snapData.players;
                 }
-                if (typeof freshData?.budget === 'number') {
-                    freshBudget = freshData.budget;
+                if (typeof snapData?.budget === 'number') {
+                    freshBudget = snapData.budget;
                 }
             }
         } catch {
@@ -578,7 +581,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
 
         const alreadyInSquad = freshPlayers.some((p: any) => String(p?.id) === String(targetPlayer.id));
         if (!alreadyInSquad) {
-            const minimalPlayer = {
+            const minimalPlayer = compactTeamPlayerEntry({
                 id: targetPlayer.id,
                 name: targetPlayer.name || '',
                 role: targetPlayer.role || 'Player',
@@ -590,14 +593,12 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 soldTo: targetTeam.name || '',
                 jerseyNumber: targetPlayer.jerseyNumber || '',
                 jerseyName: targetPlayer.jerseyName || ''
-            };
+            });
             const updatedTeamPlayers = [...freshPlayers, minimalPlayer];
             const updatedBudget = Math.max(0, freshBudget - effectivePrice);
+            const teamUpdatePayload = await safeBuildTeamUpdatePayload(freshData, updatedBudget, updatedTeamPlayers);
 
-            await teamDocRef.update({
-                budget: updatedBudget,
-                players: JSON.parse(JSON.stringify(updatedTeamPlayers))
-            });
+            await teamDocRef.update(teamUpdatePayload);
         }
     };
 
@@ -1276,11 +1277,9 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             if (targetTeam) {
                 const restoredBudget = Number(targetTeam.budget || 0) + soldPrice;
                 const updatedSquad = (targetTeam.players || []).filter(p => String(p.id) !== String(player.id));
+                const teamPayload = await safeBuildTeamUpdatePayload(targetTeam, restoredBudget, updatedSquad);
 
-                await db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id)).update({
-                    budget: restoredBudget,
-                    players: JSON.parse(JSON.stringify(updatedSquad))
-                });
+                await db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id)).update(teamPayload);
             }
         }
 
@@ -1390,10 +1389,12 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     });
                     const t = teamsRef.current.find(tm => String(tm.id) === String(lastPick.teamId));
                     if (t) {
-                        await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update({
-                            budget: Number(t.budget || 0) + Number(lastPick.soldPrice || 0),
-                            players: (t.players || []).filter(p => String(p.id) !== String(lastPick.playerId))
-                        });
+                        const teamPayload = await safeBuildTeamUpdatePayload(
+                            t,
+                            Number(t.budget || 0) + Number(lastPick.soldPrice || 0),
+                            (t.players || []).filter(p => String(p.id) !== String(lastPick.playerId))
+                        );
+                        await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
                     }
                     await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
                         'draftBoardState.history': history.slice(0, -1),
@@ -1415,10 +1416,12 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     });
                     const t = teamsRef.current.find(tm => String(tm.id) === String(pick.teamId));
                     if (t) {
-                        await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update({
-                            budget: Number(t.budget || 0) + Number(pick.soldPrice || 0),
-                            players: (t.players || []).filter(p => String(p.id) !== String(pick.playerId))
-                        });
+                        const teamPayload = await safeBuildTeamUpdatePayload(
+                            t,
+                            Number(t.budget || 0) + Number(pick.soldPrice || 0),
+                            (t.players || []).filter(p => String(p.id) !== String(pick.playerId))
+                        );
+                        await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
                     }
                 }
                 const remainingHistory = (currentDraft.history || []).filter(h => h.round !== currentRound);
@@ -1457,10 +1460,12 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 for (const t of teamsRef.current) {
                     const spent = allDraftPicks.filter(p => String(p.teamId) === String(t.id)).reduce((s, p) => s + (p.soldPrice || 0), 0);
                     const draftIds = new Set(allDraftPicks.map(p => String(p.playerId)));
-                    await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update({
-                        budget: Number(t.budget || 0) + spent,
-                        players: JSON.parse(JSON.stringify((t.players || []).filter(p => !draftIds.has(String(p.id)))))
-                    });
+                    const teamPayload = await safeBuildTeamUpdatePayload(
+                        t,
+                        Number(t.budget || 0) + spent,
+                        (t.players || []).filter(p => !draftIds.has(String(p.id)))
+                    );
+                    await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
                 }
                 await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
                     'draftBoardState.currentRound': 1,
@@ -1578,6 +1583,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     });
 
     const isEligibleToComplete = allPlayersSold || allSquadsFilled;
+    const hideNumbers = Boolean(draftState.hidePlayerNumbers || state.hidePlayerNumbers);
 
     // Check if draft auction is completed or summary view is triggered
     const isAuctionFinished = (state as any).status === 'FINISHED' || 
@@ -1624,6 +1630,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     customSoldAudioUrl={customAudio?.soldMusicUrl}
                     players={players}
                     teams={teams}
+                    hidePlayerNumbers={hideNumbers}
                 />
             </>
         );
@@ -1686,6 +1693,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         isSoldOverride={activePlayerForModal.status === 'SOLD' || draftPickMap.has(String(activePlayerForModal.id))}
                         soldToTeamName={draftPickMap.get(String(activePlayerForModal.id))?.teamName || activePlayerForModal.soldTo}
                         errorMessage={pickError}
+                        hidePlayerNumbers={hideNumbers}
                         onClose={() => {
                             setPickError(null);
                             setActivePlayerForModal(null);
@@ -1766,6 +1774,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         customSoldAudioUrl={customAudio?.soldMusicUrl}
                         players={players}
                         teams={teams}
+                        hidePlayerNumbers={hideNumbers}
                     />
                 </div>
             );
@@ -1820,6 +1829,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         customSoldAudioUrl={customAudio?.soldMusicUrl}
                         players={players}
                         teams={teams}
+                        hidePlayerNumbers={hideNumbers}
                     />
                 </div>
             );
@@ -1926,6 +1936,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         customSoldAudioUrl={customAudio?.soldMusicUrl}
                         players={players}
                         teams={teams}
+                        hidePlayerNumbers={hideNumbers}
                     />
                 </div>
             );
@@ -2428,6 +2439,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             isAdmin={isAdmin}
                             isProjectorView={isProjectorView}
                             isOBSView={isOBSView}
+                            hidePlayerNumbers={hideNumbers}
                             onUndoPlayer={handleUndoSpecificPlayer}
                         />
                     ) : (
@@ -2501,7 +2513,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                         <span className="text-[8px] md:text-[9px] font-black uppercase px-2 py-0.5 rounded bg-black/70 text-amber-400 border border-amber-500/30 truncate max-w-[70%]">
                                                             {player.role || player.category || 'PLAYER'}
                                                         </span>
-                                                        {player.jerseyNumber ? (
+                                                        {!hideNumbers && (player.jerseyNumber ? (
                                                             <span className="text-[9px] md:text-[10px] font-black text-white bg-zinc-800 px-1.5 py-0.5 rounded">
                                                                 #{player.jerseyNumber}
                                                             </span>
@@ -2509,7 +2521,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                             <span className="text-[9px] font-bold text-zinc-500">
                                                                 #{player.id}
                                                             </span>
-                                                        )}
+                                                        ))}
                                                     </div>
 
                                                     {/* Player Photo with BOLD SOLD Box Overlay */}
@@ -2686,7 +2698,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                 </div>
                                                 <div className="text-right shrink-0">
                                                     <span className="text-[8px] font-black px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-300">
-                                                        R{h.round} #{h.pickNumber}
+                                                        R{h.round}{!hideNumbers ? ` #${h.pickNumber}` : ''}
                                                     </span>
                                                 </div>
                                             </div>
@@ -2718,6 +2730,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     isSoldOverride={activePlayerForModal.status === 'SOLD' || draftPickMap.has(String(activePlayerForModal.id))}
                     soldToTeamName={draftPickMap.get(String(activePlayerForModal.id))?.teamName || activePlayerForModal.soldTo}
                     errorMessage={pickError}
+                    hidePlayerNumbers={hideNumbers}
                     onClose={() => {
                         setPickError(null);
                         setActivePlayerForModal(null);
@@ -2787,7 +2800,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                 {activeReq.playerName.charAt(0)}
                                             </div>
                                         )}
-                                        {reqPlayer?.jerseyNumber && (
+                                        {!hideNumbers && reqPlayer?.jerseyNumber && (
                                             <span className="absolute top-2 right-2 px-2 py-0.5 rounded-lg bg-black/80 border border-amber-400/50 text-amber-300 font-black text-xs">
                                                 #{reqPlayer.jerseyNumber}
                                             </span>
@@ -2889,6 +2902,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 customSoldAudioUrl={customAudio?.soldMusicUrl}
                 players={players}
                 teams={teams}
+                hidePlayerNumbers={hideNumbers}
             />
         </div>
     );

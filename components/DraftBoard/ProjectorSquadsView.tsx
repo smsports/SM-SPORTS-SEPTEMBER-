@@ -22,6 +22,7 @@ export const ProjectorSquadsView: React.FC<Props> = ({
 }) => {
     // Theme styling based on Admin selected broadcast theme
     const themeConfig = getDraftTheme(draftState.broadcastTheme);
+    const hideNumbers = Boolean(draftState.hidePlayerNumbers);
 
     // Map team id to their drafted players
     const teamSquads = useMemo(() => {
@@ -174,9 +175,11 @@ export const ProjectorSquadsView: React.FC<Props> = ({
                                         <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-black/60 text-amber-400 truncate max-w-[75%] border border-white/5">
                                             {player.role || player.category}
                                         </span>
-                                        <span className="text-[9px] font-black text-zinc-400">
-                                            #{idx + 1}
-                                        </span>
+                                        {!hideNumbers && (
+                                            <span className="text-[9px] font-black text-zinc-400">
+                                                #{idx + 1}
+                                            </span>
+                                        )}
                                     </div>
 
                                     {/* Player Avatar */}
@@ -197,7 +200,7 @@ export const ProjectorSquadsView: React.FC<Props> = ({
                                         </p>
                                         <p className="text-[9px] font-bold text-amber-400 uppercase tracking-wider truncate">
                                             {player.role}
-                                            {player.jerseyNumber ? ` • #${player.jerseyNumber}` : ''}
+                                            {!hideNumbers && player.jerseyNumber ? ` • #${player.jerseyNumber}` : ''}
                                         </p>
                                     </div>
                                 </div>
@@ -277,9 +280,11 @@ export const ProjectorSquadsView: React.FC<Props> = ({
                                             className="flex-1 min-h-[24px] max-h-[38px] flex items-center justify-between px-2 py-0.5 rounded-lg bg-zinc-950/80 border border-white/[0.06] overflow-hidden"
                                         >
                                             <div className="flex items-center gap-1.5 min-w-0 pr-1">
-                                                <span className="text-[8px] font-bold text-zinc-500 w-3.5 shrink-0">
-                                                    #{idx + 1}
-                                                </span>
+                                                {!hideNumbers && (
+                                                    <span className="text-[8px] font-bold text-zinc-500 w-3.5 shrink-0">
+                                                        #{idx + 1}
+                                                    </span>
+                                                )}
                                                 {player.photoUrl ? (
                                                     <img 
                                                         src={player.photoUrl} 

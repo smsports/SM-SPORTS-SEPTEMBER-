@@ -512,7 +512,9 @@ const ProjectorScreen: React.FC = () => {
                       <div className="flex-1 overflow-y-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-2 custom-scrollbar pr-6">
                           {team.players.map((p, i) => (
                               <div key={i} className="bg-gradient-to-br from-slate-800/50 to-slate-950/50 p-6 rounded-[2rem] flex items-center gap-6 border border-white/5 hover:border-blue-500/50 transition-all hover:scale-[1.05] shadow-xl hover:shadow-blue-500/10 group">
-                                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-yellow-500 to-yellow-300 text-black flex items-center justify-center font-black text-xl shadow-lg transform -rotate-6 group-hover:rotate-0 transition-transform italic">#{i+1}</div>
+                                  {!(state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers) && (
+                                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-yellow-500 to-yellow-300 text-black flex items-center justify-center font-black text-xl shadow-lg transform -rotate-6 group-hover:rotate-0 transition-transform italic">#{i+1}</div>
+                                  )}
                                   <div className="min-w-0 flex-1">
                                       <p className="font-black text-2xl text-white truncate uppercase italic tracking-tighter">{p.name}</p>
                                       <div className="flex items-center gap-3 mt-1">

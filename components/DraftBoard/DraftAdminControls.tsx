@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory, ObsDraftDisplayMode, CustomAudioConfig, PendingDraftPickRequest } from '../../types';
 import { db } from '../../firebase';
-import { uploadAudioOrFallback } from '../../utils';
+import { uploadAudioOrFallback, safeBuildTeamUpdatePayload } from '../../utils';
 import { previewAudioSound, stopCustomAudio, mergeCustomAudioConfig } from '../../utils/draftAudio';
 import { 
     Play, Pause, FastForward, Undo2, RotateCcw, AlertTriangle, 
@@ -232,11 +232,9 @@ export const DraftAdminControls: React.FC<Props> = ({
             if (targetTeam) {
                 const refundedBudget = Number(targetTeam.budget || 0) + Number(lastPick.soldPrice || 0);
                 const updatedSquad = (targetTeam.players || []).filter(p => String(p.id) !== String(lastPick.playerId));
+                const teamPayload = await safeBuildTeamUpdatePayload(targetTeam, refundedBudget, updatedSquad);
 
-                await db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id)).update({
-                    budget: refundedBudget,
-                    players: updatedSquad
-                });
+                await db.collection('auctions').doc(auctionId).collection('teams').doc(String(targetTeam.id)).update(teamPayload);
             }
 
             // 3. Step back the draft turn to this team
@@ -288,10 +286,8 @@ export const DraftAdminControls: React.FC<Props> = ({
                 if (t) {
                     const refundedBudget = Number(t.budget || 0) + Number(pick.soldPrice || 0);
                     const updatedSquad = (t.players || []).filter(p => String(p.id) !== String(pick.playerId));
-                    await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update({
-                        budget: refundedBudget,
-                        players: updatedSquad
-                    });
+                    const teamPayload = await safeBuildTeamUpdatePayload(t, refundedBudget, updatedSquad);
+                    await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
                 }
             }
 
@@ -359,11 +355,9 @@ export const DraftAdminControls: React.FC<Props> = ({
                 const restoredBudget = Number(t.budget || 0) + spentInDraft;
                 const draftPlayerIds = new Set(allDraftPicks.map(p => String(p.playerId)));
                 const remainingSquad = (t.players || []).filter(p => !draftPlayerIds.has(String(p.id)));
+                const teamPayload = await safeBuildTeamUpdatePayload(t, restoredBudget, remainingSquad);
 
-                await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update({
-                    budget: restoredBudget,
-                    players: JSON.parse(JSON.stringify(remainingSquad))
-                });
+                await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
             }
 
             // Reset draft state to Round 1
@@ -1696,6 +1690,57 @@ export const DraftAdminControls: React.FC<Props> = ({
                             </div>
                         </div>
                     )}
+
+                    {/* 2D. PLAYER NUMBERS DISPLAY TOGGLE */}
+                    <div className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-2.5 shadow-md">
+                        <div className="flex items-center justify-between gap-2">
+                            <div>
+                                <h4 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
+                                    {draftState.hidePlayerNumbers ? (
+                                        <EyeOff className="w-4 h-4 text-amber-400" />
+                                    ) : (
+                                        <Eye className="w-4 h-4 text-emerald-400" />
+                                    )}
+                                    Player Numbers Display
+                                </h4>
+                                <p className="text-[9px] text-zinc-400 mt-0.5">
+                                    {draftState.hidePlayerNumbers
+                                        ? 'Player jersey & serial numbers hidden on all displays'
+                                        : 'Player numbers shown on Draft Board, Projector, OBS, Team & Popups'}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    if (!auctionId) return;
+                                    const nextHide = !draftState.hidePlayerNumbers;
+                                    await updateAuctionDoc({
+                                        'draftBoardState.hidePlayerNumbers': nextHide,
+                                        hidePlayerNumbers: nextHide,
+                                        'draftBoardState.updatedAt': Date.now()
+                                    });
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md active:scale-95 shrink-0 ${
+                                    draftState.hidePlayerNumbers
+                                        ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-500/30 border border-amber-300'
+                                        : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30 border border-emerald-400'
+                                }`}
+                                title="Hide or show player numbers across every display"
+                            >
+                                {draftState.hidePlayerNumbers ? (
+                                    <>
+                                        <EyeOff className="w-3.5 h-3.5" />
+                                        <span>HIDDEN</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Eye className="w-3.5 h-3.5" />
+                                        <span>VISIBLE</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
 
                     {/* 3. SOLD POPUP TIMING & CUSTOM MUSIC (SOLD / TIME UP / UNSOLD) */}
                     <div className="p-4 rounded-2xl border-2 border-emerald-500/35 bg-gradient-to-b from-emerald-950/25 to-zinc-900/90 space-y-4 shadow-xl">

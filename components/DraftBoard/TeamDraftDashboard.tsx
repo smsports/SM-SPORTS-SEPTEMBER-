@@ -76,6 +76,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
 }) => {
     // Active navigation tab
     const [activeTab, setActiveTab] = useState<'DRAFT_BOARD' | 'MY_SQUAD' | 'ALL_TEAMS' | 'PICK_FEED' | 'WISHLIST' | 'RULES'>('DRAFT_BOARD');
+    const hideNumbers = Boolean(draftState.hidePlayerNumbers);
     
     // Filter & search states for Draft Board
     const [searchQuery, setSearchQuery] = useState('');
@@ -768,7 +769,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                             >
                                                                                 <Star className={`w-2.5 h-2.5 ${isWishlisted ? 'fill-yellow-400' : ''}`} />
                                                                             </button>
-                                                                            {player.jerseyNumber && (
+                                                                            {!hideNumbers && player.jerseyNumber && (
                                                                                 <span className="text-[7px] font-bold text-zinc-300 bg-zinc-800 px-0.5 rounded">
                                                                                     #{player.jerseyNumber}
                                                                                 </span>
@@ -952,7 +953,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                         >
                                                                             <Star className={`w-3 h-3 ${isWishlisted ? 'fill-yellow-400' : ''}`} />
                                                                         </button>
-                                                                        {player.jerseyNumber ? (
+                                                                        {!hideNumbers && player.jerseyNumber ? (
                                                                             <span className="text-[8px] font-bold text-zinc-300 bg-zinc-800 px-1 rounded">
                                                                                 #{player.jerseyNumber}
                                                                             </span>
@@ -1112,9 +1113,11 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                 <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-black/70 text-amber-400 border border-amber-500/30">
                                                     {player.role}
                                                 </span>
-                                                <span className="text-[9px] font-bold text-zinc-400">
-                                                    #{idx + 1}
-                                                </span>
+                                                {!hideNumbers && (
+                                                    <span className="text-[9px] font-bold text-zinc-400">
+                                                        #{idx + 1}
+                                                    </span>
+                                                )}
                                             </div>
 
                                             <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 border border-white/5 my-1">
@@ -1131,7 +1134,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                 <h4 className="text-xs font-black uppercase tracking-tight text-white truncate">
                                                     {player.name}
                                                 </h4>
-                                                {player.jerseyNumber ? (
+                                                {!hideNumbers && player.jerseyNumber ? (
                                                     <p className="text-[9px] text-zinc-400 font-bold">Jersey #{player.jerseyNumber}</p>
                                                 ) : null}
                                             </div>
@@ -1227,7 +1230,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                     </div>
                                                     <h5 className="text-xs font-black uppercase text-white truncate">{pick.playerName}</h5>
                                                     <p className="text-[9px] text-amber-400 uppercase font-bold">{pick.playerRole || pick.playerCategory}</p>
-                                                    <span className="text-[8px] text-zinc-500 block">R{pick.round} Pick #{pick.pickNumber}</span>
+                                                    <span className="text-[8px] text-zinc-500 block">R{pick.round}{!hideNumbers ? ` Pick #${pick.pickNumber}` : ''}</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -1284,7 +1287,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
 
                                     <div className="text-right shrink-0">
                                         <span className="px-2 py-0.5 rounded-lg bg-black text-amber-300 font-black text-xs border border-amber-500/30">
-                                            Round {h.round} • #{h.pickNumber}
+                                            Round {h.round}{!hideNumbers ? ` • #${h.pickNumber}` : ''}
                                         </span>
                                     </div>
                                 </div>
@@ -1470,6 +1473,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                 customSoldAudioUrl={customSoldAudioUrl ?? draftState.customAudio?.soldMusicUrl}
                 players={players}
                 teams={teams}
+                hidePlayerNumbers={hideNumbers}
             />
         </div>
     );
