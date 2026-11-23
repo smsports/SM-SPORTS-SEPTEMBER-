@@ -198,7 +198,9 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                         <img 
                             src={player.photoUrl} 
                             alt={player.name} 
-                            className="w-full h-full object-contain filter contrast-105"
+                            className={`w-full h-full object-contain filter contrast-105 transition-opacity ${
+                                isSold ? 'opacity-25 grayscale contrast-125' : ''
+                            }`}
                             onError={(e) => {
                                 const target = e.currentTarget;
                                 target.style.display = 'none';
@@ -212,14 +214,14 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                             }}
                         />
                     ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-850 to-zinc-950 text-zinc-400 font-black">
+                        <div className={`w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-850 to-zinc-950 text-zinc-400 font-black ${isSold ? 'opacity-25 grayscale' : ''}`}>
                             <User className="w-1/3 h-1/3 opacity-40 mb-0.5 text-amber-400" />
                             <span className="text-[clamp(8px,1.1vw,16px)]">{player.name.charAt(0)}</span>
                         </div>
                     )}
 
-                    {/* TOP BADGES INSIDE PHOTO AREA: Only when not dense so faces remain 100% clear */}
-                    {!isDense && (
+                    {/* TOP BADGES INSIDE PHOTO AREA: Only when not dense and not sold so faces/SOLD cover remain 100% clear */}
+                    {!isDense && !isSold && (
                         <div className="absolute top-0.5 left-0.5 right-0.5 flex items-center justify-between gap-1 pointer-events-none z-10">
                             <span className="px-1 py-0.2 rounded bg-black/85 text-amber-300 font-black text-[clamp(6px,0.55vw,8px)] uppercase border border-amber-400/30 truncate max-w-[65%] leading-tight drop-shadow">
                                 {player.role || player.category || 'PLAYER'}
@@ -232,36 +234,45 @@ export const ProjectorFitBoard: React.FC<Props> = ({
                         </div>
                     )}
 
-                    {/* SOLD BADGE: Compact & non-obscuring on dense grids */}
+                    {/* FULL-FRAME FIT-TO-SIZE LARGE SOLD COVER */}
                     {isSold && (
-                        isDense ? (
-                            <div className="absolute top-0.5 left-0.5 px-1 py-[1px] rounded bg-red-600/95 text-white font-black text-[clamp(5px,0.5vw,8px)] uppercase tracking-wider shadow border border-red-300/80 z-20 whitespace-nowrap leading-none">
+                        <div
+                            style={{ containerType: 'size' }}
+                            className="absolute inset-0 z-20 bg-gradient-to-b from-red-950/80 via-red-900/75 to-black/95 flex flex-col items-center justify-center p-[4%] text-center pointer-events-none select-none overflow-hidden"
+                        >
+                            <div
+                                style={{ fontSize: 'clamp(9px, 22cqmin, 44px)' }}
+                                className="w-[110%] py-[3.5%] bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black uppercase tracking-[0.14em] leading-none border-y border-red-200/85 shadow-[0_4px_18px_rgba(220,38,38,0.8)] -rotate-3"
+                            >
                                 SOLD
                             </div>
-                        ) : (
-                            <>
-                                <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black text-[clamp(7px,0.6vw,9px)] uppercase tracking-wider shadow-xl border border-red-300 z-20 whitespace-nowrap drop-shadow">
-                                    SOLD
-                                </div>
 
-                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-0.5 px-0.5 flex flex-col items-center justify-center text-center z-20">
-                                    {soldTeamLogo ? (
+                            {soldTeamName && (
+                                <div className="mt-[5%] flex flex-col items-center justify-center gap-[3%] max-w-full px-1">
+                                    {!isUltraDense && (soldTeamLogo ? (
                                         <img 
                                             src={soldTeamLogo} 
                                             alt="" 
-                                            className="w-4 h-4 md:w-5 md:h-5 rounded-full object-contain bg-white p-0.5 mb-0.5 border border-amber-400 shrink-0 shadow" 
+                                            style={{ width: 'clamp(12px, 22cqmin, 38px)', height: 'clamp(12px, 22cqmin, 38px)' }}
+                                            className="rounded-full object-contain bg-white p-[1px] border border-amber-400 shrink-0 shadow" 
                                         />
                                     ) : (
-                                        <div className="w-4 h-4 rounded-full bg-blue-600 text-white font-black text-[7px] flex items-center justify-center mb-0.5 border border-amber-400 shrink-0">
+                                        <div
+                                            style={{ width: 'clamp(12px, 22cqmin, 38px)', height: 'clamp(12px, 22cqmin, 38px)', fontSize: 'clamp(6px, 11cqmin, 16px)' }}
+                                            className="rounded-full bg-blue-600 text-white font-black flex items-center justify-center border border-amber-400 shrink-0"
+                                        >
                                             {soldTeamName.charAt(0) || '★'}
                                         </div>
-                                    )}
-                                    <p className="text-[clamp(7px,0.6vw,9px)] font-black text-amber-300 uppercase tracking-tight truncate max-w-full drop-shadow leading-none">
+                                    ))}
+                                    <p
+                                        style={{ fontSize: 'clamp(6px, 9.5cqmin, 14px)' }}
+                                        className="font-black text-amber-300 uppercase tracking-tight line-clamp-2 max-w-full drop-shadow-[0_1px_3px_rgba(0,0,0,1)] leading-tight"
+                                    >
                                         {soldTeamName}
                                     </p>
                                 </div>
-                            </>
-                        )
+                            )}
+                        </div>
                     )}
                 </div>
 

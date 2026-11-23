@@ -9,7 +9,7 @@ import {
     Search, Filter, LayoutGrid, Table as TableIcon, Undo2, RotateCcw, 
     Play, Pause, FastForward, Check, X, Shield, Wallet, Sparkles, 
     Crown, Tag, Eye, ArrowRight, Gavel, RefreshCw, Monitor, Cast, Copy, ExternalLink,
-    Volume2, VolumeX, Maximize, Minimize, Columns, Zap, Lock, Ban
+    Volume2, VolumeX, Maximize, Minimize, Columns, Zap, Lock, Ban, Star
 } from 'lucide-react';
 import DraftAdminControls from './DraftAdminControls';
 import DraftNominationModal from './DraftNominationModal';
@@ -79,7 +79,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     );
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
-    const [statusFilter, setStatusFilter] = useState<'ALL' | 'AVAILABLE' | 'SOLD'>('ALL');
+    const [statusFilter, setStatusFilter] = useState<'ALL' | 'AVAILABLE' | 'SOLD' | 'WISHLIST'>('ALL');
 
     // Audio & Time's Up Alert States
     const [isMuted, setIsMuted] = useState<boolean>(isDraftAudioMuted());
@@ -444,6 +444,43 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         });
     }, [categories, players, draftState.categoryOrder]);
 
+    // Admin-curated wishlist set synced via draftBoardState.wishlistPlayerIds
+    const adminWishlistSet = useMemo(() => {
+        const raw = draftState.wishlistPlayerIds || [];
+        return new Set(raw.map(id => String(id)));
+    }, [draftState.wishlistPlayerIds]);
+
+    const handleToggleAdminWishlist = async (player: Player) => {
+        if (!auctionId || !isAdmin) return;
+        const pid = String(player.id);
+        const currentIds = (draftState.wishlistPlayerIds || []).map(id => String(id));
+        const exists = currentIds.includes(pid);
+        const nextIds = exists
+            ? currentIds.filter(id => id !== pid)
+            : [...currentIds, pid];
+
+        await updateAuctionFieldsWithRelay({
+            'draftBoardState.wishlistPlayerIds': nextIds,
+            'draftBoardState.updatedAt': Date.now()
+        }).catch((err: any) => {
+            console.error('Failed to update admin wishlist:', err);
+        });
+    };
+
+    const handleClearAdminWishlist = async () => {
+        if (!auctionId || !isAdmin || adminWishlistSet.size === 0) return;
+        if (!window.confirm('Clear all players from Admin Wishlist?')) return;
+        await updateAuctionFieldsWithRelay({
+            'draftBoardState.wishlistPlayerIds': [],
+            'draftBoardState.updatedAt': Date.now()
+        }).catch((err: any) => {
+            console.error('Failed to clear admin wishlist:', err);
+        });
+        if (statusFilter === 'WISHLIST') {
+            setStatusFilter('ALL');
+        }
+    };
+
     // Group players by Category / Role
     const categoryGroups = useMemo(() => {
         const list = orderedCategoryNames;
@@ -458,7 +495,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             const isSold = p.status === 'SOLD' || draftPickMap.has(String(p.id));
             const matchesStatus = statusFilter === 'ALL' ||
                 (statusFilter === 'AVAILABLE' && !isSold) ||
-                (statusFilter === 'SOLD' && isSold);
+                (statusFilter === 'SOLD' && isSold) ||
+                (statusFilter === 'WISHLIST' && adminWishlistSet.has(String(p.id)));
 
             return matchesQuery && matchesStatus;
         });
@@ -471,7 +509,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 return pCat === catName.trim().toLowerCase();
             });
 
-            if (catPlayers.length > 0 || selectedCategoryFilter === 'ALL') {
+            if (catPlayers.length > 0 || (selectedCategoryFilter === 'ALL' && statusFilter === 'ALL' && searchQuery === '')) {
                 const totalInCat = players.filter(p => (p.category || p.role || 'Uncategorized').trim().toLowerCase() === catName.trim().toLowerCase());
                 const soldInCat = totalInCat.filter(p => p.status === 'SOLD' || draftPickMap.has(String(p.id))).length;
                 const availableInCat = totalInCat.length - soldInCat;
@@ -498,7 +536,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         }
 
         return groups;
-    }, [orderedCategoryNames, players, draftPickMap, searchQuery, statusFilter, selectedCategoryFilter]);
+    }, [orderedCategoryNames, players, draftPickMap, searchQuery, statusFilter, selectedCategoryFilter, adminWishlistSet]);
 
     const playersRef = useRef(players);
     playersRef.current = players;
@@ -1972,16 +2010,24 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                     >
                                         <div className="w-full h-14 rounded overflow-hidden bg-zinc-950 relative flex items-center justify-center">
                                             {player.photoUrl ? (
-                                                <img src={player.photoUrl} alt={player.name} className="w-full h-full object-contain" />
+                                                <img src={player.photoUrl} alt={player.name} className={`w-full h-full object-contain ${isSold ? 'opacity-25 grayscale contrast-125' : ''}`} />
                                             ) : (
-                                                <div className="w-full h-full flex items-center justify-center font-black text-xs text-zinc-500">
+                                                <div className={`w-full h-full flex items-center justify-center font-black text-xs text-zinc-500 ${isSold ? 'opacity-25 grayscale' : ''}`}>
                                                     {player.name.charAt(0)}
                                                 </div>
                                             )}
                                             {isSold && (
-                                                <span className="absolute top-0.5 left-1/2 -translate-x-1/2 px-1 py-[1px] rounded bg-red-600 text-white text-[7px] font-black uppercase leading-none shadow">
-                                                    SOLD
-                                                </span>
+                                                <div
+                                                    style={{ containerType: 'size' }}
+                                                    className="absolute inset-0 z-20 bg-gradient-to-b from-red-950/80 via-red-900/75 to-black/95 flex flex-col items-center justify-center p-[4%] text-center pointer-events-none select-none overflow-hidden"
+                                                >
+                                                    <div
+                                                        style={{ fontSize: 'clamp(9px, 24cqmin, 22px)' }}
+                                                        className="w-[112%] py-[4%] bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black uppercase tracking-[0.14em] leading-none border-y border-red-200/80 shadow-lg -rotate-3"
+                                                    >
+                                                        SOLD
+                                                    </div>
+                                                </div>
                                             )}
                                         </div>
                                         <p className="text-[9px] font-black text-white truncate w-full mt-0.5 leading-tight uppercase">
@@ -2300,8 +2346,26 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             })}
                         </div>
 
-                        {/* Status & Search */}
-                        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                        {/* Status, Wishlist & Search */}
+                        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                            {isAdmin && (
+                                <button
+                                    type="button"
+                                    onClick={() => setStatusFilter(prev => prev === 'WISHLIST' ? 'ALL' : 'WISHLIST')}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider border flex items-center gap-1.5 transition-all active:scale-95 ${
+                                        statusFilter === 'WISHLIST'
+                                            ? 'bg-yellow-500 text-black border-yellow-300 shadow-lg shadow-yellow-500/25'
+                                            : adminWishlistSet.size > 0
+                                                ? 'bg-yellow-500/15 border-yellow-400/50 text-yellow-300 hover:bg-yellow-500/25'
+                                                : isDark ? 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+                                    }`}
+                                    title="Show Admin Wishlist Players Grouped Category-Wise"
+                                >
+                                    <Star className={`w-3.5 h-3.5 ${statusFilter === 'WISHLIST' ? 'fill-black text-black' : adminWishlistSet.size > 0 ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                                    <span>Wishlist ({adminWishlistSet.size})</span>
+                                </button>
+                            )}
+
                             <select
                                 value={statusFilter}
                                 onChange={(e) => setStatusFilter(e.target.value as any)}
@@ -2312,6 +2376,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                 <option value="ALL">All Status</option>
                                 <option value="AVAILABLE">Available Only</option>
                                 <option value="SOLD">Sold Only</option>
+                                {isAdmin && <option value="WISHLIST">★ Wishlist Only ({adminWishlistSet.size})</option>}
                             </select>
 
                             <div className="relative flex-1 sm:w-64">
@@ -2490,7 +2555,80 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             </div>
                         )}
 
-                    {viewMode === 'TABLE' ? (
+                    {isAdmin && statusFilter === 'WISHLIST' && (
+                        <div className="p-4 rounded-2xl border-2 border-yellow-500/60 bg-gradient-to-r from-yellow-950/60 via-zinc-900 to-amber-950/50 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                            <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-xl bg-yellow-500/20 border border-yellow-400/60 flex items-center justify-center text-yellow-400 shrink-0">
+                                    <Star className="w-5 h-5 fill-yellow-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-black uppercase tracking-wider text-yellow-300">
+                                        Admin Wishlist — Category-Wise View ({adminWishlistSet.size} Players)
+                                    </h3>
+                                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                                        Grouped under each Category Name &amp; synced live to Team Portals
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {adminWishlistSet.size > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={handleClearAdminWishlist}
+                                        className="px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/40 text-[10px] font-black uppercase tracking-wider transition-all"
+                                    >
+                                        Clear Wishlist
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => setStatusFilter('ALL')}
+                                    className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700 text-[10px] font-black uppercase tracking-wider transition-all"
+                                >
+                                    Back to All Players
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {isAdmin && statusFilter !== 'WISHLIST' && adminWishlistSet.size > 0 && (
+                        <div className="px-4 py-2.5 rounded-2xl border border-yellow-500/40 bg-yellow-950/30 flex flex-wrap items-center justify-between gap-2 shadow-sm">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs font-black uppercase tracking-wider text-yellow-300 flex items-center gap-1.5">
+                                    <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" /> Admin Wishlist ({adminWishlistSet.size}):
+                                </span>
+                                {orderedCategoryNames.map(catName => {
+                                    const countInCat = players.filter(p => adminWishlistSet.has(String(p.id)) && (p.category || p.role || 'Uncategorized').trim().toLowerCase() === catName.trim().toLowerCase()).length;
+                                    if (countInCat === 0) return null;
+                                    return (
+                                        <button
+                                            key={catName}
+                                            type="button"
+                                            onClick={() => {
+                                                setSelectedCategoryFilter(catName);
+                                                setStatusFilter('WISHLIST');
+                                            }}
+                                            className="px-2 py-0.5 rounded-lg bg-yellow-500/15 hover:bg-yellow-500/30 border border-yellow-400/40 text-[10px] font-black uppercase text-yellow-200 transition-all"
+                                        >
+                                            {catName} ({countInCat})
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSelectedCategoryFilter('ALL');
+                                    setStatusFilter('WISHLIST');
+                                }}
+                                className="px-3 py-1 rounded-xl bg-yellow-500 hover:bg-yellow-400 text-black font-black text-[10px] uppercase tracking-wider shadow transition-all active:scale-95"
+                            >
+                                View Category-Wise Wishlist
+                            </button>
+                        </div>
+                    )}
+
+                    {viewMode === 'TABLE' && statusFilter !== 'WISHLIST' ? (
                         <DraftTableView
                             players={players}
                             categories={categories}
@@ -2511,10 +2649,23 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             hidePlayerNumbers={hideNumbers}
                             onUndoPlayer={handleUndoSpecificPlayer}
                         />
+                    ) : statusFilter === 'WISHLIST' && categoryGroups.every(g => g.players.length === 0) ? (
+                        <div className={`p-12 text-center rounded-3xl border ${isDark ? 'border-zinc-800 bg-zinc-900/40' : 'border-gray-200 bg-white'} space-y-2`}>
+                            <Star className="w-10 h-10 text-yellow-500/40 mx-auto" />
+                            <p className={`text-sm font-black uppercase ${isDark ? 'text-zinc-300' : 'text-gray-700'}`}>
+                                No Players Added to Wishlist Yet
+                            </p>
+                            <p className="text-xs text-zinc-500 max-w-md mx-auto">
+                                Click the star icon on any player card on the Draft Board to add them to the Wishlist. They will appear grouped by Category Name here and in Team Logins.
+                            </p>
+                        </div>
                     ) : (
                         // CATEGORY ROWS AND COLUMNS GRID FORMAT
                         categoryGroups.map(group => {
                             if (selectedCategoryFilter !== 'ALL' && group.category.toLowerCase() !== selectedCategoryFilter.toLowerCase()) {
+                                return null;
+                            }
+                            if (statusFilter === 'WISHLIST' && group.players.length === 0) {
                                 return null;
                             }
 
@@ -2522,24 +2673,26 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                 <div key={group.category} className="space-y-4">
                                     {/* Category Section Header Banner */}
                                     <div className={`flex items-center justify-between px-4 py-2.5 rounded-2xl border shadow-sm ${
-                                        isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-blue-100'
+                                        statusFilter === 'WISHLIST'
+                                            ? isDark ? 'bg-yellow-950/30 border-yellow-500/40' : 'bg-yellow-50 border-yellow-300'
+                                            : isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-blue-100'
                                     }`}>
                                         <div className="flex items-center gap-2.5">
-                                            <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
+                                            <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${statusFilter === 'WISHLIST' ? 'bg-yellow-400' : 'bg-blue-500'}`} />
                                             <h3 className={`text-sm md:text-base font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-gray-900'}`}>
                                                 {group.category}
                                             </h3>
                                             <span className="text-[10px] font-bold text-gray-400">
-                                                ({group.players.length} Players)
+                                                ({group.players.length} {statusFilter === 'WISHLIST' ? 'Wishlisted' : 'Players'})
                                             </span>
                                         </div>
 
                                         <div className="flex items-center gap-3 text-xs">
                                             <span className="text-[10px] font-bold text-emerald-500">
-                                                Available: {group.availableCount}
+                                                Available: {statusFilter === 'WISHLIST' ? group.players.filter(p => p.status !== 'SOLD' && !draftPickMap.has(String(p.id))).length : group.availableCount}
                                             </span>
                                             <span className="text-[10px] font-bold text-zinc-400">
-                                                Sold: {group.soldCount}
+                                                Sold: {statusFilter === 'WISHLIST' ? group.players.filter(p => p.status === 'SOLD' || draftPickMap.has(String(p.id))).length : group.soldCount}
                                             </span>
                                         </div>
                                     </div>
@@ -2552,6 +2705,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                             const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
                                             const soldPrice = pickInfo?.soldPrice ?? player.soldPrice ?? globalBasePrice;
                                             const soldTeamLogo = pickInfo?.teamLogo;
+                                            const isWishlisted = adminWishlistSet.has(String(player.id));
 
                                             return (
                                                 <div
@@ -2570,6 +2724,10 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                             ? isDark 
                                                                 ? 'bg-gradient-to-b from-red-950/40 via-zinc-900 to-zinc-950 border-red-500/70 shadow-lg shadow-red-500/10 ring-1 ring-red-500/30' 
                                                                 : 'bg-red-50/90 border-red-400 shadow-md ring-1 ring-red-400/30'
+                                                            : isWishlisted
+                                                            ? isDark
+                                                                ? 'bg-zinc-900 border-yellow-400/80 ring-1 ring-yellow-400/30 hover:border-yellow-300 hover:shadow-xl'
+                                                                : 'bg-yellow-50/70 border-yellow-400 hover:shadow-xl'
                                                             : isAdmin && draftState.autoAllotEnabled
                                                             ? 'bg-zinc-900 border-amber-400/90 ring-2 ring-amber-400/40 hover:border-amber-300 hover:shadow-xl hover:shadow-amber-500/20 hover:scale-[1.02]'
                                                             : isDark
@@ -2577,53 +2735,88 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                                 : 'bg-white border-gray-300 hover:border-blue-500 hover:shadow-xl'
                                                     }`}
                                                 >
-                                                    {/* Top Bar on box: Role and Jersey # only - NO BASE PRICE */}
+                                                    {/* Top Bar on box: Role, Wishlist Star & Jersey # */}
                                                     <div className="flex items-center justify-between gap-1 mb-1 z-10">
-                                                        <span className="text-[8px] md:text-[9px] font-black uppercase px-2 py-0.5 rounded bg-black/70 text-amber-400 border border-amber-500/30 truncate max-w-[70%]">
+                                                        <span className="text-[8px] md:text-[9px] font-black uppercase px-2 py-0.5 rounded bg-black/70 text-amber-400 border border-amber-500/30 truncate max-w-[60%]">
                                                             {player.role || player.category || 'PLAYER'}
                                                         </span>
-                                                        {!hideNumbers && (player.jerseyNumber ? (
-                                                            <span className="text-[9px] md:text-[10px] font-black text-white bg-zinc-800 px-1.5 py-0.5 rounded">
-                                                                #{player.jerseyNumber}
-                                                            </span>
-                                                        ) : (
-                                                            <span className="text-[9px] font-bold text-zinc-500">
-                                                                #{player.id}
-                                                            </span>
-                                                        ))}
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            {isAdmin && !isProjectorView && !isOBSView && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleToggleAdminWishlist(player);
+                                                                    }}
+                                                                    className={`p-1 rounded-md border transition-all ${
+                                                                        isWishlisted
+                                                                            ? 'bg-yellow-500/20 border-yellow-400/60 text-yellow-400 shadow-sm'
+                                                                            : 'bg-zinc-800/80 border-zinc-700 text-zinc-400 hover:text-yellow-300 hover:border-yellow-400/40'
+                                                                    }`}
+                                                                    title={isWishlisted ? 'Remove from Admin Wishlist' : 'Add to Admin Wishlist'}
+                                                                >
+                                                                    <Star className={`w-3 h-3 ${isWishlisted ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                                                                </button>
+                                                            )}
+                                                            {!hideNumbers && (player.jerseyNumber ? (
+                                                                <span className="text-[9px] md:text-[10px] font-black text-white bg-zinc-800 px-1.5 py-0.5 rounded">
+                                                                    #{player.jerseyNumber}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-[9px] font-bold text-zinc-500">
+                                                                    #{player.id}
+                                                                </span>
+                                                            ))}
+                                                        </div>
                                                     </div>
 
-                                                    {/* Player Photo with BOLD SOLD Box Overlay */}
+                                                    {/* Player Photo with FULL-FRAME FIT-TO-SIZE LARGE SOLD COVER */}
                                                     <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 my-1 flex items-center justify-center">
                                                         {player.photoUrl ? (
                                                             <img 
                                                                 src={player.photoUrl} 
-                                                                alt={player.name}
+                                                                alt={player.name} 
                                                                 className={`w-full h-full object-contain transition-transform duration-300 ${
-                                                                    !isProjectorView && !isOBSView ? 'group-hover:scale-105' : ''
+                                                                    isSold
+                                                                        ? 'opacity-25 grayscale contrast-125'
+                                                                        : !isProjectorView && !isOBSView ? 'group-hover:scale-105' : ''
                                                                 }`} 
                                                             />
                                                         ) : (
-                                                            <div className="w-full h-full flex items-center justify-center font-black text-2xl text-zinc-600 bg-zinc-900">
+                                                            <div className={`w-full h-full flex items-center justify-center font-black text-2xl text-zinc-600 bg-zinc-900 ${isSold ? 'opacity-25 grayscale' : ''}`}>
                                                                 {player.name.charAt(0)}
                                                             </div>
                                                         )}
 
-                                                        {/* SOLD OVERLAY: Keeps face visible with top badge and bottom winning franchise gradient banner */}
+                                                        {/* FULL-FRAME FIT-TO-SIZE LARGE SOLD COVER */}
                                                         {isSold && (
-                                                            <>
-                                                                <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2.5 py-0.5 bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black text-[9px] uppercase tracking-widest shadow-xl rounded-md z-20 whitespace-nowrap border border-red-300">
+                                                            <div
+                                                                style={{ containerType: 'size' }}
+                                                                className="absolute inset-0 z-20 bg-gradient-to-b from-red-950/80 via-red-900/75 to-black/95 flex flex-col items-center justify-center p-[5%] text-center pointer-events-none select-none overflow-hidden"
+                                                            >
+                                                                <div
+                                                                    style={{ fontSize: 'clamp(14px, 24cqmin, 40px)' }}
+                                                                    className="w-[112%] py-[4.5%] bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black uppercase tracking-[0.16em] leading-none border-y-2 border-red-200/85 shadow-[0_6px_22px_rgba(220,38,38,0.85)] -rotate-3"
+                                                                >
                                                                     SOLD
                                                                 </div>
-                                                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-1 px-1 flex flex-col items-center justify-center text-center z-20">
+                                                                <div className="mt-[6%] flex flex-col items-center justify-center gap-[4%] max-w-full px-1">
                                                                     {soldTeamLogo && (
-                                                                        <img src={soldTeamLogo} alt="" className="w-5 h-5 rounded-full object-contain bg-white p-0.5 mb-0.5 shadow-md border border-amber-400" />
+                                                                        <img
+                                                                            src={soldTeamLogo}
+                                                                            alt=""
+                                                                            style={{ width: 'clamp(18px, 24cqmin, 40px)', height: 'clamp(18px, 24cqmin, 40px)' }}
+                                                                            className="rounded-full object-contain bg-white p-[1.5px] shadow-md border border-amber-400 shrink-0"
+                                                                        />
                                                                     )}
-                                                                    <p className="text-[9px] md:text-[10px] font-black text-amber-300 uppercase tracking-tight line-clamp-1 leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
+                                                                    <p
+                                                                        style={{ fontSize: 'clamp(8px, 10.5cqmin, 15px)' }}
+                                                                        className="font-black text-amber-300 uppercase tracking-tight line-clamp-2 leading-tight drop-shadow-[0_2px_4px_rgba(0,0,0,1)] max-w-full"
+                                                                    >
                                                                         {soldTeamName}
                                                                     </p>
                                                                 </div>
-                                                            </>
+                                                            </div>
                                                         )}
                                                     </div>
 
@@ -2805,6 +2998,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     soldToTeamName={draftPickMap.get(String(activePlayerForModal.id))?.teamName || activePlayerForModal.soldTo}
                     errorMessage={pickError}
                     hidePlayerNumbers={hideNumbers}
+                    isWishlisted={isAdmin ? adminWishlistSet.has(String(activePlayerForModal.id)) : false}
+                    onToggleWishlist={isAdmin ? handleToggleAdminWishlist : undefined}
                     onClose={() => {
                         setPickError(null);
                         setActivePlayerForModal(null);

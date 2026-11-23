@@ -374,6 +374,7 @@ export interface DraftBoardState {
   obsTransparentBg?: boolean; // Keep OBS canvas transparent for live video feed
   categoryOrder?: string[]; // Custom category display order set by Admin
   hidePlayerNumbers?: boolean; // Toggle to hide player numbers across all displays
+  wishlistPlayerIds?: string[]; // Admin-curated shortlist/wishlist player IDs synced to boards
   history: DraftPickHistory[]; // supports undo
   updatedAt?: number;
 }

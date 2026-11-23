@@ -296,10 +296,73 @@ export const TeamDraftDashboard: React.FC<Props> = ({
         return groups;
     }, [availableCategories, filteredPlayers, players, draftPickMap, selectedCategory]);
 
-    // Wishlist players
+    // Admin Wishlist IDs synced from Firestore draftBoardState
+    const adminWishlistSet = useMemo(() => {
+        return new Set((draftState.wishlistPlayerIds || []).map(id => String(id)));
+    }, [draftState.wishlistPlayerIds]);
+
+    // Team Logo Lookup Map
+    const teamLogoMap = useMemo(() => {
+        const map = new Map<string, string>();
+        teams.forEach(t => {
+            if (t.logoUrl) {
+                map.set(String(t.id), t.logoUrl);
+                map.set(t.name.trim().toLowerCase(), t.logoUrl);
+            }
+        });
+        return map;
+    }, [teams]);
+
+    // Combined Wishlist players (Admin Wishlist + Team Owner's local Wishlist)
+    const combinedWishlistSet = useMemo(() => {
+        const merged = new Set<string>(Array.from(wishlistIds));
+        adminWishlistSet.forEach(id => merged.add(id));
+        return merged;
+    }, [wishlistIds, adminWishlistSet]);
+
     const wishlistPlayers = useMemo(() => {
-        return players.filter(p => wishlistIds.has(String(p.id)));
-    }, [players, wishlistIds]);
+        return players.filter(p => combinedWishlistSet.has(String(p.id)));
+    }, [players, combinedWishlistSet]);
+
+    // Category-Wise Wishlist Groups preserving Admin's Category Display Order
+    const wishlistCategoryGroups = useMemo(() => {
+        const groupMap = new Map<string, Player[]>();
+        availableCategories.forEach(cat => groupMap.set(cat, []));
+
+        wishlistPlayers.forEach(p => {
+            const cat = p.category || p.role || 'General';
+            let matchedKey = Array.from(groupMap.keys()).find(
+                k => k.trim().toLowerCase() === cat.trim().toLowerCase()
+            );
+            if (!matchedKey) {
+                matchedKey = cat;
+                groupMap.set(matchedKey, []);
+            }
+            groupMap.get(matchedKey)!.push(p);
+        });
+
+        const groups: {
+            category: string;
+            players: Player[];
+            availableCount: number;
+            soldCount: number;
+        }[] = [];
+
+        groupMap.forEach((catPlayers, category) => {
+            if (catPlayers.length === 0) return;
+            const soldCount = catPlayers.filter(
+                p => p.status === 'SOLD' || draftPickMap.has(String(p.id))
+            ).length;
+            groups.push({
+                category,
+                players: catPlayers,
+                availableCount: catPlayers.length - soldCount,
+                soldCount
+            });
+        });
+
+        return groups;
+    }, [availableCategories, wishlistPlayers, draftPickMap]);
 
     // Max squad limit
     const squadLimit = myTeam.maxPlayers || 15;
@@ -382,7 +445,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                             <div className="px-3 py-1.5 rounded-xl bg-black/60 border border-white/10 text-right">
                                 <p className="text-[8px] font-bold text-zinc-400 uppercase">Targets</p>
                                 <p className="text-xs font-black text-yellow-400 tabular-nums">
-                                    {wishlistIds.size}
+                                    {wishlistPlayers.length}
                                 </p>
                             </div>
                         </div>
@@ -439,7 +502,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                 : 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800'
                         }`}
                     >
-                        <Star className="w-3.5 h-3.5" /> Target Wishlist ({wishlistIds.size})
+                        <Star className="w-3.5 h-3.5" /> Target Wishlist ({wishlistPlayers.length})
                     </button>
                     <button
                         onClick={() => setActiveTab('RULES')}
@@ -685,7 +748,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                         const pickInfo = draftPickMap.get(String(player.id));
                                                         const isSold = player.status === 'SOLD' || !!pickInfo;
                                                         const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
-                                                        const isWishlisted = wishlistIds.has(String(player.id));
+                                                        const isWishlisted = combinedWishlistSet.has(String(player.id));
 
                                                         return (
                                                             <div
@@ -738,12 +801,12 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                     {player.photoUrl ? (
                                                                         <img 
                                                                             src={player.photoUrl} 
-                                                                            alt={player.name}
-                                                                            className="w-full h-full object-contain"
+                                                                            alt={player.name} 
+                                                                            className={`w-full h-full object-contain ${isSold ? 'opacity-25 grayscale contrast-125' : ''}`}
                                                                             loading="lazy"
                                                                         />
                                                                     ) : (
-                                                                        <div className="w-full h-full flex items-center justify-center font-black text-xs md:text-sm text-zinc-500 bg-zinc-900">
+                                                                        <div className={`w-full h-full flex items-center justify-center font-black text-xs md:text-sm text-zinc-500 bg-zinc-900 ${isSold ? 'opacity-25 grayscale' : ''}`}>
                                                                             {player.name.charAt(0)}
                                                                         </div>
                                                                     )}
@@ -755,19 +818,35 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                                 e.stopPropagation();
                                                                                 toggleWishlist(player.id);
                                                                             }}
-                                                                            className={`absolute top-0.5 right-0.5 p-0.5 rounded bg-black/70 z-20 transition-opacity ${
-                                                                                isWishlisted ? 'text-yellow-400 opacity-100' : 'text-zinc-400 opacity-0 group-hover:opacity-100'
+                                                                            className={`absolute top-0.5 right-0.5 p-0.5 rounded bg-black/70 z-30 transition-opacity ${
+                                                                                isWishlisted || adminWishlistSet.has(String(player.id)) ? 'text-yellow-400 opacity-100' : 'text-zinc-400 opacity-0 group-hover:opacity-100'
                                                                             }`}
                                                                             title={isWishlisted ? 'Remove from Wishlist' : 'Add to Wishlist'}
                                                                         >
-                                                                            <Star className={`w-2.5 h-2.5 ${isWishlisted ? 'fill-yellow-400' : ''}`} />
+                                                                            <Star className={`w-2.5 h-2.5 ${isWishlisted || adminWishlistSet.has(String(player.id)) ? 'fill-yellow-400' : ''}`} />
                                                                         </button>
                                                                     )}
 
-                                                                    {/* Compact non-obscuring SOLD tag */}
+                                                                    {/* FULL-FRAME FIT-TO-SIZE LARGE SOLD COVER */}
                                                                     {isSold && (
-                                                                        <div className="absolute top-0.5 left-0.5 px-1 py-[1px] rounded bg-red-600/95 text-white font-black text-[clamp(5px,0.55vw,8px)] uppercase tracking-wider shadow z-20 pointer-events-none leading-none">
-                                                                            SOLD
+                                                                        <div
+                                                                            style={{ containerType: 'size' }}
+                                                                            className="absolute inset-0 z-20 bg-gradient-to-b from-red-950/80 via-red-900/75 to-black/95 flex flex-col items-center justify-center p-[4%] text-center pointer-events-none select-none overflow-hidden"
+                                                                        >
+                                                                            <div
+                                                                                style={{ fontSize: 'clamp(9px, 22cqmin, 36px)' }}
+                                                                                className="w-[110%] py-[3.5%] bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black uppercase tracking-[0.14em] leading-none border-y border-red-200/80 shadow-[0_4px_16px_rgba(220,38,38,0.8)] -rotate-3"
+                                                                            >
+                                                                                SOLD
+                                                                            </div>
+                                                                            {soldTeamName && (
+                                                                                <p
+                                                                                    style={{ fontSize: 'clamp(6px, 9.5cqmin, 13px)' }}
+                                                                                    className="mt-[5%] font-black text-amber-300 uppercase tracking-tight line-clamp-2 max-w-full drop-shadow-[0_1px_3px_rgba(0,0,0,1)] leading-tight"
+                                                                                >
+                                                                                    {soldTeamName}
+                                                                                </p>
+                                                                            )}
                                                                         </div>
                                                                     )}
                                                                 </div>
@@ -871,7 +950,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                         const pickInfo = draftPickMap.get(String(player.id));
                                                         const isSold = player.status === 'SOLD' || !!pickInfo;
                                                         const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
-                                                        const isWishlisted = wishlistIds.has(String(player.id));
+                                                        const isWishlisted = combinedWishlistSet.has(String(player.id));
 
                                                         return (
                                                             <div
@@ -916,33 +995,52 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                     </div>
                                                                 </div>
 
-                                                                {/* Player Photo & Sold Badge */}
+                                                                {/* Player Photo & FULL-FRAME FIT-TO-SIZE LARGE SOLD COVER */}
                                                                 <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 my-1 flex items-center justify-center">
                                                                     {player.photoUrl ? (
                                                                         <img 
                                                                             src={player.photoUrl} 
-                                                                            alt={player.name}
-                                                                            className="w-full h-full object-contain"
+                                                                            alt={player.name} 
+                                                                            className={`w-full h-full object-contain ${isSold ? 'opacity-25 grayscale contrast-125' : ''}`}
                                                                         />
                                                                     ) : (
-                                                                        <div className="w-full h-full flex items-center justify-center font-black text-2xl text-zinc-600 bg-zinc-900">
+                                                                        <div className={`w-full h-full flex items-center justify-center font-black text-2xl text-zinc-600 bg-zinc-900 ${isSold ? 'opacity-25 grayscale' : ''}`}>
                                                                             {player.name.charAt(0)}
                                                                         </div>
                                                                     )}
 
-                                                                    {/* SOLD Overlay */}
-                                                                    {isSold && (
-                                                                        <>
-                                                                            <div className="absolute top-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-red-600 text-white font-black text-[8px] uppercase tracking-wider shadow z-20 whitespace-nowrap">
-                                                                                SOLD
+                                                                    {isSold && (() => {
+                                                                        const soldTeamLogo = pickInfo?.teamLogo || (soldTeamName ? teamLogoMap.get(soldTeamName.trim().toLowerCase()) : undefined);
+                                                                        return (
+                                                                            <div
+                                                                                style={{ containerType: 'size' }}
+                                                                                className="absolute inset-0 z-20 bg-gradient-to-b from-red-950/80 via-red-900/75 to-black/95 flex flex-col items-center justify-center p-[5%] text-center pointer-events-none select-none overflow-hidden"
+                                                                            >
+                                                                                <div
+                                                                                    style={{ fontSize: 'clamp(14px, 24cqmin, 38px)' }}
+                                                                                    className="w-[112%] py-[4.5%] bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black uppercase tracking-[0.16em] leading-none border-y-2 border-red-200/85 shadow-[0_6px_22px_rgba(220,38,38,0.85)] -rotate-3"
+                                                                                >
+                                                                                    SOLD
+                                                                                </div>
+                                                                                <div className="mt-[6%] flex flex-col items-center justify-center gap-[4%] max-w-full px-1">
+                                                                                    {soldTeamLogo && (
+                                                                                        <img
+                                                                                            src={soldTeamLogo}
+                                                                                            alt=""
+                                                                                            style={{ width: 'clamp(16px, 24cqmin, 38px)', height: 'clamp(16px, 24cqmin, 38px)' }}
+                                                                                            className="rounded-full object-contain bg-white p-[1.5px] shadow-md border border-amber-400 shrink-0"
+                                                                                        />
+                                                                                    )}
+                                                                                    <p
+                                                                                        style={{ fontSize: 'clamp(8px, 10.5cqmin, 14px)' }}
+                                                                                        className="font-black text-amber-300 uppercase tracking-tight line-clamp-2 leading-tight drop-shadow-[0_2px_4px_rgba(0,0,0,1)] max-w-full"
+                                                                                    >
+                                                                                        {soldTeamName}
+                                                                                    </p>
+                                                                                </div>
                                                                             </div>
-                                                                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-3 pb-1 px-1 flex flex-col items-center justify-center text-center z-20">
-                                                                                <p className="text-[9px] font-black text-amber-300 uppercase truncate max-w-full leading-tight">
-                                                                                    {soldTeamName}
-                                                                                </p>
-                                                                            </div>
-                                                                        </>
-                                                                    )}
+                                                                        );
+                                                                    })()}
                                                                 </div>
 
                                                                 {/* Player Name */}
@@ -1254,101 +1352,167 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                 )}
 
                 {/* =========================================================================
-                    TAB 5: TARGET WISHLIST
+                    TAB 5: TARGET WISHLIST (CATEGORY-WISE WITH CATEGORY NAME)
                     ========================================================================= */}
                 {activeTab === 'WISHLIST' && (
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between">
+                    <div className="space-y-6">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
                                 <h3 className="text-sm font-black uppercase tracking-wider text-white flex items-center gap-2">
-                                    <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" /> Captain&apos;s Target Shortlist
+                                    <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" /> Target Wishlist (Category-Wise)
                                 </h3>
                                 <p className="text-[10px] text-zinc-400 mt-0.5">
-                                    Pin key players you want to acquire so you can draft them quickly during your turn.
+                                    Admin-highlighted and Captain-starred players organized by Category Name.
                                 </p>
                             </div>
                             <span className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-full">
-                                {wishlistPlayers.length} Bookmarked
+                                {wishlistPlayers.length} Wishlisted
                             </span>
                         </div>
 
                         {wishlistPlayers.length === 0 ? (
                             <div className="p-12 text-center rounded-3xl border border-zinc-800 bg-zinc-900/40 space-y-2">
                                 <Star className="w-10 h-10 text-zinc-600 mx-auto" />
-                                <p className="text-sm font-black uppercase text-zinc-400">Your Target Shortlist is Empty</p>
+                                <p className="text-sm font-black uppercase text-zinc-400">Your Target Wishlist is Empty</p>
                                 <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-                                    Go to the <strong>Full Draft Board</strong> tab and click the star icon on any player to add them to your priority targets.
+                                    Players added to the Wishlist by Admin or starred from the <strong>Full Draft Board</strong> will appear here grouped by Category Name.
                                 </p>
                             </div>
                         ) : (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-                                {wishlistPlayers.map(player => {
-                                    const pickInfo = draftPickMap.get(String(player.id));
-                                    const isSold = player.status === 'SOLD' || !!pickInfo;
-                                    const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
-
-                                    return (
-                                        <div
-                                            key={player.id}
-                                            className={`rounded-2xl border-2 p-2 flex flex-col justify-between overflow-hidden shadow-lg ${
-                                                isSold ? 'bg-red-950/30 border-red-500/50 opacity-70' : 'bg-zinc-900 border-amber-500/50'
-                                            }`}
-                                        >
-                                            <div className="flex items-center justify-between gap-1 mb-1">
-                                                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-black/80 text-amber-300">
-                                                    {player.role || player.category}
+                            <div className="space-y-6">
+                                {wishlistCategoryGroups.map(group => (
+                                    <div key={group.category} className="space-y-3">
+                                        {/* Category Name Header */}
+                                        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-950/50 via-zinc-900 to-zinc-900 border border-amber-500/40 shadow-md">
+                                            <div className="flex items-center gap-2.5">
+                                                <div className="w-7 h-7 rounded-xl bg-amber-500/20 border border-amber-400/50 flex items-center justify-center text-amber-400 shrink-0">
+                                                    <Trophy className="w-3.5 h-3.5" />
+                                                </div>
+                                                <h4 className="text-sm md:text-base font-black uppercase tracking-wider text-amber-300">
+                                                    {group.category}
+                                                </h4>
+                                                <span className="px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-[10px] font-black text-zinc-300 uppercase">
+                                                    {group.players.length} Players
                                                 </span>
-                                                <button
-                                                    onClick={() => toggleWishlist(player.id)}
-                                                    className="p-1 text-yellow-400 hover:text-red-400 transition-colors"
-                                                    title="Remove from target list"
-                                                >
-                                                    <Star className="w-3.5 h-3.5 fill-yellow-400" />
-                                                </button>
                                             </div>
-
-                                            <div className="aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 my-1 relative">
-                                                {player.photoUrl ? (
-                                                    <img src={player.photoUrl} alt="" className={`w-full h-full object-contain ${isSold ? 'grayscale opacity-30' : ''}`} />
-                                                ) : (
-                                                    <div className="w-full h-full flex items-center justify-center font-black text-xl text-zinc-600">
-                                                        {player.name.charAt(0)}
-                                                    </div>
-                                                )}
-                                                {isSold && (
-                                                    <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-1 text-center">
-                                                        <span className="px-2 py-0.5 bg-red-600 text-white font-black text-[8px] rounded uppercase">SOLD</span>
-                                                        <span className="text-[9px] font-black text-amber-300 truncate max-w-full px-1">{soldTeamName}</span>
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                            <h4 className="text-xs font-black uppercase text-white truncate text-center mt-1">
-                                                {player.name}
-                                            </h4>
-
-                                            <div className="mt-2 pt-1 border-t border-white/10">
-                                                {isSold ? (
-                                                    <span className="text-[8px] text-zinc-500 block text-center uppercase font-bold">Unavailable</span>
-                                                ) : canPickNow ? (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => onNominatePlayer(player)}
-                                                        className="w-full py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider shadow active:scale-95 transition-all flex items-center justify-center gap-1"
-                                                    >
-                                                        <Check className="w-3 h-3 stroke-[3]" /> {isPickRequestMode ? 'Request Pick' : 'Draft Now'}
-                                                    </button>
-                                                ) : isMyTurn && !isPickingAllowed ? (
-                                                    <div className="py-1 rounded bg-amber-500/20 border border-amber-500/40 text-center text-[8px] font-bold text-amber-300 uppercase flex items-center justify-center gap-1">
-                                                        <Lock className="w-2.5 h-2.5" /> Admin Only
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-[9px] text-emerald-400 block text-center uppercase font-bold">★ Target Ready</span>
-                                                )}
+                                            <div className="flex items-center gap-2 text-[10px] font-black uppercase">
+                                                <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+                                                    Avail: {group.availableCount}
+                                                </span>
+                                                <span className="px-2 py-0.5 rounded bg-red-500/15 border border-red-500/30 text-red-400">
+                                                    Sold: {group.soldCount}
+                                                </span>
                                             </div>
                                         </div>
-                                    );
-                                })}
+
+                                        {/* Players in this Category */}
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                                            {group.players.map(player => {
+                                                const pickInfo = draftPickMap.get(String(player.id));
+                                                const isSold = player.status === 'SOLD' || !!pickInfo;
+                                                const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
+                                                const soldTeamLogo = pickInfo?.teamLogo || (soldTeamName ? teamLogoMap.get(soldTeamName.trim().toLowerCase()) : undefined);
+                                                const isAdminWishlisted = adminWishlistSet.has(String(player.id));
+                                                const isLocalWishlisted = wishlistIds.has(String(player.id));
+
+                                                return (
+                                                    <div
+                                                        key={player.id}
+                                                        className={`rounded-2xl border-2 p-2 flex flex-col justify-between overflow-hidden shadow-lg ${
+                                                            isSold ? 'bg-red-950/30 border-red-500/60' : 'bg-zinc-900 border-amber-500/60'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center justify-between gap-1 mb-1">
+                                                            <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-black/80 text-amber-300 truncate max-w-[65%]">
+                                                                {player.role || player.category}
+                                                            </span>
+                                                            <div className="flex items-center gap-1 shrink-0">
+                                                                {isAdminWishlisted && (
+                                                                    <span className="px-1.5 py-0.5 rounded bg-yellow-500/20 border border-yellow-400/50 text-[7px] font-black uppercase text-yellow-300">
+                                                                        Admin
+                                                                    </span>
+                                                                )}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => toggleWishlist(player.id)}
+                                                                    className="p-0.5 text-yellow-400 hover:text-amber-300 transition-colors"
+                                                                    title={isLocalWishlisted ? 'Remove team star' : 'Star player for your team'}
+                                                                >
+                                                                    <Star className={`w-3.5 h-3.5 ${isLocalWishlisted || isAdminWishlisted ? 'fill-yellow-400' : ''}`} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="aspect-square w-full rounded-xl overflow-hidden bg-zinc-950 my-1 relative flex items-center justify-center">
+                                                            {player.photoUrl ? (
+                                                                <img src={player.photoUrl} alt="" className={`w-full h-full object-contain ${isSold ? 'grayscale opacity-25 contrast-125' : ''}`} />
+                                                            ) : (
+                                                                <div className={`w-full h-full flex items-center justify-center font-black text-xl text-zinc-600 ${isSold ? 'opacity-25 grayscale' : ''}`}>
+                                                                    {player.name.charAt(0)}
+                                                                </div>
+                                                            )}
+                                                            {isSold && (
+                                                                <div
+                                                                    style={{ containerType: 'size' }}
+                                                                    className="absolute inset-0 z-20 bg-gradient-to-b from-red-950/80 via-red-900/75 to-black/95 flex flex-col items-center justify-center p-[5%] text-center pointer-events-none select-none overflow-hidden"
+                                                                >
+                                                                    <div
+                                                                        style={{ fontSize: 'clamp(14px, 24cqmin, 38px)' }}
+                                                                        className="w-[112%] py-[4.5%] bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black uppercase tracking-[0.16em] leading-none border-y-2 border-red-200/85 shadow-[0_6px_22px_rgba(220,38,38,0.85)] -rotate-3"
+                                                                    >
+                                                                        SOLD
+                                                                    </div>
+                                                                    <div className="mt-[6%] flex flex-col items-center justify-center gap-[4%] max-w-full px-1">
+                                                                        {soldTeamLogo && (
+                                                                            <img
+                                                                                src={soldTeamLogo}
+                                                                                alt=""
+                                                                                style={{ width: 'clamp(16px, 24cqmin, 38px)', height: 'clamp(16px, 24cqmin, 38px)' }}
+                                                                                className="rounded-full object-contain bg-white p-[1.5px] shadow-md border border-amber-400 shrink-0"
+                                                                            />
+                                                                        )}
+                                                                        <p
+                                                                            style={{ fontSize: 'clamp(8px, 10.5cqmin, 14px)' }}
+                                                                            className="font-black text-amber-300 uppercase tracking-tight line-clamp-2 leading-tight drop-shadow-[0_2px_4px_rgba(0,0,0,1)] max-w-full"
+                                                                        >
+                                                                            {soldTeamName}
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        <h4 className="text-xs font-black uppercase text-white truncate text-center mt-1">
+                                                            {player.name}
+                                                        </h4>
+
+                                                        <div className="mt-2 pt-1 border-t border-white/10">
+                                                            {isSold ? (
+                                                                <span className="text-[8px] text-amber-300 block text-center uppercase font-black truncate">
+                                                                    ★ {soldTeamName}
+                                                                </span>
+                                                            ) : canPickNow ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => onNominatePlayer(player)}
+                                                                    className="w-full py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider shadow active:scale-95 transition-all flex items-center justify-center gap-1"
+                                                                >
+                                                                    <Check className="w-3 h-3 stroke-[3]" /> {isPickRequestMode ? 'Request Pick' : 'Draft Now'}
+                                                                </button>
+                                                            ) : isMyTurn && !isPickingAllowed ? (
+                                                                <div className="py-1 rounded bg-amber-500/20 border border-amber-500/40 text-center text-[8px] font-bold text-amber-300 uppercase flex items-center justify-center gap-1">
+                                                                    <Lock className="w-2.5 h-2.5" /> Admin Only
+                                                                </div>
+                                                            ) : (
+                                                                <span className="text-[9px] text-emerald-400 block text-center uppercase font-bold">★ Target Ready</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>

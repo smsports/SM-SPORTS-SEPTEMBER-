@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Player, Team, DraftPickHistory } from '../../types';
 import { 
     X, Check, Shield, Wallet, Trophy, User, CheckCircle2, 
-    Crown, Sparkles, AlertCircle, Tag, Undo2, Lock, Loader2
+    Crown, Sparkles, AlertCircle, Tag, Undo2, Lock, Loader2, Star
 } from 'lucide-react';
 import { unlockDraftAudio } from '../../utils/draftAudio';
 import { resolveDraftTeamSquad } from '../../utils';
@@ -22,6 +22,8 @@ interface Props {
     soldToTeamName?: string;
     errorMessage?: string | null;
     hidePlayerNumbers?: boolean;
+    isWishlisted?: boolean;
+    onToggleWishlist?: (player: Player) => void;
     onClose: () => void;
     onAssign: (player: Player, teamId: string | number, price: number) => Promise<void> | void;
     onUndoPlayer?: (player: Player) => void;
@@ -42,6 +44,8 @@ export const DraftNominationModal: React.FC<Props> = ({
     soldToTeamName,
     errorMessage,
     hidePlayerNumbers = false,
+    isWishlisted = false,
+    onToggleWishlist,
     onClose,
     onAssign,
     onUndoPlayer
@@ -82,17 +86,31 @@ export const DraftNominationModal: React.FC<Props> = ({
                 <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
                     <div className="relative w-28 h-28 sm:w-32 sm:h-32 rounded-2xl overflow-hidden bg-zinc-900 border-2 border-zinc-700 shrink-0 shadow-xl">
                         {player.photoUrl ? (
-                            <img src={player.photoUrl} alt={player.name} className="w-full h-full object-contain bg-zinc-950" />
+                            <img src={player.photoUrl} alt={player.name} className={`w-full h-full object-contain bg-zinc-950 ${isSold ? 'opacity-25 grayscale contrast-125' : ''}`} />
                         ) : (
                             <div className="w-full h-full flex items-center justify-center text-4xl font-black text-zinc-600">
                                 {player.name.charAt(0)}
                             </div>
                         )}
                         {isSold && (
-                            <div className="absolute inset-0 bg-black/80 backdrop-blur-[2px] flex items-center justify-center">
-                                <span className="px-3 py-1 rounded-md bg-red-600 text-white font-black text-xs uppercase tracking-widest -rotate-12 shadow-lg">
+                            <div
+                                style={{ containerType: 'size' }}
+                                className="absolute inset-0 bg-gradient-to-b from-red-950/80 via-red-900/75 to-black/95 flex flex-col items-center justify-center p-[6%] text-center pointer-events-none select-none overflow-hidden"
+                            >
+                                <div
+                                    style={{ fontSize: 'clamp(14px, 23cqmin, 32px)' }}
+                                    className="w-[112%] py-[5%] bg-gradient-to-r from-red-600 via-rose-600 to-red-600 text-white font-black uppercase tracking-[0.16em] leading-none border-y border-red-200/80 shadow-[0_4px_18px_rgba(220,38,38,0.75)] -rotate-3"
+                                >
                                     SOLD
-                                </span>
+                                </div>
+                                {(soldToTeamName || player.soldTo) && (
+                                    <p
+                                        style={{ fontSize: 'clamp(8px, 11cqmin, 13px)' }}
+                                        className="mt-[6%] font-black text-amber-300 uppercase tracking-tight line-clamp-2 leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,1)] max-w-full"
+                                    >
+                                        {soldToTeamName || player.soldTo}
+                                    </p>
+                                )}
                             </div>
                         )}
                     </div>
@@ -109,6 +127,20 @@ export const DraftNominationModal: React.FC<Props> = ({
                                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/30">
                                     #{player.jerseyNumber}
                                 </span>
+                            )}
+                            {onToggleWishlist && (
+                                <button
+                                    type="button"
+                                    onClick={() => onToggleWishlist(player)}
+                                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border transition-all flex items-center gap-1 ${
+                                        isWishlisted
+                                            ? 'bg-yellow-500/20 text-yellow-300 border-yellow-400/60 shadow-sm'
+                                            : 'bg-zinc-900 text-zinc-400 border-zinc-700 hover:text-yellow-300 hover:border-yellow-400/40'
+                                    }`}
+                                >
+                                    <Star className={`w-3 h-3 ${isWishlisted ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                                    {isWishlisted ? 'In Wishlist' : 'Add Wishlist'}
+                                </button>
                             )}
                         </div>
 
