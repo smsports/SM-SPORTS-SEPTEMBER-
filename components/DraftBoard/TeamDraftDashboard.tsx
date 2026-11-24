@@ -6,7 +6,7 @@ import {
     CheckCircle2, AlertCircle, ChevronRight, Lock, Maximize2
 } from 'lucide-react';
 import SoldCelebrationPopup from './SoldCelebrationPopup';
-import { resolveDraftTeamSquad } from '../../utils';
+import { resolveDraftTeamSquad, getTeamCategoryQuotaSummary, checkDraftCategoryEligibilityFromSummary } from '../../utils';
 
 /**
  * Calculates optimal (rows, cols) for any number of players N to guarantee
@@ -51,6 +51,7 @@ interface Props {
     teams: Team[];
     players: Player[];
     categories?: AuctionCategory[];
+    maxPlayersPerTeam?: number;
     draftState: DraftBoardState;
     draftPickMap: Map<string, DraftPickHistory>;
     auctionId: string;
@@ -66,6 +67,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
     teams,
     players,
     categories = [],
+    maxPlayersPerTeam,
     draftState,
     draftPickMap,
     auctionId,
@@ -364,8 +366,17 @@ export const TeamDraftDashboard: React.FC<Props> = ({
         return groups;
     }, [availableCategories, wishlistPlayers, draftPickMap]);
 
+    // My Team's category min/max quota summary
+    const myQuotaSummary = useMemo(() => {
+        return getTeamCategoryQuotaSummary(myTeam, categories, players, draftState.history || [], maxPlayersPerTeam);
+    }, [myTeam, categories, players, draftState.history, maxPlayersPerTeam]);
+
+    const hasCategoryLimits = useMemo(() => {
+        return myQuotaSummary.categories.some(c => c.min > 0 || c.max > 0);
+    }, [myQuotaSummary]);
+
     // Max squad limit
-    const squadLimit = myTeam.maxPlayers || 15;
+    const squadLimit = myQuotaSummary.effectiveSquadMax || myTeam.maxPlayers || 15;
     const squadCount = mySquad.length;
     const totalSpent = mySquad.reduce((sum, p) => sum + (p.soldPrice || 0), 0);
 
@@ -439,7 +450,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                             <div className="px-3 py-1.5 rounded-xl bg-black/60 border border-white/10 text-right">
                                 <p className="text-[8px] font-bold text-zinc-400 uppercase">Drafted Squad</p>
                                 <p className="text-xs font-black text-amber-400 tabular-nums">
-                                    {squadCount}{myTeam.maxPlayers ? `/${myTeam.maxPlayers}` : ''}
+                                    {squadCount}{myQuotaSummary.effectiveSquadMax > 0 ? `/${myQuotaSummary.effectiveSquadMax}` : ''}
                                 </p>
                             </div>
                             <div className="px-3 py-1.5 rounded-xl bg-black/60 border border-white/10 text-right">
@@ -674,6 +685,31 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                             </div>
                         </div>
 
+                        {/* Compact Category Min/Max Quota Strip */}
+                        {hasCategoryLimits && (
+                            <div className="px-2.5 py-1.5 rounded-xl bg-zinc-900/90 border border-zinc-800 flex items-center gap-1.5 flex-wrap shrink-0">
+                                <span className="text-[9px] font-black uppercase tracking-wider text-zinc-400 mr-1">
+                                    Your Category Quotas:
+                                </span>
+                                {myQuotaSummary.categories.map(cat => (
+                                    <span
+                                        key={cat.name}
+                                        className={`px-2 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-tight tabular-nums ${
+                                            cat.isMaxReached
+                                                ? 'bg-red-950/70 border-red-500/60 text-red-300'
+                                                : cat.neededForMin > 0
+                                                ? 'bg-amber-950/60 border-amber-500/50 text-amber-300'
+                                                : 'bg-emerald-950/50 border-emerald-500/40 text-emerald-300'
+                                        }`}
+                                        title={`${cat.name}: ${cat.current} drafted (Min ${cat.min}, Max ${cat.max > 0 ? cat.max : 'No Limit'})`}
+                                    >
+                                        {cat.name}: {cat.current}/{cat.max > 0 ? cat.max : '∞'}
+                                        {cat.min > 0 ? ` • Min ${cat.min}` : ''}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+
                         {/* =========================================================================
                             FORMAT 1: FIT TO PAGE (ZERO SCROLL, MATHEMATICALLY BALANCED CARDS)
                             ========================================================================= */}
@@ -749,6 +785,10 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                         const isSold = player.status === 'SOLD' || !!pickInfo;
                                                         const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
                                                         const isWishlisted = combinedWishlistSet.has(String(player.id));
+                                                        const pickEligibility = !isSold
+                                                            ? checkDraftCategoryEligibilityFromSummary(myTeam.name, myQuotaSummary, player)
+                                                            : null;
+                                                        const isLimitBlocked = Boolean(pickEligibility && !pickEligibility.allowed);
 
                                                         return (
                                                             <div
@@ -758,9 +798,12 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                         onNominatePlayer(player);
                                                                     }
                                                                 }}
+                                                                title={isLimitBlocked && pickEligibility?.reason ? pickEligibility.reason : undefined}
                                                                 className={`group relative rounded-lg border ${isUltraDense ? 'p-[2px]' : 'p-1'} flex flex-col justify-between overflow-hidden shadow transition-all duration-150 ${
                                                                     isSold
                                                                         ? 'bg-zinc-950 border-red-500/60 opacity-90 cursor-default'
+                                                                        : canPickNow && isLimitBlocked
+                                                                        ? 'bg-zinc-950/90 border-red-500/50 opacity-75 hover:border-red-400 cursor-pointer'
                                                                         : canPickNow
                                                                         ? 'bg-zinc-900 border-emerald-500 hover:border-emerald-300 hover:ring-2 hover:ring-emerald-400/50 cursor-pointer'
                                                                         : 'bg-zinc-900 border-zinc-700/80 hover:border-zinc-500 cursor-default'
@@ -864,6 +907,17 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                         <div className="py-0.2 px-0.5 rounded bg-red-950/80 border border-red-500/30 text-center text-[6.5px] md:text-[7px] font-bold text-amber-300 uppercase truncate leading-tight">
                                                                             ★ {soldTeamName}
                                                                         </div>
+                                                                    ) : canPickNow && isLimitBlocked ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onNominatePlayer(player);
+                                                                            }}
+                                                                            className="w-full py-0.5 rounded bg-red-950/80 hover:bg-red-900/90 border border-red-500/50 text-red-200 font-black text-[7px] md:text-[7.5px] uppercase tracking-tight flex items-center justify-center gap-0.5 transition-all truncate px-0.5"
+                                                                        >
+                                                                            <Lock className="w-2 h-2 shrink-0" /> {pickEligibility?.shortReason || 'Limit'}
+                                                                        </button>
                                                                     ) : canPickNow ? (
                                                                         <button
                                                                             type="button"
@@ -951,6 +1005,10 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                         const isSold = player.status === 'SOLD' || !!pickInfo;
                                                         const soldTeamName = pickInfo?.teamName || player.soldTo || 'Assigned';
                                                         const isWishlisted = combinedWishlistSet.has(String(player.id));
+                                                        const pickEligibility = !isSold
+                                                            ? checkDraftCategoryEligibilityFromSummary(myTeam.name, myQuotaSummary, player)
+                                                            : null;
+                                                        const isLimitBlocked = Boolean(pickEligibility && !pickEligibility.allowed);
 
                                                         return (
                                                             <div
@@ -960,9 +1018,12 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                         onNominatePlayer(player);
                                                                     }
                                                                 }}
+                                                                title={isLimitBlocked && pickEligibility?.reason ? pickEligibility.reason : undefined}
                                                                 className={`group relative rounded-2xl border-2 p-2 flex flex-col justify-between transition-all duration-200 overflow-hidden shadow-lg ${
                                                                     isSold
                                                                         ? 'bg-gradient-to-b from-red-950/40 via-zinc-900 to-zinc-950 border-red-500/70 opacity-80 cursor-default'
+                                                                        : canPickNow && isLimitBlocked
+                                                                        ? 'bg-zinc-950/90 border-red-500/50 opacity-80 hover:border-red-400 cursor-pointer'
                                                                         : canPickNow
                                                                         ? 'bg-zinc-900 border-emerald-500/90 hover:border-emerald-400 hover:shadow-emerald-500/20 hover:scale-[1.02] cursor-pointer ring-2 ring-emerald-500/30'
                                                                         : 'bg-zinc-900 border-zinc-700/80 hover:border-zinc-500 cursor-default'
@@ -1056,6 +1117,17 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                         <div className="py-0.5 text-center text-[9px] font-bold text-zinc-400 uppercase truncate">
                                                                             ★ {soldTeamName}
                                                                         </div>
+                                                                    ) : canPickNow && isLimitBlocked ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onNominatePlayer(player);
+                                                                            }}
+                                                                            className="w-full py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900/90 border border-red-500/50 text-red-200 font-black text-[9.5px] uppercase tracking-wider flex items-center justify-center gap-1 transition-all truncate px-1"
+                                                                        >
+                                                                            <Lock className="w-3 h-3 shrink-0" /> {pickEligibility?.shortReason || 'Limit Reached'}
+                                                                        </button>
                                                                     ) : canPickNow ? (
                                                                         <button
                                                                             type="button"
@@ -1107,7 +1179,7 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                             <div className="p-4 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-md">
                                 <p className="text-[9px] font-bold uppercase text-zinc-400">Total Players Drafted</p>
                                 <p className="text-2xl font-black text-amber-400 mt-1">
-                                    {squadCount} {myTeam.maxPlayers ? <span className="text-sm text-zinc-500 font-bold">/ {myTeam.maxPlayers} max</span> : ''}
+                                    {squadCount} {myQuotaSummary.effectiveSquadMax > 0 ? <span className="text-sm text-zinc-500 font-bold">/ {myQuotaSummary.effectiveSquadMax} max</span> : ''}
                                 </p>
                             </div>
                             <div className="p-4 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-md">
@@ -1138,6 +1210,59 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                 </button>
                             </div>
                         </div>
+
+                        {/* Category Min & Max Quotas Tracker */}
+                        {hasCategoryLimits && (
+                            <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-xs font-black uppercase tracking-wider text-amber-400">
+                                        Category Player Limits (Min / Max Per Team)
+                                    </h3>
+                                    <span className="text-[10px] font-bold text-zinc-400 uppercase">
+                                        {myQuotaSummary.mandatorySlotsRemaining > 0
+                                            ? `${myQuotaSummary.mandatorySlotsRemaining} Min Slot(s) Required`
+                                            : 'All Category Minimums Met'}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                                    {myQuotaSummary.categories.map(cat => (
+                                        <div
+                                            key={cat.name}
+                                            className={`p-3 rounded-xl border ${
+                                                cat.isMaxReached
+                                                    ? 'bg-red-950/40 border-red-500/50'
+                                                    : cat.neededForMin > 0
+                                                    ? 'bg-amber-950/30 border-amber-500/40'
+                                                    : 'bg-emerald-950/30 border-emerald-500/40'
+                                            }`}
+                                        >
+                                            <p className="text-[11px] font-black uppercase text-white truncate">{cat.name}</p>
+                                            <p className="text-lg font-black text-amber-300 mt-0.5 tabular-nums">
+                                                {cat.current}
+                                                <span className="text-xs text-zinc-400 font-bold">
+                                                    {' '}/ {cat.max > 0 ? `${cat.max} max` : '∞'}
+                                                </span>
+                                            </p>
+                                            <p className={`text-[9px] font-black uppercase mt-1 ${
+                                                cat.isMaxReached
+                                                    ? 'text-red-300'
+                                                    : cat.neededForMin > 0
+                                                    ? 'text-amber-300'
+                                                    : 'text-emerald-300'
+                                            }`}>
+                                                {cat.isMaxReached
+                                                    ? 'Max Limit Reached'
+                                                    : cat.neededForMin > 0
+                                                    ? `Need ${cat.neededForMin} more (Min ${cat.min})`
+                                                    : cat.min > 0
+                                                    ? `Min ${cat.min} Met`
+                                                    : 'Within Limit'}
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Roster Cards Grid */}
                         <div>
@@ -1491,15 +1616,30 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                                                 <span className="text-[8px] text-amber-300 block text-center uppercase font-black truncate">
                                                                     ★ {soldTeamName}
                                                                 </span>
-                                                            ) : canPickNow ? (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => onNominatePlayer(player)}
-                                                                    className="w-full py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider shadow active:scale-95 transition-all flex items-center justify-center gap-1"
-                                                                >
-                                                                    <Check className="w-3 h-3 stroke-[3]" /> {isPickRequestMode ? 'Request Pick' : 'Draft Now'}
-                                                                </button>
-                                                            ) : isMyTurn && !isPickingAllowed ? (
+                                                            ) : canPickNow ? (() => {
+                                                                const wElig = checkDraftCategoryEligibilityFromSummary(myTeam.name, myQuotaSummary, player);
+                                                                if (!wElig.allowed) {
+                                                                    return (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => onNominatePlayer(player)}
+                                                                            title={wElig.reason || undefined}
+                                                                            className="w-full py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900/90 border border-red-500/50 text-red-200 font-black text-[9.5px] uppercase tracking-wider flex items-center justify-center gap-1 transition-all truncate px-1"
+                                                                        >
+                                                                            <Lock className="w-3 h-3 shrink-0" /> {wElig.shortReason || 'Limit Reached'}
+                                                                        </button>
+                                                                    );
+                                                                }
+                                                                return (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => onNominatePlayer(player)}
+                                                                        className="w-full py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase tracking-wider shadow active:scale-95 transition-all flex items-center justify-center gap-1"
+                                                                    >
+                                                                        <Check className="w-3 h-3 stroke-[3]" /> {isPickRequestMode ? 'Request Pick' : 'Draft Now'}
+                                                                    </button>
+                                                                );
+                                                            })() : isMyTurn && !isPickingAllowed ? (
                                                                 <div className="py-1 rounded bg-amber-500/20 border border-amber-500/40 text-center text-[8px] font-bold text-amber-300 uppercase flex items-center justify-center gap-1">
                                                                     <Lock className="w-2.5 h-2.5" /> Admin Only
                                                                 </div>
@@ -1537,8 +1677,31 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                 <p>
                                     • <strong>Current Status:</strong> Round {draftState.currentRound} ({draftState.roundStatus === 'IN_PROGRESS' ? 'Active' : 'Completed'}).
                                 </p>
+                                {myQuotaSummary.effectiveSquadMax > 0 && (
+                                    <p>
+                                        • <strong>Max Squad Size:</strong> {myQuotaSummary.effectiveSquadMax} players per team.
+                                    </p>
+                                )}
                             </div>
                         </div>
+
+                        {hasCategoryLimits && (
+                            <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3">
+                                <h4 className="text-xs font-black uppercase tracking-wider text-white">
+                                    Category Player Limits (Minimum &amp; Maximum Per Team)
+                                </h4>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {myQuotaSummary.categories.map(cat => (
+                                        <div key={cat.name} className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between text-xs">
+                                            <span className="font-black uppercase text-white">{cat.name}</span>
+                                            <span className="font-bold text-amber-300 tabular-nums">
+                                                Min {cat.min} • Max {cat.max > 0 ? cat.max : 'No Limit'} ({cat.current} Picked)
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Round Turn Order Table */}
                         <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3">

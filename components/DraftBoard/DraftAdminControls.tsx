@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory, ObsDraftDisplayMode, CustomAudioConfig, PendingDraftPickRequest } from '../../types';
 import { db } from '../../firebase';
-import { uploadAudioOrFallback, safeBuildTeamUpdatePayload } from '../../utils';
+import { uploadAudioOrFallback, safeBuildTeamUpdatePayload, getTeamCategoryQuotaSummary } from '../../utils';
 import { previewAudioSound, stopCustomAudio, mergeCustomAudioConfig } from '../../utils/draftAudio';
 import { 
     Play, Pause, FastForward, Undo2, RotateCcw, AlertTriangle, 
@@ -19,6 +19,7 @@ interface Props {
     teams: Team[];
     players: Player[];
     categories?: AuctionCategory[];
+    maxPlayersPerTeam?: number;
     auctionId: string;
     onStartNextRound: () => Promise<void>;
     pendingPickRequests?: PendingDraftPickRequest[];
@@ -37,6 +38,7 @@ export const DraftAdminControls: React.FC<Props> = ({
     teams,
     players,
     categories = [],
+    maxPlayersPerTeam,
     auctionId,
     onStartNextRound,
     pendingPickRequests = [],
@@ -930,6 +932,65 @@ export const DraftAdminControls: React.FC<Props> = ({
                                     </option>
                                 ))}
                             </select>
+
+                            {(() => {
+                                const activeTeamId = draftState.targetPickingTeamId && draftState.targetPickingTeamId !== 'CURRENT_TURN'
+                                    ? draftState.targetPickingTeamId
+                                    : draftState.currentTeamId;
+                                const activeTeam = teams.find(t => String(t.id) === String(activeTeamId));
+                                if (!activeTeam || categories.length === 0) return null;
+
+                                const summary = getTeamCategoryQuotaSummary(
+                                    activeTeam,
+                                    categories,
+                                    players,
+                                    draftState.history || [],
+                                    maxPlayersPerTeam
+                                );
+                                const hasLimits = summary.categories.some(c => c.min > 0 || c.max > 0);
+                                if (!hasLimits && summary.effectiveSquadMax <= 0) return null;
+
+                                return (
+                                    <div className="p-2.5 rounded-xl bg-black/55 border border-zinc-800 space-y-1.5 mt-1">
+                                        <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-wider text-zinc-400">
+                                            <span className="truncate">{activeTeam.name} Quotas</span>
+                                            <span className={`tabular-nums ${
+                                                summary.effectiveSquadMax > 0 && summary.squadCount >= summary.effectiveSquadMax
+                                                    ? 'text-red-400'
+                                                    : 'text-amber-300'
+                                            }`}>
+                                                Squad {summary.squadCount}
+                                                {summary.effectiveSquadMax > 0 ? `/${summary.effectiveSquadMax}` : ''}
+                                            </span>
+                                        </div>
+                                        {summary.configConflict && (
+                                            <p className="text-[8.5px] font-bold text-amber-300">
+                                                Note: Sum of category minimums ({summary.totalConfiguredMin}) exceeds squad max ({summary.effectiveSquadMax}).
+                                            </p>
+                                        )}
+                                        {hasLimits && (
+                                            <div className="flex flex-wrap gap-1">
+                                                {summary.categories.map(cat => (
+                                                    <span
+                                                        key={cat.name}
+                                                        className={`px-1.5 py-0.5 rounded border text-[8.5px] font-black uppercase tracking-tight tabular-nums ${
+                                                            cat.isMaxReached
+                                                                ? 'bg-red-950/70 border-red-500/60 text-red-300'
+                                                                : cat.neededForMin > 0
+                                                                ? 'bg-amber-950/60 border-amber-500/50 text-amber-300'
+                                                                : 'bg-emerald-950/50 border-emerald-500/40 text-emerald-300'
+                                                        }`}
+                                                        title={`${cat.name}: ${cat.current} drafted (Min ${cat.min}, Max ${cat.max > 0 ? cat.max : 'No Limit'})`}
+                                                    >
+                                                        {cat.name}: {cat.current}/{cat.max > 0 ? cat.max : '∞'}
+                                                        {cat.min > 0 ? ` (Min ${cat.min})` : ''}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
                         </div>
 
                         {/* Quick Toggle: Pick Request Approval Mode */}

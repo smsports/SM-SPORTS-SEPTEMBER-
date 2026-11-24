@@ -22,7 +22,7 @@ import SoldCelebrationPopup from './SoldCelebrationPopup';
 import { getDraftTheme } from '../../utils/draftThemes';
 import confetti from 'canvas-confetti';
 import { playCountdownTickSound, playHeartbeatSound, playTimeUpSound, playUnsoldSoundTrack, isDraftAudioMuted, setDraftAudioMuted, mergeCustomAudioConfig } from '../../utils/draftAudio';
-import { compactTeamPlayerEntry, safeBuildTeamUpdatePayload, resolveDraftTeamSquad } from '../../utils';
+import { compactTeamPlayerEntry, safeBuildTeamUpdatePayload, resolveDraftTeamSquad, validateDraftCategoryPick, getTeamCategoryQuotaSummary, checkDraftCategoryEligibilityFromSummary } from '../../utils';
 
 interface Props {
     isAdmin?: boolean;
@@ -392,14 +392,28 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     // Is it currently my team's turn?
     const isMyTurn = isTeamOwner && myTeam && String(myTeam.id) === String(draftState.currentTeamId);
 
-    // Active picking team name for Auto-Allot mode
-    const activePickingTeamName = useMemo(() => {
+    // Active picking team for Auto-Allot mode & quota display
+    const activePickingTeam = useMemo(() => {
         if (draftState.targetPickingTeamId && draftState.targetPickingTeamId !== 'CURRENT_TURN') {
-            const t = teams.find(tm => String(tm.id) === String(draftState.targetPickingTeamId));
-            return t ? t.name : 'Selected Team';
+            return teams.find(tm => String(tm.id) === String(draftState.targetPickingTeamId)) || null;
         }
-        return currentTurnTeam ? currentTurnTeam.name : 'Round Order';
+        return currentTurnTeam;
     }, [draftState.targetPickingTeamId, currentTurnTeam, teams]);
+
+    const activePickingTeamName = activePickingTeam
+        ? activePickingTeam.name
+        : (draftState.targetPickingTeamId && draftState.targetPickingTeamId !== 'CURRENT_TURN' ? 'Selected Team' : 'Round Order');
+
+    const activeTeamQuotaSummary = useMemo(() => {
+        if (!activePickingTeam) return null;
+        return getTeamCategoryQuotaSummary(
+            activePickingTeam,
+            categories,
+            players,
+            draftState.history || [],
+            state.maxPlayersPerTeam
+        );
+    }, [activePickingTeam, categories, players, draftState.history, state.maxPlayersPerTeam]);
 
     // Map of players sold in draft (playerId -> DraftPickHistory)
     const draftPickMap = useMemo(() => {
@@ -669,6 +683,21 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         const effectiveTeamId = (isTeamOwner && !isAdmin && myTeam) ? myTeam.id : teamId;
         const targetTeam = teamsRef.current.find(t => String(t.id) === String(effectiveTeamId));
         if (!targetTeam) return { ok: false, error: 'Target team not found.' };
+
+        // Enforce per-team squad capacity, category maxPerTeam, and category minPerTeam slot reservation
+        const limitCheck = validateDraftCategoryPick(
+            targetTeam,
+            player,
+            categories,
+            playersRef.current,
+            currentDraft.history || [],
+            state.maxPlayersPerTeam
+        );
+        if (!limitCheck.allowed) {
+            const msg = limitCheck.reason || `${targetTeam.name} has reached its category/squad limit.`;
+            setPickError(msg);
+            return { ok: false, error: msg };
+        }
 
         const effectivePrice = Math.max(0, Number(price || 0));
 
@@ -1032,6 +1061,16 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         }
 
         const requiresManualApproval = draftStateRef.current.pickRequestApprovalEnabled === true || req.requiresApproval === true;
+        const limitWarning = (matchedPlayer && matchedTeam)
+            ? validateDraftCategoryPick(
+                matchedTeam,
+                matchedPlayer,
+                categories,
+                playersRef.current,
+                draftStateRef.current.history || [],
+                state.maxPlayersPerTeam
+            )
+            : null;
 
         const normalizedReq: PendingDraftPickRequest = {
             requestId,
@@ -1047,7 +1086,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             requestedAt: rawTs || Date.now(),
             source,
             logDocId: req._logDocId || req.logDocId || (source === 'AUCTION_LOGS' && req.id ? String(req.id) : undefined),
-            requiresApproval: requiresManualApproval
+            requiresApproval: requiresManualApproval,
+            ...(limitWarning && !limitWarning.allowed && limitWarning.reason ? { errorMessage: limitWarning.reason } : {})
         };
 
         // Always make incoming request visibly appear in Admin Panel immediately
@@ -1772,6 +1812,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     teams={teams}
                     players={players}
                     categories={categories}
+                    maxPlayersPerTeam={state.maxPlayersPerTeam}
                     draftState={draftState}
                     draftPickMap={draftPickMap}
                     auctionId={auctionId || ''}
@@ -1789,6 +1830,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     <DraftNominationModal
                         player={activePlayerForModal}
                         teams={teams}
+                        categories={categories}
+                        maxPlayersPerTeam={state.maxPlayersPerTeam}
                         allPlayers={players}
                         draftHistory={draftState.history || []}
                         currentTurnTeam={currentTurnTeam}
@@ -2672,12 +2715,12 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                             return (
                                 <div key={group.category} className="space-y-4">
                                     {/* Category Section Header Banner */}
-                                    <div className={`flex items-center justify-between px-4 py-2.5 rounded-2xl border shadow-sm ${
+                                    <div className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-2xl border shadow-sm ${
                                         statusFilter === 'WISHLIST'
                                             ? isDark ? 'bg-yellow-950/30 border-yellow-500/40' : 'bg-yellow-50 border-yellow-300'
                                             : isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-blue-100'
                                     }`}>
-                                        <div className="flex items-center gap-2.5">
+                                        <div className="flex flex-wrap items-center gap-2">
                                             <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${statusFilter === 'WISHLIST' ? 'bg-yellow-400' : 'bg-blue-500'}`} />
                                             <h3 className={`text-sm md:text-base font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-gray-900'}`}>
                                                 {group.category}
@@ -2685,6 +2728,23 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                             <span className="text-[10px] font-bold text-gray-400">
                                                 ({group.players.length} {statusFilter === 'WISHLIST' ? 'Wishlisted' : 'Players'})
                                             </span>
+                                            {(() => {
+                                                const catCfg = categories.find(c => c.name?.trim().toLowerCase() === group.category.trim().toLowerCase());
+                                                if (!catCfg || (!(catCfg.minPerTeam > 0) && !(catCfg.maxPerTeam > 0))) return null;
+                                                const teamCatQuota = activeTeamQuotaSummary?.categories.find(c => c.name.trim().toLowerCase() === group.category.trim().toLowerCase());
+                                                return (
+                                                    <span className={`px-2 py-0.5 rounded-lg border text-[9px] font-black uppercase tracking-wider tabular-nums ${
+                                                        teamCatQuota?.isMaxReached
+                                                            ? 'bg-red-950/70 border-red-500/60 text-red-300'
+                                                            : teamCatQuota && teamCatQuota.neededForMin > 0
+                                                            ? 'bg-amber-950/60 border-amber-500/50 text-amber-300'
+                                                            : 'bg-blue-500/15 border-blue-500/30 text-blue-300'
+                                                    }`}>
+                                                        Min {catCfg.minPerTeam || 0} • Max {catCfg.maxPerTeam > 0 ? catCfg.maxPerTeam : '∞'}
+                                                        {isAdmin && activePickingTeam && teamCatQuota ? ` (${activePickingTeam.name}: ${teamCatQuota.current})` : ''}
+                                                    </span>
+                                                );
+                                            })()}
                                         </div>
 
                                         <div className="flex items-center gap-3 text-xs">
@@ -2706,6 +2766,10 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                             const soldPrice = pickInfo?.soldPrice ?? player.soldPrice ?? globalBasePrice;
                                             const soldTeamLogo = pickInfo?.teamLogo;
                                             const isWishlisted = adminWishlistSet.has(String(player.id));
+                                            const adminCardEligibility = (isAdmin && !isProjectorView && !isOBSView && !isSold && activePickingTeam && activeTeamQuotaSummary)
+                                                ? checkDraftCategoryEligibilityFromSummary(activePickingTeam.name, activeTeamQuotaSummary, player)
+                                                : null;
+                                            const isLimitBlockedForActiveTeam = Boolean(adminCardEligibility && !adminCardEligibility.allowed);
 
                                             return (
                                                 <div
@@ -2857,14 +2921,26 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                             </div>
                                                         ) : (
                                                             <div className={`w-full py-1 px-1.5 rounded-lg border flex items-center justify-center text-center shadow-sm transition-all ${
-                                                                isAdmin && draftState.autoAllotEnabled
+                                                                isAdmin && draftState.autoAllotEnabled && isLimitBlockedForActiveTeam
+                                                                    ? 'bg-red-950/75 border-red-500/60 text-red-200 font-black'
+                                                                    : isAdmin && draftState.autoAllotEnabled
                                                                     ? 'bg-amber-500/25 border-amber-400 text-amber-300 font-black shadow-amber-500/20'
+                                                                    : isLimitBlockedForActiveTeam
+                                                                    ? 'bg-red-950/40 border-red-500/40 text-red-300 font-black'
                                                                     : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400 font-black'
                                                             }`}>
-                                                                <span className="uppercase text-[8px] md:text-[9px] flex items-center justify-center gap-1">
-                                                                    {isAdmin && draftState.autoAllotEnabled ? (
+                                                                <span className="uppercase text-[8px] md:text-[9px] flex items-center justify-center gap-1 truncate">
+                                                                    {isAdmin && draftState.autoAllotEnabled && isLimitBlockedForActiveTeam ? (
+                                                                        <>
+                                                                            <Lock className="w-2.5 h-2.5 shrink-0" /> {adminCardEligibility?.shortReason || 'Limit Reached'}
+                                                                        </>
+                                                                    ) : isAdmin && draftState.autoAllotEnabled ? (
                                                                         <>
                                                                             <Zap className="w-2.5 h-2.5 fill-current" /> Allot to {activePickingTeamName}
+                                                                        </>
+                                                                    ) : isLimitBlockedForActiveTeam ? (
+                                                                        <>
+                                                                            <Lock className="w-2.5 h-2.5 shrink-0" /> {adminCardEligibility?.shortReason || 'Limit Reached'}
                                                                         </>
                                                                     ) : (
                                                                         <>
@@ -2896,6 +2972,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                 teams={teams}
                                 players={players}
                                 categories={categories}
+                                maxPlayersPerTeam={state.maxPlayersPerTeam}
                                 auctionId={auctionId}
                                 pendingPickRequests={pendingPickRequests}
                                 onApprovePickRequest={handleApprovePickRequest}
@@ -2986,6 +3063,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 <DraftNominationModal
                     player={activePlayerForModal}
                     teams={teams}
+                    categories={categories}
+                    maxPlayersPerTeam={state.maxPlayersPerTeam}
                     allPlayers={players}
                     draftHistory={draftState.history || []}
                     currentTurnTeam={currentTurnTeam}
@@ -3016,6 +3095,11 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 const activeReq = pendingPickRequests[0];
                 const reqPlayer = players.find(p => String(p.id) === String(activeReq.playerId));
                 const reqTeam = teams.find(t => String(t.id) === String(activeReq.teamId));
+                const reqLimitValidation = (reqPlayer && reqTeam)
+                    ? validateDraftCategoryPick(reqTeam, reqPlayer, categories, players, draftState.history || [], state.maxPlayersPerTeam)
+                    : null;
+                const reqErrorText = activeReq.errorMessage || (reqLimitValidation && !reqLimitValidation.allowed ? reqLimitValidation.reason : null);
+                const reqSquadCount = reqLimitValidation?.summary.squadCount ?? (reqTeam ? resolveDraftTeamSquad(reqTeam, players, draftState.history || []).length : 0);
 
                 return (
                     <div className="fixed inset-0 z-[900] flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
@@ -3117,17 +3201,17 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                             <div className="text-right shrink-0 pl-3 border-l border-zinc-800">
                                                 <p className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Squad</p>
                                                 <p className="text-sm font-black text-amber-300 tabular-nums">
-                                                    {reqTeam?.players?.length || 0} Picks
+                                                    {reqSquadCount}{reqLimitValidation?.summary.effectiveSquadMax ? `/${reqLimitValidation.summary.effectiveSquadMax}` : ''} Picks
                                                 </p>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
 
-                                {activeReq.errorMessage && (
+                                {reqErrorText && (
                                     <div className="px-4 py-3 rounded-2xl bg-red-950/90 border border-red-500/70 text-red-200 text-xs font-bold flex items-center gap-2">
                                         <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                                        <span>{activeReq.errorMessage}</span>
+                                        <span>{reqErrorText}</span>
                                     </div>
                                 )}
 
@@ -3143,7 +3227,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                     </button>
                                     <button
                                         type="button"
-                                        disabled={isApprovingPopup}
+                                        disabled={isApprovingPopup || Boolean(reqLimitValidation && !reqLimitValidation.allowed)}
                                         onClick={async () => {
                                             setIsApprovingPopup(true);
                                             try {
@@ -3152,10 +3236,18 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                 setIsApprovingPopup(false);
                                             }
                                         }}
-                                        className="sm:col-span-2 py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-500 hover:from-emerald-400 hover:to-green-400 text-black font-black text-sm sm:text-base uppercase tracking-wider shadow-[0_10px_35px_rgba(16,185,129,0.5)] flex items-center justify-center gap-2.5 transition-all active:scale-95 disabled:opacity-60"
+                                        className="sm:col-span-2 py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-500 hover:from-emerald-400 hover:to-green-400 disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-400 disabled:cursor-not-allowed text-black font-black text-sm sm:text-base uppercase tracking-wider shadow-[0_10px_35px_rgba(16,185,129,0.5)] flex items-center justify-center gap-2.5 transition-all active:scale-95 disabled:opacity-70"
                                     >
-                                        <Check className="w-5 h-5 stroke-[3]" />
-                                        {isApprovingPopup ? 'Processing SOLD...' : 'Approve & Mark SOLD'}
+                                        {reqLimitValidation && !reqLimitValidation.allowed ? (
+                                            <>
+                                                <Lock className="w-5 h-5" /> {reqLimitValidation.shortReason || 'Category Limit Reached'}
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Check className="w-5 h-5 stroke-[3]" />
+                                                {isApprovingPopup ? 'Processing SOLD...' : 'Approve & Mark SOLD'}
+                                            </>
+                                        )}
                                     </button>
                                 </div>
                             </div>

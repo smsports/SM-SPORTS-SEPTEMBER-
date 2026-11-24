@@ -1,5 +1,5 @@
 
-import { AuctionState, Team, Player } from './types';
+import { AuctionState, Team, Player, AuctionCategory, DraftPickHistory } from './types';
 import heic2any from 'heic2any';
 import { storage, auth, db } from './firebase';
 
@@ -1498,5 +1498,186 @@ export const resolveDraftTeamSquad = (
 
     return result;
 };
+
+export interface DraftCategoryQuotaItem {
+    name: string;
+    current: number;
+    min: number;
+    max: number;
+    neededForMin: number;
+    isMinMet: boolean;
+    isMaxReached: boolean;
+}
+
+export interface DraftTeamQuotaSummary {
+    squadCount: number;
+    effectiveSquadMax: number;
+    totalConfiguredMin: number;
+    mandatorySlotsRemaining: number;
+    remainingSquadSlots: number;
+    flexibleSlots: number;
+    configConflict: boolean;
+    categories: DraftCategoryQuotaItem[];
+}
+
+export interface DraftCategoryValidationResult {
+    allowed: boolean;
+    code?: 'SQUAD_FULL' | 'CAT_MAX_REACHED' | 'MIN_SLOTS_RESERVED';
+    shortReason?: string;
+    reason: string | null;
+    summary: DraftTeamQuotaSummary;
+}
+
+const getDraftPlayerCatNorm = (p: { category?: string; role?: string }): string =>
+    String(p?.category || p?.role || '').trim().toLowerCase();
+
+/**
+ * Summarizes a team's drafted squad counts against configured category minPerTeam / maxPerTeam
+ * and effective squad capacity (team.maxPlayers || maxPlayersPerTeam).
+ */
+export const getTeamCategoryQuotaSummary = (
+    team: Team,
+    categories: AuctionCategory[] = [],
+    allPlayers: Player[] = [],
+    draftHistory: DraftPickHistory[] = [],
+    maxPlayersPerTeam?: number
+): DraftTeamQuotaSummary => {
+    const squad = resolveDraftTeamSquad(team, allPlayers, draftHistory);
+    const squadCount = squad.length;
+    const effectiveSquadMax = Math.max(0, Number(team?.maxPlayers || maxPlayersPerTeam || 0));
+
+    const seenCats = new Set<string>();
+    const normalizedCats: AuctionCategory[] = [];
+    (categories || []).forEach(c => {
+        const key = String(c?.name || '').trim().toLowerCase();
+        if (key && !seenCats.has(key)) {
+            seenCats.add(key);
+            normalizedCats.push(c);
+        }
+    });
+
+    let totalConfiguredMin = 0;
+    let mandatorySlotsRemaining = 0;
+
+    const catItems: DraftCategoryQuotaItem[] = normalizedCats.map(cat => {
+        const catKey = String(cat.name || '').trim().toLowerCase();
+        const current = squad.filter(p => getDraftPlayerCatNorm(p) === catKey).length;
+        const min = Math.max(0, Number(cat.minPerTeam || 0));
+        const max = Math.max(0, Number(cat.maxPerTeam || 0));
+        const neededForMin = Math.max(0, min - current);
+        totalConfiguredMin += min;
+        mandatorySlotsRemaining += neededForMin;
+        return {
+            name: cat.name,
+            current,
+            min,
+            max,
+            neededForMin,
+            isMinMet: min === 0 || current >= min,
+            isMaxReached: max > 0 && current >= max
+        };
+    });
+
+    const remainingSquadSlots = effectiveSquadMax > 0 ? Math.max(0, effectiveSquadMax - squadCount) : 0;
+    const configConflict = effectiveSquadMax > 0 && totalConfiguredMin > effectiveSquadMax;
+    const flexibleSlots = effectiveSquadMax > 0 ? Math.max(0, remainingSquadSlots - mandatorySlotsRemaining) : 0;
+
+    return {
+        squadCount,
+        effectiveSquadMax,
+        totalConfiguredMin,
+        mandatorySlotsRemaining,
+        remainingSquadSlots,
+        flexibleSlots,
+        configConflict,
+        categories: catItems
+    };
+};
+
+/**
+ * Fast O(categories) eligibility check using a precomputed DraftTeamQuotaSummary.
+ */
+export const checkDraftCategoryEligibilityFromSummary = (
+    teamName: string,
+    summary: DraftTeamQuotaSummary,
+    player: Pick<Player, 'category' | 'role'>
+): DraftCategoryValidationResult => {
+    const { squadCount, effectiveSquadMax, totalConfiguredMin, configConflict, categories: catItems } = summary;
+
+    if (effectiveSquadMax > 0 && squadCount >= effectiveSquadMax) {
+        return {
+            allowed: false,
+            code: 'SQUAD_FULL',
+            shortReason: `Squad Full (${squadCount}/${effectiveSquadMax})`,
+            reason: `${teamName} squad is full (${squadCount}/${effectiveSquadMax} players).`,
+            summary
+        };
+    }
+
+    const playerCatKey = getDraftPlayerCatNorm(player);
+    const matchedCat = playerCatKey
+        ? catItems.find(c => c.name.trim().toLowerCase() === playerCatKey)
+        : undefined;
+
+    if (matchedCat && matchedCat.max > 0 && matchedCat.current >= matchedCat.max) {
+        return {
+            allowed: false,
+            code: 'CAT_MAX_REACHED',
+            shortReason: `Max ${matchedCat.max} Reached`,
+            reason: `${teamName} has reached the maximum limit (${matchedCat.current}/${matchedCat.max}) for ${matchedCat.name}.`,
+            summary
+        };
+    }
+
+    const helpsMinimum = Boolean(matchedCat && matchedCat.min > 0 && matchedCat.current < matchedCat.min);
+    if (!helpsMinimum && effectiveSquadMax > 0 && totalConfiguredMin > 0 && !configConflict) {
+        const remainingSlotsAfterPick = effectiveSquadMax - (squadCount + 1);
+        let mandatoryRemainingAfterPick = 0;
+        const needyCats: string[] = [];
+
+        catItems.forEach(cat => {
+            const countAfterPick = matchedCat && cat.name === matchedCat.name ? cat.current + 1 : cat.current;
+            const stillNeeded = Math.max(0, cat.min - countAfterPick);
+            if (stillNeeded > 0) {
+                mandatoryRemainingAfterPick += stillNeeded;
+                needyCats.push(`${cat.name} (need ${stillNeeded} more, min ${cat.min})`);
+            }
+        });
+
+        if (remainingSlotsAfterPick < mandatoryRemainingAfterPick) {
+            const catDisplay = matchedCat ? matchedCat.name : (player.category || player.role || 'this category');
+            return {
+                allowed: false,
+                code: 'MIN_SLOTS_RESERVED',
+                shortReason: `Reserve Min`,
+                reason: `Category minimum rule: ${teamName} cannot draft another ${catDisplay} because remaining slot(s) must be reserved for minimum requirements in ${needyCats.join(', ')}.`,
+                summary
+            };
+        }
+    }
+
+    return {
+        allowed: true,
+        reason: null,
+        summary
+    };
+};
+
+/**
+ * Validates whether `team` can draft `player` in Category Draft Board mode
+ * while obeying squad capacity, category maxPerTeam, and category minPerTeam slot reservation.
+ */
+export const validateDraftCategoryPick = (
+    team: Team,
+    player: Pick<Player, 'category' | 'role'>,
+    categories: AuctionCategory[] = [],
+    allPlayers: Player[] = [],
+    draftHistory: DraftPickHistory[] = [],
+    maxPlayersPerTeam?: number
+): DraftCategoryValidationResult => {
+    const summary = getTeamCategoryQuotaSummary(team, categories, allPlayers, draftHistory, maxPlayersPerTeam);
+    return checkDraftCategoryEligibilityFromSummary(team?.name || 'Team', summary, player);
+};
+
 
 

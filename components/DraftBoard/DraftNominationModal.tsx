@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
-import { Player, Team, DraftPickHistory } from '../../types';
+import React, { useState, useMemo } from 'react';
+import { Player, Team, DraftPickHistory, AuctionCategory } from '../../types';
 import { 
     X, Check, Shield, Wallet, Trophy, User, CheckCircle2, 
     Crown, Sparkles, AlertCircle, Tag, Undo2, Lock, Loader2, Star
 } from 'lucide-react';
 import { unlockDraftAudio } from '../../utils/draftAudio';
-import { resolveDraftTeamSquad } from '../../utils';
+import { resolveDraftTeamSquad, validateDraftCategoryPick } from '../../utils';
 
 interface Props {
     player: Player;
     teams: Team[];
+    categories?: AuctionCategory[];
+    maxPlayersPerTeam?: number;
     allPlayers?: Player[];
     draftHistory?: DraftPickHistory[];
     currentTurnTeam: Team | null;
@@ -32,6 +34,8 @@ interface Props {
 export const DraftNominationModal: React.FC<Props> = ({
     player,
     teams,
+    categories = [],
+    maxPlayersPerTeam,
     allPlayers = [],
     draftHistory = [],
     currentTurnTeam,
@@ -58,9 +62,28 @@ export const DraftNominationModal: React.FC<Props> = ({
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
     const selectedTeam = teams.find(t => String(t.id) === String(selectedTeamId));
+    const targetCheckTeam = isAdmin ? selectedTeam : (myTeam ?? currentTurnTeam ?? selectedTeam);
+
+    const teamValidations = useMemo(() => {
+        const map = new Map<string, ReturnType<typeof validateDraftCategoryPick>>();
+        teams.forEach(t => {
+            map.set(
+                String(t.id),
+                validateDraftCategoryPick(t, player, categories, allPlayers, draftHistory, maxPlayersPerTeam)
+            );
+        });
+        return map;
+    }, [teams, player, categories, allPlayers, draftHistory, maxPlayersPerTeam]);
+
+    const activeValidation = targetCheckTeam
+        ? (teamValidations.get(String(targetCheckTeam.id)) ||
+           validateDraftCategoryPick(targetCheckTeam, player, categories, allPlayers, draftHistory, maxPlayersPerTeam))
+        : null;
 
     const handlePickSubmit = async (targetTeamId: string | number) => {
         if (isSubmitting || isSold) return;
+        const v = teamValidations.get(String(targetTeamId));
+        if (v && !v.allowed) return;
         unlockDraftAudio();
         setIsSubmitting(true);
         try {
@@ -168,11 +191,51 @@ export const DraftNominationModal: React.FC<Props> = ({
                     </div>
                 </div>
 
-                {/* Inline Error Feedback */}
-                {errorMessage && (
+                {/* Inline Error or Category Limit Feedback */}
+                {(errorMessage || (!isSold && activeValidation && !activeValidation.allowed)) && (
                     <div className="p-3.5 rounded-2xl bg-red-950/80 border border-red-500/70 text-red-100 text-xs font-bold flex items-start gap-2.5 shadow-lg">
                         <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                        <span>{errorMessage}</span>
+                        <span>{errorMessage || activeValidation?.reason}</span>
+                    </div>
+                )}
+
+                {/* Team Category Limits Overview for Active Team */}
+                {!isSold && activeValidation && activeValidation.summary.categories.some(c => c.min > 0 || c.max > 0) && (
+                    <div className="p-3 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2">
+                        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-zinc-400">
+                            <span>{targetCheckTeam?.name} Category Limits</span>
+                            <span className="text-amber-300 tabular-nums">
+                                Squad: {activeValidation.summary.squadCount}
+                                {activeValidation.summary.effectiveSquadMax > 0 ? `/${activeValidation.summary.effectiveSquadMax}` : ''}
+                            </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                            {activeValidation.summary.categories.map(cat => {
+                                const isPlayerCat = cat.name.trim().toLowerCase() === String(player.category || player.role || '').trim().toLowerCase();
+                                return (
+                                    <span
+                                        key={cat.name}
+                                        className={`px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-tight flex items-center gap-1 ${
+                                            cat.isMaxReached
+                                                ? 'bg-red-950/70 border-red-500/60 text-red-300'
+                                                : cat.neededForMin > 0
+                                                ? 'bg-amber-950/60 border-amber-500/50 text-amber-300'
+                                                : 'bg-emerald-950/50 border-emerald-500/40 text-emerald-300'
+                                        } ${isPlayerCat ? 'ring-1 ring-white/50' : ''}`}
+                                    >
+                                        <span>{cat.name}:</span>
+                                        <span className="tabular-nums">
+                                            {cat.current}/{cat.max > 0 ? cat.max : '∞'}
+                                        </span>
+                                        {cat.min > 0 && (
+                                            <span className="text-[9px] opacity-85">
+                                                (Min {cat.min})
+                                            </span>
+                                        )}
+                                    </span>
+                                );
+                            })}
+                        </div>
                     </div>
                 )}
 
@@ -216,13 +279,18 @@ export const DraftNominationModal: React.FC<Props> = ({
                                         className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white font-bold text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     >
                                         {teams.map(t => {
-                                            const draftedCount = allPlayers.length > 0 || draftHistory.length > 0
-                                                ? resolveDraftTeamSquad(t, allPlayers, draftHistory).length
-                                                : (t.players?.length || 0);
+                                            const tVal = teamValidations.get(String(t.id));
+                                            const draftedCount = tVal?.summary.squadCount ?? (
+                                                allPlayers.length > 0 || draftHistory.length > 0
+                                                    ? resolveDraftTeamSquad(t, allPlayers, draftHistory).length
+                                                    : (t.players?.length || 0)
+                                            );
+                                            const statusTag = tVal && !tVal.allowed && tVal.shortReason ? ` ⛔ ${tVal.shortReason}` : '';
                                             return (
                                                 <option key={t.id} value={t.id}>
-                                                    {t.name} ({draftedCount} Drafted)
+                                                    {t.name} ({draftedCount}{tVal?.summary.effectiveSquadMax ? `/${tVal.summary.effectiveSquadMax}` : ''} Drafted)
                                                     {currentTurnTeam && String(t.id) === String(currentTurnTeam.id) ? ' ★ Current Turn' : ''}
+                                                    {statusTag}
                                                 </option>
                                             );
                                         })}
@@ -232,13 +300,17 @@ export const DraftNominationModal: React.FC<Props> = ({
 
                             <button
                                 type="button"
-                                disabled={isSubmitting}
+                                disabled={isSubmitting || Boolean(activeValidation && !activeValidation.allowed)}
                                 onClick={() => handlePickSubmit(selectedTeamId)}
-                                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-60 text-white font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-600/25 active:scale-95 transition-all flex items-center justify-center gap-2"
+                                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-400 disabled:cursor-not-allowed disabled:opacity-75 text-white font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-600/25 active:scale-95 transition-all flex items-center justify-center gap-2"
                             >
                                 {isSubmitting ? (
                                     <>
                                         <Loader2 className="w-4 h-4 animate-spin" /> Confirming Pick...
+                                    </>
+                                ) : activeValidation && !activeValidation.allowed ? (
+                                    <>
+                                        <Lock className="w-4 h-4" /> {activeValidation.shortReason || 'Category Limit Reached'}
                                     </>
                                 ) : (
                                     <>
@@ -255,19 +327,25 @@ export const DraftNominationModal: React.FC<Props> = ({
                                     ★ It is your team&apos;s turn to pick!
                                 </p>
                                 <p className="text-[11px] text-zinc-300">
-                                    {isPickRequestMode
+                                    {activeValidation && !activeValidation.allowed
+                                        ? 'This player is restricted by your category/squad limit:'
+                                        : isPickRequestMode
                                         ? 'Send a pick request to the Admin for approval:'
                                         : 'Draft this player directly to your squad:'}
                                 </p>
                                 <button
                                     type="button"
-                                    disabled={isSubmitting}
+                                    disabled={isSubmitting || Boolean(activeValidation && !activeValidation.allowed)}
                                     onClick={() => handlePickSubmit(myTeam?.id ?? currentTurnTeam?.id ?? selectedTeamId)}
-                                    className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-black font-black text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                                    className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-zinc-800 disabled:text-zinc-400 disabled:cursor-not-allowed disabled:opacity-75 text-black font-black text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
                                 >
                                     {isSubmitting ? (
                                         <>
                                             <Loader2 className="w-4 h-4 animate-spin" /> {isPickRequestMode ? 'Sending Pick Request...' : 'Drafting Player...'}
+                                        </>
+                                    ) : activeValidation && !activeValidation.allowed ? (
+                                        <>
+                                            <Lock className="w-4 h-4" /> {activeValidation.shortReason || 'Limit Reached'}
                                         </>
                                     ) : (
                                         <>{isPickRequestMode ? `Send Pick Request (${myTeam?.name || currentTurnTeam?.name})` : `Pick for ${myTeam?.name || currentTurnTeam?.name}`}</>
