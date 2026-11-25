@@ -1,5 +1,5 @@
 
-import { AuctionState, Team, Player, AuctionCategory, DraftPickHistory } from './types';
+import { AuctionState, Team, Player, AuctionCategory, DraftPickHistory, RegisteredPlayer } from './types';
 import heic2any from 'heic2any';
 import { storage, auth, db } from './firebase';
 
@@ -1104,12 +1104,16 @@ export const compactTeamPlayerEntry = (player: any): Record<string, any> => {
         soldPrice: Number(player.soldPrice ?? player.basePrice ?? 0),
         status: String(player.status || 'SOLD'),
         soldTo: String(player.soldTo || ''),
-        jerseyNumber: player.jerseyNumber ? String(player.jerseyNumber) : '',
+        jerseyNumber: player.jerseyNumber !== undefined && player.jerseyNumber !== null && player.jerseyNumber !== '' ? String(player.jerseyNumber) : '',
         jerseyName: player.jerseyName ? String(player.jerseyName) : '',
+        jerseySize: player.jerseySize ? String(player.jerseySize) : '',
         photoUrl: safePhoto
     };
 
     if (player.speciality) entry.speciality = String(player.speciality);
+    if (player.mobile) entry.mobile = String(player.mobile);
+    if (player.playerNumber !== undefined && player.playerNumber !== null && player.playerNumber !== '') entry.playerNumber = player.playerNumber;
+    if (player.registrationId) entry.registrationId = String(player.registrationId);
     if (player.isCaptain === true) entry.isCaptain = true;
     if (player.isTraded === true) entry.isTraded = true;
 
@@ -1475,7 +1479,9 @@ export const resolveDraftTeamSquad = (
             role: fullP?.role || pick.playerRole || pick.playerCategory || 'Player',
             category: fullP?.category || pick.playerCategory || fullP?.role || 'General',
             photoUrl: fullP?.photoUrl || pick.playerPhoto || '',
+            jerseyName: fullP?.jerseyName || '',
             jerseyNumber: fullP?.jerseyNumber || '',
+            jerseySize: fullP?.jerseySize || '',
             basePrice: Number(fullP?.basePrice || 0),
             soldPrice: Number(pick.soldPrice ?? fullP?.soldPrice ?? 0),
             status: 'SOLD',
@@ -1678,6 +1684,86 @@ export const validateDraftCategoryPick = (
     const summary = getTeamCategoryQuotaSummary(team, categories, allPlayers, draftHistory, maxPlayersPerTeam);
     return checkDraftCategoryEligibilityFromSummary(team?.name || 'Team', summary, player);
 };
+
+const normalizeRegLookupPhone = (val?: string | number | null): string => {
+    const digits = String(val || '').replace(/\D/g, '');
+    if (digits.length >= 10) return digits.slice(-10);
+    return digits;
+};
+
+/**
+ * Finds a player's RegisteredPlayer record robustly so renaming a player after the auction
+ * never orphans their jersey details, contact info, or custom form fields.
+ */
+export const findPlayerRegistration = (
+    player: Partial<Player> & {
+        id?: string | number;
+        name?: string;
+        registrationId?: string;
+        mobile?: string;
+        playerNumber?: string | number;
+    } | null | undefined,
+    registrations: RegisteredPlayer[] = []
+): RegisteredPlayer | undefined => {
+    if (!player || !Array.isArray(registrations) || registrations.length === 0) return undefined;
+
+    // 1. Explicit registrationId link
+    if (player.registrationId) {
+        const byRegId = registrations.find(r => String(r.id) === String(player.registrationId));
+        if (byRegId) return byRegId;
+    }
+
+    // 2. Same document ID
+    if (player.id !== undefined && player.id !== null && String(player.id) !== '') {
+        const byId = registrations.find(r => String(r.id) === String(player.id));
+        if (byId) return byId;
+    }
+
+    // 3. Normalized name match
+    const normName = String(player.name || '').trim().toLowerCase();
+    if (normName) {
+        const byName = registrations.find(r => String(r.fullName || '').trim().toLowerCase() === normName);
+        if (byName) return byName;
+    }
+
+    // 4. Normalized mobile number match (only if unique or strong match)
+    const normPhone = normalizeRegLookupPhone(player.mobile);
+    if (normPhone.length >= 7) {
+        const phoneMatches = registrations.filter(r => normalizeRegLookupPhone(r.mobile) === normPhone);
+        if (phoneMatches.length === 1) return phoneMatches[0];
+    }
+
+    // 5. Unique playerNumber fallback
+    if (player.playerNumber !== undefined && player.playerNumber !== null && String(player.playerNumber).trim() !== '') {
+        const numStr = String(player.playerNumber).trim();
+        const numMatches = registrations.filter(r => r.playerNumber !== undefined && r.playerNumber !== null && String(r.playerNumber).trim() === numStr);
+        if (numMatches.length === 1) return numMatches[0];
+    }
+
+    return undefined;
+};
+
+/**
+ * Reads a player metadata/jersey/custom field prioritizing non-empty values on the Player object
+ * and falling back cleanly to their linked RegisteredPlayer record.
+ */
+export const getPlayerFieldValue = (
+    player: any,
+    reg: RegisteredPlayer | any | undefined,
+    fieldKey: string,
+    fallback: any = ''
+): any => {
+    const pVal = player?.[fieldKey];
+    if (pVal !== undefined && pVal !== null && String(pVal).trim() !== '') {
+        return pVal;
+    }
+    const rVal = reg?.[fieldKey];
+    if (rVal !== undefined && rVal !== null && String(rVal).trim() !== '') {
+        return rVal;
+    }
+    return fallback;
+};
+
 
 
 

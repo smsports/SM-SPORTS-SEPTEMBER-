@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Team, Player, RegisteredPlayer, RegistrationConfig } from '../types';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Download, X, CheckSquare, Square, FileText, ChevronDown, Check, Loader2, Sparkles, Shield, User, Crown } from 'lucide-react';
-import { resolveTeamSquad } from '../utils';
+import { resolveTeamSquad, findPlayerRegistration, getPlayerFieldValue } from '../utils';
 
 export interface FieldOption {
   id: string;
@@ -53,8 +53,15 @@ export const TeamPdfExportModal: React.FC<Props> = ({
   const [selectedTeamId, setSelectedTeamId] = useState<string | number>(
     initialTeamId || 'ALL'
   );
+  const [allTeamsLayout, setAllTeamsLayout] = useState<'TEAM_WISE' | 'MASTER_TABLE'>('TEAM_WISE');
   const [pdfTheme, setPdfTheme] = useState<'STANDARD' | 'ADVAYA'>('STANDARD');
   const [isExporting, setIsExporting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedTeamId(initialTeamId !== undefined ? initialTeamId : 'ALL');
+    }
+  }, [isOpen, initialTeamId]);
 
   // Combine default fields with registration custom fields
   const customFields: FieldOption[] = (registrationConfig?.customFields || []).map(cf => ({
@@ -110,7 +117,7 @@ export const TeamPdfExportModal: React.FC<Props> = ({
         : teams.filter(t => String(t.id) === String(selectedTeamId));
 
       const doc = new jsPDF({
-        orientation: selectedFieldIds.length > 7 ? 'landscape' : 'portrait',
+        orientation: selectedFieldIds.length > 6 || (selectedTeamId === 'ALL' && allTeamsLayout === 'MASTER_TABLE') ? 'landscape' : 'portrait',
         unit: 'mm',
         format: 'a4'
       });
@@ -118,6 +125,112 @@ export const TeamPdfExportModal: React.FC<Props> = ({
       const isAdvaya = pdfTheme === 'ADVAYA';
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
+      const activeColumns = allAvailableFields.filter(f => selectedFieldIds.includes(f.id));
+
+      if (selectedTeamId === 'ALL' && allTeamsLayout === 'MASTER_TABLE') {
+        if (isAdvaya) {
+          doc.setFillColor(15, 23, 42);
+          doc.rect(0, 0, pageWidth, pageHeight, 'F');
+        }
+        const headerY = 14;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(16);
+        doc.setTextColor(isAdvaya ? 251 : 30, isAdvaya ? 191 : 58, isAdvaya ? 36 : 138);
+        doc.text('SM SPORTS', 14, headerY);
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(isAdvaya ? 148 : 100, isAdvaya ? 163 : 116, isAdvaya ? 184 : 139);
+        doc.text('MASTER AUCTION SUMMARY & JERSEY SPECIFICATION (ALL TEAMS)', 14, headerY + 5);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(isAdvaya ? 255 : 30, isAdvaya ? 255 : 41, isAdvaya ? 255 : 59);
+        doc.text(tournamentName.toUpperCase(), pageWidth - 14, headerY, { align: 'right' });
+
+        const masterHead = [['Team Name', ...activeColumns.map(c => c.label)]];
+        const masterRows: any[] = [];
+
+        teams.forEach(team => {
+          const teamPlayers = resolveTeamSquad(team, allPlayers);
+          const ownerName = team.ownerName || team.owner || '';
+          const isOwnerCaptain = team.isOwnerCaptain !== false && !team.captainName && !!ownerName;
+          const captainName = team.captainName || (isOwnerCaptain ? ownerName : '');
+
+          teamPlayers.forEach((p, idx) => {
+            const reg = findPlayerRegistration(p, registrations);
+            const isPlayerCaptain = (captainName && p.name.trim().toLowerCase() === captainName.trim().toLowerCase()) || p.isCaptain;
+            const rowVals = activeColumns.map(col => {
+              switch (col.id) {
+                case 'playerNumber': return getPlayerFieldValue(p, reg, 'playerNumber', `#${idx + 1}`);
+                case 'name': return isPlayerCaptain ? `${p.name} (C)` : p.name;
+                case 'role': return p.role || p.speciality || reg?.playerType || '-';
+                case 'category': return p.category || '-';
+                case 'captainStatus': return isPlayerCaptain ? 'Captain (C)' : 'Player';
+                case 'jerseyName': return getPlayerFieldValue(p, reg, 'jerseyName', '-');
+                case 'jerseyNumber': return getPlayerFieldValue(p, reg, 'jerseyNumber', '-');
+                case 'jerseySize': return getPlayerFieldValue(p, reg, 'jerseySize', '-');
+                case 'basePrice': return p.basePrice ? `Rs. ${p.basePrice}` : '-';
+                case 'soldPrice': return p.soldPrice ? `Rs. ${p.soldPrice}` : '0';
+                case 'mobile': return getPlayerFieldValue(p, reg, 'mobile', '-');
+                case 'dob': return getPlayerFieldValue(p, reg, 'dob', '-');
+                case 'gender': return getPlayerFieldValue(p, reg, 'gender', '-');
+                default:
+                  if (col.id.startsWith('cf_')) {
+                    const cfKey = col.id.replace('cf_', '');
+                    return getPlayerFieldValue(p, reg, cfKey, '-');
+                  }
+                  return '-';
+              }
+            });
+            masterRows.push([team.name, ...rowVals]);
+          });
+        });
+
+        autoTable(doc, {
+          head: masterHead,
+          body: masterRows.length > 0 ? masterRows : [['No players drafted or sold yet', ...new Array(activeColumns.length).fill('-')]],
+          startY: headerY + 12,
+          theme: isAdvaya ? 'grid' : 'striped',
+          headStyles: {
+            fillColor: isAdvaya ? [251, 191, 36] : [30, 58, 138],
+            textColor: isAdvaya ? [0, 0, 0] : [255, 255, 255],
+            fontStyle: 'bold',
+            fontSize: 8,
+            cellPadding: 2.5
+          },
+          bodyStyles: {
+            textColor: isAdvaya ? [241, 245, 249] : [30, 41, 59],
+            fillColor: isAdvaya ? [15, 23, 42] : undefined,
+            fontSize: 7.5,
+            cellPadding: 2
+          },
+          alternateRowStyles: isAdvaya ? { fillColor: [24, 34, 53] } : { fillColor: [248, 250, 252] },
+          styles: {
+            lineColor: isAdvaya ? [51, 65, 85] : [226, 232, 240],
+            lineWidth: 0.1,
+            overflow: 'linebreak'
+          },
+          margin: { left: 14, right: 14, bottom: 20 },
+          willDrawPage: (data) => {
+            if (isAdvaya && data.pageNumber > 1) {
+              doc.setFillColor(15, 23, 42);
+              doc.rect(0, 0, pageWidth, pageHeight, 'F');
+            }
+          },
+          didDrawPage: (data) => {
+            doc.setFontSize(7.5);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(isAdvaya ? 148 : 100, isAdvaya ? 163 : 116, isAdvaya ? 184 : 139);
+            doc.text('POWERED BY SM SPORTS • MASTER AUCTION DATA', 14, pageHeight - 10);
+            doc.text(`Page ${data.pageNumber}`, pageWidth - 14, pageHeight - 10, { align: 'right' });
+          }
+        });
+
+        doc.save(`SM_SPORTS_MASTER_DATA_${new Date().toISOString().split('T')[0]}.pdf`);
+        onClose();
+        return;
+      }
 
       for (let tIdx = 0; tIdx < targetTeams.length; tIdx++) {
         const team = targetTeams[tIdx];
@@ -195,7 +308,6 @@ export const TeamPdfExportModal: React.FC<Props> = ({
         doc.text(`Spent: Rs. ${spent.toLocaleString()} | Remaining: Rs. ${Number(team.budget || 0).toLocaleString()}`, pageWidth - 20, teamBoxY + 15, { align: 'right' });
 
         // Build Table Columns & Rows
-        const activeColumns = allAvailableFields.filter(f => selectedFieldIds.includes(f.id));
         const head = [activeColumns.map(c => c.label)];
 
         // Squad roster rows
@@ -204,7 +316,7 @@ export const TeamPdfExportModal: React.FC<Props> = ({
         // If owner is designated as captain and not in players list, insert owner at top
         const ownerInPlayers = teamPlayers.find(p => p.name.trim().toLowerCase() === ownerName.trim().toLowerCase());
         if (isOwnerCaptain && !ownerInPlayers && ownerName) {
-          const ownerReg = registrations.find(r => r.fullName.trim().toLowerCase() === ownerName.trim().toLowerCase());
+          const ownerReg = findPlayerRegistration({ name: ownerName, mobile: team.ownerPhone }, registrations);
           const ownerRow = activeColumns.map(col => {
             switch (col.id) {
               case 'playerNumber': return '#1';
@@ -232,14 +344,14 @@ export const TeamPdfExportModal: React.FC<Props> = ({
         }
 
         // Add player rows
-        teamPlayers.forEach((p, pIdx) => {
-          const reg = registrations.find(r => r.fullName.trim().toLowerCase() === p.name.trim().toLowerCase());
+        teamPlayers.forEach((p) => {
+          const reg = findPlayerRegistration(p, registrations);
           const isPlayerCaptain = (captainName && p.name.trim().toLowerCase() === captainName.trim().toLowerCase()) || p.isCaptain;
 
           const row = activeColumns.map(col => {
             switch (col.id) {
               case 'playerNumber':
-                return reg?.playerNumber || `#${rows.length + 1}`;
+                return getPlayerFieldValue(p, reg, 'playerNumber', `#${rows.length + 1}`);
               case 'name':
                 return isPlayerCaptain ? `${p.name} (C)` : p.name;
               case 'role':
@@ -249,25 +361,25 @@ export const TeamPdfExportModal: React.FC<Props> = ({
               case 'captainStatus':
                 return isPlayerCaptain ? 'Captain (C)' : 'Player';
               case 'jerseyName':
-                return reg?.jerseyName || p.jerseyName || p.name;
+                return getPlayerFieldValue(p, reg, 'jerseyName', '-');
               case 'jerseyNumber':
-                return reg?.jerseyNumber || p.jerseyNumber || '-';
+                return getPlayerFieldValue(p, reg, 'jerseyNumber', '-');
               case 'jerseySize':
-                return reg?.jerseySize || p.jerseySize || '-';
+                return getPlayerFieldValue(p, reg, 'jerseySize', '-');
               case 'basePrice':
                 return p.basePrice ? `Rs. ${p.basePrice}` : '-';
               case 'soldPrice':
                 return p.soldPrice ? `Rs. ${p.soldPrice}` : '0';
               case 'mobile':
-                return reg?.mobile || p.mobile || '-';
+                return getPlayerFieldValue(p, reg, 'mobile', '-');
               case 'dob':
-                return reg?.dob || '-';
+                return getPlayerFieldValue(p, reg, 'dob', '-');
               case 'gender':
-                return reg?.gender || '-';
+                return getPlayerFieldValue(p, reg, 'gender', '-');
               default:
                 if (col.id.startsWith('cf_')) {
                   const cfKey = col.id.replace('cf_', '');
-                  return reg ? (reg as any)[cfKey] || '-' : '-';
+                  return getPlayerFieldValue(p, reg, cfKey, '-');
                 }
                 return '-';
             }
@@ -369,19 +481,46 @@ export const TeamPdfExportModal: React.FC<Props> = ({
               </label>
               <div className="relative">
                 <select
-                  value={selectedTeamId}
+                  value={String(selectedTeamId)}
                   onChange={e => setSelectedTeamId(e.target.value)}
                   className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-xl px-4 py-3 text-xs font-black uppercase tracking-wider pr-10 appearance-none outline-none focus:border-blue-500 cursor-pointer"
                 >
-                  <option value="ALL">All Teams (Master Squad Compilation)</option>
+                  <option value="ALL">All Teams (Master Data / All Squads)</option>
                   {teams.map(t => (
                     <option key={t.id} value={t.id}>
-                      {t.name} ({(t.players || []).length} players)
+                      {t.name} ({resolveTeamSquad(t, allPlayers).length} players)
                     </option>
                   ))}
                 </select>
                 <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
+
+              {selectedTeamId === 'ALL' && (
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setAllTeamsLayout('TEAM_WISE')}
+                    className={`py-2 px-3 rounded-xl border text-[9px] font-black uppercase tracking-wider transition-all ${
+                      allTeamsLayout === 'TEAM_WISE'
+                        ? 'border-blue-500 bg-blue-500/20 text-blue-300'
+                        : 'border-zinc-800 bg-zinc-800/40 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    Team-Wise Pages
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAllTeamsLayout('MASTER_TABLE')}
+                    className={`py-2 px-3 rounded-xl border text-[9px] font-black uppercase tracking-wider transition-all ${
+                      allTeamsLayout === 'MASTER_TABLE'
+                        ? 'border-emerald-500 bg-emerald-500/20 text-emerald-300'
+                        : 'border-zinc-800 bg-zinc-800/40 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    Master Combined Table
+                  </button>
+                </div>
+              )}
             </div>
 
             <div>

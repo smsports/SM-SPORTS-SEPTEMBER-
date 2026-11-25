@@ -9,7 +9,7 @@ import TeamPosterModal from './TeamPosterModal';
 import TeamPdfExportModal from './TeamPdfExportModal';
 import TeamPhotoPdfExportModal from './TeamPhotoPdfExportModal';
 import AuctionAwardsModal from './AuctionAwardsModal';
-import { resolveTeamSquad } from '../utils';
+import { resolveTeamSquad, findPlayerRegistration, getPlayerFieldValue } from '../utils';
 import * as XLSX from 'xlsx';
 
 const AdminPostAuctionView: React.FC = () => {
@@ -26,7 +26,7 @@ const AdminPostAuctionView: React.FC = () => {
 
     const isAdmin = userProfile?.role === UserRole.ADMIN || userProfile?.role === UserRole.SUPER_ADMIN;
 
-    // Define Fields for Export
+    // Define Fields for Export (including Jersey Details)
     const basicFields = [
         { id: 'playerNumber', label: 'Player Number' },
         { id: 'name', label: 'Player Name' },
@@ -34,6 +34,9 @@ const AdminPostAuctionView: React.FC = () => {
         { id: 'role', label: 'Role' },
         { id: 'soldPrice', label: 'Sold Price' },
         { id: 'teamName', label: 'Team Name' },
+        { id: 'jerseyName', label: 'Jersey Name' },
+        { id: 'jerseyNumber', label: 'Jersey Number' },
+        { id: 'jerseySize', label: 'Jersey Size' },
         { id: 'mobile', label: 'Mobile' },
         { id: 'dob', label: 'DOB' },
         { id: 'gender', label: 'Gender' },
@@ -47,7 +50,8 @@ const AdminPostAuctionView: React.FC = () => {
     ];
 
     const [selectedFieldIds, setSelectedFieldIds] = useState<string[]>([
-        'playerNumber', 'name', 'category', 'role', 'soldPrice', 'teamName', 'mobile'
+        'playerNumber', 'name', 'category', 'role', 'soldPrice', 'teamName',
+        'jerseyName', 'jerseyNumber', 'jerseySize', 'mobile'
     ]);
 
     const toggleField = (id: string) => {
@@ -67,40 +71,57 @@ const AdminPostAuctionView: React.FC = () => {
         return acc + squad.length;
     }, 0);
 
+    const buildExportRow = (p: any, team: Team) => {
+        const regData = findPlayerRegistration(p, state.registrations) as any;
+        const row: any = {};
+
+        if (selectedFieldIds.includes('playerNumber')) row['Player Number'] = getPlayerFieldValue(p, regData, 'playerNumber', '');
+        if (selectedFieldIds.includes('name')) row['Player Name'] = p.name;
+        if (selectedFieldIds.includes('category')) row['Category'] = p.category || '';
+        if (selectedFieldIds.includes('role')) row['Role'] = p.role || p.speciality || '';
+        if (selectedFieldIds.includes('soldPrice')) row['Sold Price'] = p.soldPrice || 0;
+        if (selectedFieldIds.includes('teamName')) row['Team Name'] = team.name;
+        if (selectedFieldIds.includes('jerseyName')) row['Jersey Name'] = getPlayerFieldValue(p, regData, 'jerseyName', '');
+        if (selectedFieldIds.includes('jerseyNumber')) row['Jersey Number'] = getPlayerFieldValue(p, regData, 'jerseyNumber', '');
+        if (selectedFieldIds.includes('jerseySize')) row['Jersey Size'] = getPlayerFieldValue(p, regData, 'jerseySize', '');
+        if (selectedFieldIds.includes('mobile')) row['Mobile Number'] = getPlayerFieldValue(p, regData, 'mobile', '');
+        if (selectedFieldIds.includes('dob')) row['DOB'] = getPlayerFieldValue(p, regData, 'dob', '');
+        if (selectedFieldIds.includes('gender')) row['Gender'] = getPlayerFieldValue(p, regData, 'gender', '');
+        if (selectedFieldIds.includes('playerType')) row['Player Type (Reg)'] = getPlayerFieldValue(p, regData, 'playerType', '');
+
+        customFields.forEach(cf => {
+            if (selectedFieldIds.includes(cf.id)) {
+                row[cf.label] = getPlayerFieldValue(p, regData, cf.id, '');
+            }
+        });
+
+        return row;
+    };
+
     const handleExport = (teamOnly?: Team) => {
         const playersToExport: any[] = [];
         const targetTeams = teamOnly ? [teamOnly] : state.teams;
 
+        const wb = XLSX.utils.book_new();
+
         targetTeams.forEach(team => {
             const squad = resolveTeamSquad(team, state.players);
+            const teamRows: any[] = [];
             squad.forEach(p => {
-                // Find full registration data from state.registrations
-                const regData = state.registrations.find(rp => rp.fullName === p.name) as any;
-                
-                const row: any = {};
-                
-                // Map Basic Fields
-                if (selectedFieldIds.includes('playerNumber')) row['Player Number'] = regData?.playerNumber || '';
-                if (selectedFieldIds.includes('name')) row['Player Name'] = p.name;
-                if (selectedFieldIds.includes('category')) row['Category'] = p.category;
-                if (selectedFieldIds.includes('role')) row['Role'] = p.role || p.speciality;
-                if (selectedFieldIds.includes('soldPrice')) row['Sold Price'] = p.soldPrice || 0;
-                if (selectedFieldIds.includes('teamName')) row['Team Name'] = team.name;
-
-                if (selectedFieldIds.includes('mobile')) row['Mobile Number'] = regData?.mobile || '';
-                if (selectedFieldIds.includes('dob')) row['DOB'] = regData?.dob || '';
-                if (selectedFieldIds.includes('gender')) row['Gender'] = regData?.gender || '';
-                if (selectedFieldIds.includes('playerType')) row['Player Type (Reg)'] = regData?.playerType || '';
-
-                // Map Custom Fields
-                customFields.forEach(cf => {
-                    if (selectedFieldIds.includes(cf.id)) {
-                        row[cf.label] = regData?.[cf.id] || '';
-                    }
-                });
-
+                const row = buildExportRow(p, team);
                 playersToExport.push(row);
+                teamRows.push(row);
             });
+            if (!teamOnly && teamRows.length > 0) {
+                const baseSheetName = team.name.replace(/[\[\]\*\?\/\\:]/g, '').trim().substring(0, 28) || `Team_${team.id}`;
+                let sheetName = baseSheetName;
+                let suffix = 1;
+                while (wb.SheetNames.includes(sheetName)) {
+                    sheetName = `${baseSheetName.substring(0, 25)}_${suffix++}`;
+                }
+                const teamWs = XLSX.utils.json_to_sheet(teamRows);
+                XLSX.utils.book_append_sheet(wb, teamWs, sheetName);
+            }
         });
 
         if (playersToExport.length === 0) {
@@ -109,14 +130,20 @@ const AdminPostAuctionView: React.FC = () => {
         }
 
         const ws = XLSX.utils.json_to_sheet(playersToExport);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Auction Summary");
+        const summaryWb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(summaryWb, ws, teamOnly ? teamOnly.name.replace(/[\[\]\*\?\/\\:]/g, '').trim().substring(0, 31) || "Squad" : "Master Data");
+
+        if (!teamOnly) {
+            wb.SheetNames.forEach(name => {
+                XLSX.utils.book_append_sheet(summaryWb, wb.Sheets[name], name);
+            });
+        }
         
         const fileName = teamOnly
             ? `${teamOnly.name.replace(/\s+/g, '_')}_Detailed_Squad.xlsx`
             : `MASTER_AUCTION_DATA_${new Date().toISOString().split('T')[0]}.xlsx`;
 
-        XLSX.writeFile(wb, fileName);
+        XLSX.writeFile(summaryWb, fileName);
     };
 
     const handleFullReset = async () => {
@@ -191,25 +218,25 @@ const AdminPostAuctionView: React.FC = () => {
                                         onClick={() => { setModalTeamId('ALL'); setShowPdfModal(true); }}
                                         className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95"
                                     >
-                                        <FileText className="w-4 h-4 mr-1.5 shrink-0" /> PDF Roster
+                                        <FileText className="w-4 h-4 mr-1.5 shrink-0" /> Master PDF
                                     </button>
                                 </div>
-                                <button 
-                                    onClick={() => setShowExportOptions(!showExportOptions)}
-                                    className="w-full bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider shadow flex items-center justify-center transition-all"
-                                >
-                                    <FileSpreadsheet className="w-4 h-4 mr-2" /> 
-                                    {showExportOptions ? 'Hide Export Options' : 'Export Excel Data'}
-                                    {showExportOptions ? <ChevronUp className="w-4 h-4 ml-1.5" /> : <ChevronDown className="w-4 h-4 ml-1.5" />}
-                                </button>
-                                {showExportOptions && (
+                                <div className="grid grid-cols-2 gap-2 w-full">
                                     <button 
                                         onClick={() => handleExport()}
-                                        className="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-widest transition-all"
+                                        className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl font-black text-[11px] uppercase tracking-wider shadow flex items-center justify-center transition-all active:scale-95"
                                     >
-                                        Download Master Excel
+                                        <Download className="w-3.5 h-3.5 mr-1.5 shrink-0" /> Master Excel
                                     </button>
-                                )}
+                                    <button 
+                                        onClick={() => setShowExportOptions(!showExportOptions)}
+                                        className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-xl font-bold text-[11px] uppercase tracking-wider shadow flex items-center justify-center transition-all"
+                                    >
+                                        <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 shrink-0" /> 
+                                        {showExportOptions ? 'Hide Fields' : 'Select Fields'}
+                                        {showExportOptions ? <ChevronUp className="w-3.5 h-3.5 ml-1" /> : <ChevronDown className="w-3.5 h-3.5 ml-1" />}
+                                    </button>
+                                </div>
                             </>
                         ) : (
                             <div className="text-gray-400 text-sm italic">Master Export (Admin Only)</div>
@@ -220,9 +247,34 @@ const AdminPostAuctionView: React.FC = () => {
                 {/* Export Options Panel (In-place) */}
                 {isAdmin && showExportOptions && (
                     <div className="p-8 bg-zinc-50 border-b border-gray-200 animate-in fade-in slide-in-from-top-4 duration-300">
-                        <h3 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
-                            Select Fields to Include in Export
-                        </h3>
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+                            <h3 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                                Select Fields to Include in Master &amp; Team Excel Export
+                            </h3>
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedFieldIds(allFieldOptions.map(f => f.id))}
+                                    className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[10px] font-black uppercase tracking-wider hover:bg-blue-700 transition-colors"
+                                >
+                                    Select All
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedFieldIds(prev => Array.from(new Set([...prev, 'jerseyName', 'jerseyNumber', 'jerseySize'])))}
+                                    className="px-3 py-1.5 rounded-lg bg-amber-500 text-black text-[10px] font-black uppercase tracking-wider hover:bg-amber-400 transition-colors"
+                                >
+                                    + Jersey Details
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedFieldIds(['playerNumber', 'name', 'category', 'role', 'soldPrice', 'teamName', 'jerseyName', 'jerseyNumber', 'jerseySize', 'mobile'])}
+                                    className="px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-600 text-[10px] font-black uppercase tracking-wider hover:bg-gray-100 transition-colors"
+                                >
+                                    Reset Defaults
+                                </button>
+                            </div>
+                        </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
                             {allFieldOptions.map(field => (
                                 <button
@@ -240,7 +292,7 @@ const AdminPostAuctionView: React.FC = () => {
                             ))}
                         </div>
                         <p className="mt-6 text-[10px] text-gray-400 font-medium uppercase tracking-widest leading-relaxed">
-                            Tip: Selected fields will be applied to both Master Export and Individual Team Exports below.
+                            Tip: Selected fields (including Jersey Name, Jersey Number, Jersey Size, and Custom Fields) apply to both Master Excel and Individual Team Excel exports below.
                         </p>
                     </div>
                 )}

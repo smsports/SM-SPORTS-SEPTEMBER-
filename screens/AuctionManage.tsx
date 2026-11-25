@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { AuctionSetup, Team, Player, AuctionCategory, Sponsor, PlayerRole, RegistrationConfig, FormField, RegisteredPlayer, BidIncrementSlab, CaptainCode, RegistrationCode, UserRole } from '../types';
-import { getEffectiveBasePrice, compressImage, uploadImageOrFallback, uploadBase64FieldsToStorage, ensurePayloadWithinLimit, safeSaveAuctionDocument, FORBIDDEN_BLOATED_AUCTION_FIELDS, pruneAndRepairAuctionDocument, resolveTeamSquad, compactTeamPlayerEntry, compactTeamPlayersList, safeBuildTeamUpdatePayload } from '../utils';
+import { getEffectiveBasePrice, compressImage, uploadImageOrFallback, uploadBase64FieldsToStorage, ensurePayloadWithinLimit, safeSaveAuctionDocument, FORBIDDEN_BLOATED_AUCTION_FIELDS, pruneAndRepairAuctionDocument, resolveTeamSquad, compactTeamPlayerEntry, compactTeamPlayersList, safeBuildTeamUpdatePayload, findPlayerRegistration, getPlayerFieldValue } from '../utils';
 import { 
     ArrowLeft, Plus, Trash2, Edit, Save, X, Upload, Users, Layers, Trophy, 
     DollarSign, Image as ImageIcon, Briefcase, FileText, Settings, QrCode, 
@@ -453,7 +453,7 @@ const AuctionManage: React.FC = () => {
 
             // Mention owner as Captain at top if designated
             if (isOwnerCaptain && !ownerInPlayers && ownerName) {
-                const ownerReg = registrations.find(r => r.fullName.trim().toLowerCase() === ownerName.trim().toLowerCase());
+                const ownerReg = findPlayerRegistration({ name: ownerName, mobile: team.ownerPhone }, registrations);
                 const ownerRow: any = {};
                 selectedFields.forEach(fieldId => {
                     if (fieldId === 'name') ownerRow['Player Name'] = `${ownerName} (C)`;
@@ -482,8 +482,7 @@ const AuctionManage: React.FC = () => {
                                         (isOwnerCaptain && ownerInPlayers && p.name.trim().toLowerCase() === ownerName.trim().toLowerCase());
                 
                 // Get corresponding registration for custom fields and jersey info
-                // Match by ID or name (fallback)
-                const reg = registrations.find(r => String(r.id) === String(p.id)) || registrations.find(r => r.fullName === p.name);
+                const reg = findPlayerRegistration(p, registrations);
 
                 selectedFields.forEach(fieldId => {
                     if (fieldId === 'name') row['Player Name'] = isPlayerCaptain ? `${p.name} (C)` : p.name;
@@ -492,15 +491,15 @@ const AuctionManage: React.FC = () => {
                     else if (fieldId === 'soldPrice') row['Sold Price'] = p.soldPrice;
                     else if (fieldId === 'soldTo') row['Team'] = p.soldTo;
                     else if (fieldId === 'isTraded') row['Traded'] = p.isTraded ? 'YES' : 'NO';
-                    else if (fieldId === 'mobile') row['Mobile'] = reg?.mobile || (p as any).mobile || '-';
-                    else if (fieldId === 'jerseyName') row['Jersey Name'] = reg?.jerseyName || (p as any).jerseyName || '-';
-                    else if (fieldId === 'jerseyNumber') row['Jersey Number'] = reg?.jerseyNumber || (p as any).jerseyNumber || '-';
-                    else if (fieldId === 'jerseySize') row['Jersey Size'] = reg?.jerseySize || (p as any).jerseySize || '-';
+                    else if (fieldId === 'mobile') row['Mobile'] = getPlayerFieldValue(p, reg, 'mobile', '-');
+                    else if (fieldId === 'jerseyName') row['Jersey Name'] = getPlayerFieldValue(p, reg, 'jerseyName', '-');
+                    else if (fieldId === 'jerseyNumber') row['Jersey Number'] = getPlayerFieldValue(p, reg, 'jerseyNumber', '-');
+                    else if (fieldId === 'jerseySize') row['Jersey Size'] = getPlayerFieldValue(p, reg, 'jerseySize', '-');
                     else if (fieldId.startsWith('cf_')) {
                         const fieldIdClean = fieldId.replace('cf_', '');
                         const fieldConfig = regConfig.customFields.find(f => f.id === fieldIdClean);
                         const fieldLabel = fieldConfig?.label || fieldIdClean;
-                        row[fieldLabel] = reg ? (reg as any)[fieldIdClean] || '-' : '-';
+                        row[fieldLabel] = getPlayerFieldValue(p, reg, fieldIdClean, '-');
                     }
                 });
                 
@@ -513,14 +512,26 @@ const AuctionManage: React.FC = () => {
             }
         });
 
-        // Add an "All Sold Players" sheet
-        const allSold = players.filter(p => p.status === 'SOLD').map(p => ({
-            'Team': p.soldTo,
-            'Player Name': p.name,
-            'Category': p.category,
-            'Role': p.role,
-            'Price': p.soldPrice
-        }));
+        // Add an "All Sold Players" sheet (including jersey & custom fields)
+        const allSold = players.filter(p => p.status === 'SOLD').map(p => {
+            const reg = findPlayerRegistration(p, registrations);
+            const row: any = {
+                'Team': p.soldTo,
+                'Player Number': getPlayerFieldValue(p, reg, 'playerNumber', ''),
+                'Player Name': p.name,
+                'Category': p.category,
+                'Role': p.role,
+                'Price': p.soldPrice,
+                'Jersey Name': getPlayerFieldValue(p, reg, 'jerseyName', '-'),
+                'Jersey Number': getPlayerFieldValue(p, reg, 'jerseyNumber', '-'),
+                'Jersey Size': getPlayerFieldValue(p, reg, 'jerseySize', '-'),
+                'Mobile': getPlayerFieldValue(p, reg, 'mobile', '-')
+            };
+            (regConfig.customFields || []).forEach(cf => {
+                row[cf.label] = getPlayerFieldValue(p, reg, cf.id, '-');
+            });
+            return row;
+        });
         
         if (allSold.length > 0) {
             const wsAll = XLSX.utils.json_to_sheet(allSold);
@@ -769,22 +780,44 @@ const AuctionManage: React.FC = () => {
             // 1. Update registration status
             await db.collection('auctions').doc(id).collection('registrations').doc(reg.id).update({ status: 'APPROVED' });
             
-            // Check if already in pool (by name)
-            const existing = players.find(p => p.name === reg.fullName);
+            // Check if already in pool (by registrationId or name)
+            const existing = players.find(p => p.registrationId === reg.id || p.name === reg.fullName);
             if (existing) {
+                if (!existing.registrationId) {
+                    await db.collection('auctions').doc(id).collection('players').doc(String(existing.id)).update({
+                        registrationId: reg.id
+                    });
+                }
                 showNotification(`${reg.fullName} is already in the player pool.`);
                 return;
             }
 
-            // 2. Add to players collection
+            // Copy custom form fields from registration
+            const customFieldValues: Record<string, any> = {};
+            (regConfig.customFields || []).forEach(cf => {
+                if ((reg as any)[cf.id] !== undefined && (reg as any)[cf.id] !== null) {
+                    customFieldValues[cf.id] = (reg as any)[cf.id];
+                }
+            });
+
+            // 2. Add to players collection with full registration link & jersey details
             const newPlayer: Partial<Player> = {
                 name: reg.fullName,
                 photoUrl: reg.profilePic,
-                category: 'Standard', // Default category
+                category: (reg as any).category || 'Standard',
                 role: reg.playerType,
                 basePrice: auction?.basePrice || 0,
                 nationality: 'India',
                 speciality: reg.playerType,
+                registrationId: reg.id,
+                mobile: reg.mobile || '',
+                dob: reg.dob || '',
+                gender: reg.gender || '',
+                ...(reg.playerNumber !== undefined && reg.playerNumber !== null && reg.playerNumber !== '' ? { playerNumber: reg.playerNumber } : {}),
+                jerseyName: (reg as any).jerseyName || '',
+                jerseyNumber: (reg as any).jerseyNumber ?? '',
+                jerseySize: (reg as any).jerseySize || '',
+                ...customFieldValues,
                 stats: { matches: 0, runs: 0, wickets: 0 }
             };
             
@@ -801,6 +834,34 @@ const AuctionManage: React.FC = () => {
             const cleanData = await uploadBase64FieldsToStorage(data, id, 'update');
             const safeData = await ensurePayloadWithinLimit(cleanData, 650000);
             await db.collection('auctions').doc(id).collection('registrations').doc(regId).update(safeData);
+
+            // Sync updated registration fields (jersey, contact, custom fields) to linked Player doc if one exists
+            const linkedPlayer = players.find(p =>
+                p.registrationId === regId ||
+                p.name.trim().toLowerCase() === String(updatedReg.fullName || '').trim().toLowerCase()
+            );
+            if (linkedPlayer) {
+                const playerSync: Record<string, any> = {
+                    registrationId: regId,
+                    mobile: safeData.mobile ?? linkedPlayer.mobile ?? '',
+                    dob: safeData.dob ?? (linkedPlayer as any).dob ?? '',
+                    gender: safeData.gender ?? (linkedPlayer as any).gender ?? '',
+                    jerseyName: safeData.jerseyName ?? linkedPlayer.jerseyName ?? '',
+                    jerseyNumber: safeData.jerseyNumber ?? linkedPlayer.jerseyNumber ?? '',
+                    jerseySize: safeData.jerseySize ?? linkedPlayer.jerseySize ?? '',
+                    updatedAt: Date.now()
+                };
+                if (safeData.playerNumber !== undefined && safeData.playerNumber !== null && safeData.playerNumber !== '') {
+                    playerSync.playerNumber = safeData.playerNumber;
+                }
+                (regConfig.customFields || []).forEach(cf => {
+                    if (safeData[cf.id] !== undefined) {
+                        playerSync[cf.id] = safeData[cf.id];
+                    }
+                });
+                await db.collection('auctions').doc(id).collection('players').doc(String(linkedPlayer.id)).set(playerSync, { merge: true });
+            }
+
             setSelectedReg({ ...updatedReg, ...safeData });
             setIsEditingReg(false);
             showNotification("Registration details updated!", "success");
@@ -844,13 +905,22 @@ const AuctionManage: React.FC = () => {
         let col = modalType.toLowerCase() + 's';
         if (modalType === 'CATEGORY') col = 'categories';
         
-        let itemData = { 
-            ...editItem, 
-            logoUrl: previewImage || editItem.logoUrl || '', 
-            photoUrl: previewImage || editItem.photoUrl || '', 
-            imageUrl: previewImage || editItem.imageUrl || '',
-            id: editItem.id || db.collection('auctions').doc(id).collection(col).doc().id
+        const originalName = editItem?._originalName || '';
+        const linkedRegId = editItem?._linkedRegId || editItem?.registrationId || '';
+        const cleanedEditItem: Record<string, any> = { ...editItem };
+        delete cleanedEditItem._originalName;
+        delete cleanedEditItem._linkedRegId;
+
+        let itemData: Record<string, any> = { 
+            ...cleanedEditItem, 
+            logoUrl: previewImage || cleanedEditItem.logoUrl || '', 
+            photoUrl: previewImage || cleanedEditItem.photoUrl || '', 
+            imageUrl: previewImage || cleanedEditItem.imageUrl || '',
+            id: cleanedEditItem.id || db.collection('auctions').doc(id).collection(col).doc().id
         };
+        Object.keys(itemData).forEach(k => {
+            if (itemData[k] === undefined) delete itemData[k];
+        });
 
         try {
             const batch = db.batch();
@@ -982,20 +1052,67 @@ const AuctionManage: React.FC = () => {
             }
 
             if (modalType === 'PLAYER') {
+                // Find & permanently link registration record before/after rename
+                const matchedReg = findPlayerRegistration(
+                    {
+                        id: itemData.id,
+                        registrationId: linkedRegId,
+                        name: originalName || itemData.name,
+                        mobile: itemData.mobile,
+                        playerNumber: itemData.playerNumber
+                    },
+                    registrations
+                );
+
+                if (matchedReg) {
+                    itemData.registrationId = matchedReg.id;
+                    const regSyncPayload: Record<string, any> = {
+                        fullName: itemData.name,
+                        playerType: itemData.role || matchedReg.playerType || '',
+                        category: itemData.category || 'Standard',
+                        mobile: itemData.mobile !== undefined ? itemData.mobile : (matchedReg.mobile || ''),
+                        dob: itemData.dob !== undefined ? itemData.dob : (matchedReg.dob || ''),
+                        gender: itemData.gender !== undefined ? itemData.gender : (matchedReg.gender || ''),
+                        jerseyName: itemData.jerseyName !== undefined ? itemData.jerseyName : ((matchedReg as any).jerseyName || ''),
+                        jerseyNumber: itemData.jerseyNumber !== undefined ? itemData.jerseyNumber : ((matchedReg as any).jerseyNumber ?? ''),
+                        jerseySize: itemData.jerseySize !== undefined ? itemData.jerseySize : ((matchedReg as any).jerseySize || ''),
+                        updatedAt: Date.now()
+                    };
+                    if (itemData.playerNumber !== undefined && itemData.playerNumber !== null && String(itemData.playerNumber).trim() !== '') {
+                        regSyncPayload.playerNumber = isNaN(Number(itemData.playerNumber)) ? itemData.playerNumber : Number(itemData.playerNumber);
+                    }
+                    if (itemData.photoUrl) {
+                        regSyncPayload.profilePic = itemData.photoUrl;
+                    }
+                    (regConfig.customFields || []).forEach(cf => {
+                        if (itemData[cf.id] !== undefined) {
+                            regSyncPayload[cf.id] = itemData[cf.id];
+                        }
+                    });
+                    batch.set(
+                        db.collection('auctions').doc(id).collection('registrations').doc(String(matchedReg.id)),
+                        regSyncPayload,
+                        { merge: true }
+                    );
+                }
+
+                const matchesTargetPlayer = (item: any) => {
+                    if (String(item.id) === String(itemData.id)) return true;
+                    const itemNorm = String(item.name || '').trim().toLowerCase();
+                    if (!itemNorm) return false;
+                    if (itemData.name && itemNorm === String(itemData.name).trim().toLowerCase()) return true;
+                    if (originalName && itemNorm === String(originalName).trim().toLowerCase()) return true;
+                    return false;
+                };
+
                 if (itemData.status === 'UNSOLD' || itemData.status === 'POOL') {
                     itemData.soldTo = '';
                     itemData.soldPrice = 0;
                     // Scrub from all teams
                     for (const t of teams) {
-                        const hasPlayer = (t.players || []).some((item: any) => 
-                            String(item.id) === String(itemData.id) || 
-                            (item.name && itemData.name && item.name.trim().toLowerCase() === itemData.name.trim().toLowerCase())
-                        );
+                        const hasPlayer = (t.players || []).some(matchesTargetPlayer);
                         if (hasPlayer) {
-                            const updatedSquad = (t.players || []).filter((item: any) => 
-                                String(item.id) !== String(itemData.id) && 
-                                (!item.name || !itemData.name || item.name.trim().toLowerCase() !== itemData.name.trim().toLowerCase())
-                            );
+                            const updatedSquad = (t.players || []).filter((item: any) => !matchesTargetPlayer(item));
                             const teamPayload = await safeBuildTeamUpdatePayload(t, undefined, updatedSquad, { updatedAt: Date.now() });
                             batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(t.id)), teamPayload);
                         }
@@ -1003,10 +1120,7 @@ const AuctionManage: React.FC = () => {
                 } else if (itemData.status === 'SOLD' && itemData.soldTo) {
                     const targetTeam = teams.find(t => t.name === itemData.soldTo || String(t.id) === itemData.soldTo);
                     if (targetTeam) {
-                        const currentSquad = (targetTeam.players || []).filter((item: any) => 
-                            String(item.id) !== String(itemData.id) && 
-                            (!item.name || !itemData.name || item.name.trim().toLowerCase() !== itemData.name.trim().toLowerCase())
-                        );
+                        const currentSquad = (targetTeam.players || []).filter((item: any) => !matchesTargetPlayer(item));
                         const teamPayload = await safeBuildTeamUpdatePayload(
                             targetTeam,
                             undefined,
@@ -1018,20 +1132,37 @@ const AuctionManage: React.FC = () => {
                         // Remove from any other teams
                         for (const ot of teams) {
                             if (String(ot.id) !== String(targetTeam.id)) {
-                                const hasOld = (ot.players || []).some((item: any) => 
-                                    String(item.id) === String(itemData.id) || 
-                                    (item.name && itemData.name && item.name.trim().toLowerCase() === itemData.name.trim().toLowerCase())
-                                );
+                                const hasOld = (ot.players || []).some(matchesTargetPlayer);
                                 if (hasOld) {
-                                    const cleanedSquad = (ot.players || []).filter((item: any) => 
-                                        String(item.id) !== String(itemData.id) && 
-                                        (!item.name || !itemData.name || item.name.trim().toLowerCase() !== itemData.name.trim().toLowerCase())
-                                    );
+                                    const cleanedSquad = (ot.players || []).filter((item: any) => !matchesTargetPlayer(item));
                                     const otherPayload = await safeBuildTeamUpdatePayload(ot, undefined, cleanedSquad, { updatedAt: Date.now() });
                                     batch.update(db.collection('auctions').doc(id).collection('teams').doc(String(ot.id)), otherPayload);
                                 }
                             }
                         }
+                    }
+                }
+
+                // Sync edited player name/role/category into draftBoardState.history if present
+                const draftHistory = auction?.draftBoardState?.history;
+                if (Array.isArray(draftHistory) && draftHistory.length > 0) {
+                    let historyChanged = false;
+                    const updatedHistory = draftHistory.map((h: any) => {
+                        if (String(h.playerId) === String(itemData.id)) {
+                            historyChanged = true;
+                            return {
+                                ...h,
+                                playerName: itemData.name,
+                                playerRole: itemData.role || h.playerRole || 'Player',
+                                playerCategory: itemData.category || h.playerCategory || 'Standard'
+                            };
+                        }
+                        return h;
+                    });
+                    if (historyChanged) {
+                        batch.update(db.collection('auctions').doc(id), {
+                            'draftBoardState.history': updatedHistory
+                        });
                     }
                 }
             }
@@ -1275,15 +1406,26 @@ const AuctionManage: React.FC = () => {
         // Otherwise fallback to approved registrations if players pool is empty (initial state)
         let activePlayers: any[] = players.length > 0 
             ? players.map(p => {
-                const reg = registrations.find(r => r.fullName === p.name);
+                const reg = findPlayerRegistration(p, registrations);
+                const mergedCustom: Record<string, any> = {};
+                (regConfig.customFields || []).forEach(cf => {
+                    mergedCustom[cf.id] = getPlayerFieldValue(p, reg, cf.id, '');
+                });
                 return {
                     ...(reg || {}),
+                    ...mergedCustom,
                     id: String(p.id),
                     fullName: p.name,
-                    profilePic: p.photoUrl,
+                    profilePic: p.photoUrl || reg?.profilePic,
                     playerType: p.role || p.speciality,
                     category: p.category,
-                    playerNumber: reg?.playerNumber,
+                    mobile: getPlayerFieldValue(p, reg, 'mobile', ''),
+                    dob: getPlayerFieldValue(p, reg, 'dob', ''),
+                    gender: getPlayerFieldValue(p, reg, 'gender', ''),
+                    jerseyName: getPlayerFieldValue(p, reg, 'jerseyName', ''),
+                    jerseyNumber: getPlayerFieldValue(p, reg, 'jerseyNumber', ''),
+                    jerseySize: getPlayerFieldValue(p, reg, 'jerseySize', ''),
+                    playerNumber: getPlayerFieldValue(p, reg, 'playerNumber', undefined),
                     submittedAt: reg?.submittedAt || 0,
                     status: 'APPROVED' // Since they are in the players pool
                 };
@@ -1715,9 +1857,9 @@ const AuctionManage: React.FC = () => {
             showNotification(onlySelected ? "No selected players to export." : "No players to export.");
             return;
         }
-        const headers = ["ID", "Name", "Category", "Role", "Base Price", "Nationality", "Status", "Sold To", "Sold Price", "Jersey Name", "Jersey Number", "Jersey Size"];
+        const headers = ["ID", "Name", "Category", "Role", "Base Price", "Nationality", "Status", "Sold To", "Sold Price", "Jersey Name", "Jersey Number", "Jersey Size", "Mobile"];
         const rows = pool.map(p => {
-            const reg = registrations.find(r => r.fullName === p.name);
+            const reg = findPlayerRegistration(p, registrations);
             return [
                 p.id, 
                 p.name, 
@@ -1728,9 +1870,10 @@ const AuctionManage: React.FC = () => {
                 p.status || 'POOL', 
                 p.soldTo || '-', 
                 p.soldPrice || 0,
-                reg?.jerseyName || '-',
-                reg?.jerseyNumber || '-',
-                reg?.jerseySize || '-'
+                getPlayerFieldValue(p, reg, 'jerseyName', '-'),
+                getPlayerFieldValue(p, reg, 'jerseyNumber', '-'),
+                getPlayerFieldValue(p, reg, 'jerseySize', '-'),
+                getPlayerFieldValue(p, reg, 'mobile', '-')
             ];
         });
 
@@ -1748,14 +1891,25 @@ const AuctionManage: React.FC = () => {
         // Otherwise fallback to approved registrations if players pool is empty
         let activePlayers: any[] = players.length > 0 
             ? players.map(p => {
-                const reg = registrations.find(r => r.fullName === p.name);
+                const reg = findPlayerRegistration(p, registrations);
+                const mergedCustom: Record<string, any> = {};
+                (regConfig.customFields || []).forEach(cf => {
+                    mergedCustom[cf.id] = getPlayerFieldValue(p, reg, cf.id, '');
+                });
                 return {
                     ...(reg || {}),
+                    ...mergedCustom,
                     id: String(p.id),
                     fullName: p.name,
                     playerType: p.role || p.speciality,
                     category: p.category,
-                    playerNumber: reg?.playerNumber,
+                    mobile: getPlayerFieldValue(p, reg, 'mobile', ''),
+                    dob: getPlayerFieldValue(p, reg, 'dob', ''),
+                    gender: getPlayerFieldValue(p, reg, 'gender', ''),
+                    jerseyName: getPlayerFieldValue(p, reg, 'jerseyName', ''),
+                    jerseyNumber: getPlayerFieldValue(p, reg, 'jerseyNumber', ''),
+                    jerseySize: getPlayerFieldValue(p, reg, 'jerseySize', ''),
+                    playerNumber: getPlayerFieldValue(p, reg, 'playerNumber', undefined),
                     submittedAt: reg?.submittedAt || 0,
                     status: 'APPROVED'
                 };
@@ -2866,7 +3020,7 @@ const AuctionManage: React.FC = () => {
                                                             <div>
                                                                 <div className="flex items-center gap-2">
                                                                     <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md border ${isDark ? 'bg-zinc-800 border-zinc-700 text-accent' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
-                                                                        #{(p as any).playerNumber || '-'}
+                                                                        #{getPlayerFieldValue(p, findPlayerRegistration(p, registrations), 'playerNumber', '-')}
                                                                     </span>
                                                                     <span className={`font-black text-sm uppercase leading-none ${isDark ? 'text-white' : 'text-gray-800'}`}>{p.name}</span>
                                                                 </div>
@@ -3028,7 +3182,30 @@ const AuctionManage: React.FC = () => {
                                                     </td>
                                                     <td className="px-6 py-4 text-right">
                                                         <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                            <button onClick={() => { setModalType('PLAYER'); setEditItem(p); setPreviewImage(p.photoUrl); setShowModal(true); }} className={`p-2 rounded-lg transition-colors ${isDark ? 'text-accent hover:bg-accent/10' : 'text-blue-500 hover:bg-blue-50'}`}><Edit className="w-4 h-4"/></button>
+                                                            <button onClick={() => {
+                                                                const matchedReg = findPlayerRegistration(p, registrations);
+                                                                const customValues: Record<string, any> = {};
+                                                                (regConfig.customFields || []).forEach(cf => {
+                                                                    customValues[cf.id] = getPlayerFieldValue(p, matchedReg, cf.id, '');
+                                                                });
+                                                                setModalType('PLAYER');
+                                                                setEditItem({
+                                                                    ...p,
+                                                                    _originalName: p.name,
+                                                                    _linkedRegId: p.registrationId || matchedReg?.id || '',
+                                                                    registrationId: p.registrationId || matchedReg?.id || '',
+                                                                    playerNumber: getPlayerFieldValue(p, matchedReg, 'playerNumber', ''),
+                                                                    mobile: getPlayerFieldValue(p, matchedReg, 'mobile', ''),
+                                                                    dob: getPlayerFieldValue(p, matchedReg, 'dob', ''),
+                                                                    gender: getPlayerFieldValue(p, matchedReg, 'gender', ''),
+                                                                    jerseyName: getPlayerFieldValue(p, matchedReg, 'jerseyName', ''),
+                                                                    jerseyNumber: getPlayerFieldValue(p, matchedReg, 'jerseyNumber', ''),
+                                                                    jerseySize: getPlayerFieldValue(p, matchedReg, 'jerseySize', ''),
+                                                                    ...customValues
+                                                                });
+                                                                setPreviewImage(p.photoUrl || matchedReg?.profilePic || '');
+                                                                setShowModal(true);
+                                                            }} className={`p-2 rounded-lg transition-colors ${isDark ? 'text-accent hover:bg-accent/10' : 'text-blue-500 hover:bg-blue-50'}`}><Edit className="w-4 h-4"/></button>
                                                             <button onClick={() => handleDelete('PLAYER', String(p.id))} className={`p-2 rounded-lg transition-colors ${isDark ? 'text-red-400 hover:bg-red-400/10' : 'text-red-400 hover:bg-red-50'}`}><Trash2 className="w-4 h-4"/></button>
                                                         </div>
                                                     </td>
@@ -5644,13 +5821,13 @@ const AuctionManage: React.FC = () => {
 
             {showModal && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full overflow-hidden border border-gray-200 animate-slide-up">
-                        <div className="bg-blue-600 p-6 text-white flex justify-between items-center relative overflow-hidden">
+                    <div className={`bg-white rounded-[2rem] shadow-2xl w-full overflow-hidden border border-gray-200 animate-slide-up max-h-[90vh] flex flex-col ${modalType === 'PLAYER' || modalType === 'TEAM' ? 'max-w-2xl' : 'max-w-sm'}`}>
+                        <div className="bg-blue-600 p-6 text-white flex justify-between items-center relative overflow-hidden shrink-0">
                             <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2"></div>
                             <h3 className="text-lg font-black uppercase tracking-tight relative z-10">{editItem?.id ? 'Modify' : 'Initialize'} {modalType}</h3>
                             <button onClick={closeModal} className="relative z-10 hover:rotate-90 transition-transform"><X className="w-6 h-6"/></button>
                         </div>
-                        <form onSubmit={handleCrudSave} className="p-8 space-y-6">
+                        <form onSubmit={handleCrudSave} className="p-6 md:p-8 space-y-6 overflow-y-auto custom-scrollbar flex-1">
                             {modalType === 'PLAYER' && !editItem?.id && (
                                 <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3 flex items-center justify-between gap-2 shadow-sm">
                                     <div className="flex items-center gap-2">
@@ -6010,10 +6187,100 @@ const AuctionManage: React.FC = () => {
                                             />
                                         </div>
                                     </div>
+
+                                    {editItem?.status === 'SOLD' && (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-100">
+                                            <div>
+                                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Sold To Team</label>
+                                                <input disabled className="w-full bg-gray-100 border-2 border-gray-200 rounded-xl px-4 py-2.5 font-bold text-gray-500 cursor-not-allowed" value={editItem?.soldTo || '-'} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Sold Price (₹)</label>
+                                                <input type="number" className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-4 py-2.5 font-bold text-gray-700 focus:bg-white focus:border-blue-400 outline-none transition-all" value={editItem?.soldPrice ?? 0} onChange={e => setEditItem({...editItem, soldPrice: Number(e.target.value)})} />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Jersey Details */}
+                                    <div className="p-4 bg-amber-50/60 border border-amber-200/80 rounded-2xl space-y-3">
+                                        <p className="text-[10px] font-black text-amber-800 uppercase tracking-widest flex items-center gap-1.5">
+                                            Jersey Details
+                                        </p>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                            <div>
+                                                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 ml-1">Jersey Name</label>
+                                                <input type="text" placeholder="e.g. KOHLI" className="w-full bg-white border border-amber-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none" value={editItem?.jerseyName || ''} onChange={e => setEditItem({...editItem, jerseyName: e.target.value})} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 ml-1">Jersey Number</label>
+                                                <input type="text" placeholder="e.g. 18" className="w-full bg-white border border-amber-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none" value={editItem?.jerseyNumber ?? ''} onChange={e => setEditItem({...editItem, jerseyNumber: e.target.value})} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 ml-1">Jersey Size</label>
+                                                <input type="text" placeholder="S / M / L / XL / XXL" className="w-full bg-white border border-amber-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none" value={editItem?.jerseySize || ''} onChange={e => setEditItem({...editItem, jerseySize: e.target.value})} />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Contact & Registration Details */}
+                                    <div className="p-4 bg-gray-50 border border-gray-200/80 rounded-2xl space-y-3">
+                                        <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">
+                                            Contact &amp; Registry Info
+                                        </p>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                            <div>
+                                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Player #</label>
+                                                <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none" value={editItem?.playerNumber ?? ''} onChange={e => setEditItem({...editItem, playerNumber: e.target.value})} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Mobile</label>
+                                                <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none" value={editItem?.mobile || ''} onChange={e => setEditItem({...editItem, mobile: e.target.value})} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">DOB</label>
+                                                <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none" value={editItem?.dob || ''} onChange={e => setEditItem({...editItem, dob: e.target.value})} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Gender</label>
+                                                <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none" value={editItem?.gender || ''} onChange={e => setEditItem({...editItem, gender: e.target.value})} />
+                                            </div>
+                                        </div>
+
+                                        {(regConfig.customFields || []).length > 0 && (
+                                            <div className="pt-3 border-t border-gray-200/80 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                {regConfig.customFields.map(cf => (
+                                                    <div key={cf.id}>
+                                                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 ml-1">{cf.label}</label>
+                                                        {cf.type === 'select' && Array.isArray(cf.options) && cf.options.length > 0 ? (
+                                                            <select
+                                                                className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none"
+                                                                value={editItem?.[cf.id] || ''}
+                                                                onChange={e => setEditItem({...editItem, [cf.id]: e.target.value})}
+                                                            >
+                                                                <option value="">Select {cf.label}</option>
+                                                                {cf.options.map((opt: string) => (
+                                                                    <option key={opt} value={opt}>{opt}</option>
+                                                                ))}
+                                                            </select>
+                                                        ) : (
+                                                            <input
+                                                                type={cf.type === 'number' ? 'number' : 'text'}
+                                                                className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none"
+                                                                value={editItem?.[cf.id] ?? ''}
+                                                                onChange={e => setEditItem({...editItem, [cf.id]: e.target.value})}
+                                                            />
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 
-                            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-xl transition-all uppercase text-xs tracking-widest active:scale-95">Save Code</button>
+                            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-xl transition-all uppercase text-xs tracking-widest active:scale-95">
+                                {editItem?.id ? `Save ${modalType}` : `Create ${modalType}`}
+                            </button>
                         </form>
                     </div>
                 </div>

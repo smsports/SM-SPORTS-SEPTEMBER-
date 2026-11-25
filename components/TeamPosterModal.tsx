@@ -1,8 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Team, Player, RegisteredPlayer } from '../types';
 import { Download, X, Check, Image as ImageIcon, Sparkles, ChevronDown, Trophy, Shield, RefreshCw, Crown } from 'lucide-react';
 import html2canvas from 'html2canvas';
-import { resolveTeamSquad } from '../utils';
+import { resolveTeamSquad, findPlayerRegistration } from '../utils';
 
 export type PosterThemeId = 
   | 'INDEPENDENCE_DAY' 
@@ -141,6 +141,12 @@ export const TeamPosterModal: React.FC<Props> = ({
   const [selectedThemeId, setSelectedThemeId] = useState<PosterThemeId>('INDEPENDENCE_DAY');
   const [isExporting, setIsExporting] = useState(false);
   const posterRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedTeamId(initialTeamId !== undefined ? initialTeamId : (teams[0]?.id ?? ''));
+    }
+  }, [isOpen, initialTeamId, teams]);
 
   if (!isOpen) return null;
 

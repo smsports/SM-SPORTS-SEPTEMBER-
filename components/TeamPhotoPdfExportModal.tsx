@@ -1,11 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Team, Player, RegisteredPlayer, RegistrationConfig } from '../types';
 import { jsPDF } from 'jspdf';
 import { 
   Download, X, CheckSquare, Square, FileText, ChevronDown, Check, 
   Loader2, Sparkles, Shield, User, Image as ImageIcon, Crown, Phone, Shirt, Eye
 } from 'lucide-react';
-import { resolveTeamSquad } from '../utils';
+import { resolveTeamSquad, findPlayerRegistration, getPlayerFieldValue } from '../utils';
 
 export interface PhotoFieldOption {
   id: string;
@@ -112,6 +112,12 @@ export const TeamPhotoPdfExportModal: React.FC<Props> = ({
     'mobile'
   ]);
 
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedTeamId(initialTeamId !== undefined ? initialTeamId : 'ALL');
+    }
+  }, [isOpen, initialTeamId]);
+
   if (!isOpen) return null;
 
   const toggleField = (id: string) => {
@@ -209,7 +215,7 @@ export const TeamPhotoPdfExportModal: React.FC<Props> = ({
         const ownerInSquad = squad.find(p => p.name.trim().toLowerCase() === ownerName.trim().toLowerCase());
 
         if (isOwnerCaptain && !ownerInSquad && ownerName) {
-          const ownerReg = registrations.find(r => r.fullName.trim().toLowerCase() === ownerName.trim().toLowerCase());
+          const ownerReg = findPlayerRegistration({ name: ownerName, mobile: team.ownerPhone }, registrations);
           squadList.push({
             id: 'owner_captain',
             name: ownerName,
@@ -235,7 +241,7 @@ export const TeamPhotoPdfExportModal: React.FC<Props> = ({
         const playerPhotos: Record<string, string | null> = {};
         for (const p of squadList) {
           const key = String(p.id ?? p.name);
-          const reg = registrations.find(r => r.fullName.trim().toLowerCase() === p.name.trim().toLowerCase());
+          const reg = findPlayerRegistration(p, registrations);
           const photoUrl = p.photoUrl || reg?.profilePic || '';
           if (photoUrl) {
             playerPhotos[key] = await loadImageDataUrl(photoUrl);
@@ -337,7 +343,7 @@ export const TeamPhotoPdfExportModal: React.FC<Props> = ({
             const cardX = marginX + colPos * (cardWidth + gapX);
             const cardY = gridStartY + rowPos * (cardHeight + gapY);
 
-            const reg = registrations.find(r => r.fullName.trim().toLowerCase() === player.name.trim().toLowerCase());
+            const reg = findPlayerRegistration(player, registrations);
             const key = String(player.id ?? player.name);
             const photoData = playerPhotos[key];
 
@@ -445,9 +451,9 @@ export const TeamPhotoPdfExportModal: React.FC<Props> = ({
                                selectedFieldIds.includes('jerseySize');
 
             if (showJersey) {
-              const jName = player.jerseyName || reg?.jerseyName || '-';
-              const jNum = player.jerseyNumber || reg?.jerseyNumber || '-';
-              const jSize = player.jerseySize || reg?.jerseySize || '-';
+              const jName = getPlayerFieldValue(player, reg, 'jerseyName', '-');
+              const jNum = getPlayerFieldValue(player, reg, 'jerseyNumber', '-');
+              const jSize = getPlayerFieldValue(player, reg, 'jerseySize', '-');
 
               doc.setFillColor(isDark ? 30 : 248, isDark ? 41 : 250, isDark ? 59 : 252);
               doc.roundedRect(textX, currentTextY, maxTextWidth, 11, 1.5, 1.5, 'F');
@@ -727,7 +733,7 @@ export const TeamPhotoPdfExportModal: React.FC<Props> = ({
                 </div>
               ) : (
                 previewSquad.slice(0, 2).map((p, idx) => {
-                  const reg = registrations.find(r => r.fullName.trim().toLowerCase() === p.name.trim().toLowerCase());
+                  const reg = findPlayerRegistration(p, registrations);
                   const isPlayerCaptain = (previewTeam?.captainName && previewTeam.captainName.trim().toLowerCase() === p.name.trim().toLowerCase()) || p.isCaptain;
 
                   return (
@@ -743,7 +749,7 @@ export const TeamPhotoPdfExportModal: React.FC<Props> = ({
                           <span className="font-black text-gray-400 text-lg">{p.name[0]?.toUpperCase()}</span>
                         )}
                         <span className="absolute top-1 left-1 bg-amber-500 text-black text-[7px] font-black px-1 rounded">
-                          #{reg?.playerNumber || idx + 1}
+                          #{getPlayerFieldValue(p, reg, 'playerNumber', idx + 1)}
                         </span>
                       </div>
 
@@ -763,9 +769,9 @@ export const TeamPhotoPdfExportModal: React.FC<Props> = ({
                           {p.role} • {p.category}
                         </p>
                         <div className="text-[8px] font-bold text-gray-500 dark:text-zinc-400 bg-gray-50 dark:bg-zinc-900 p-1.5 rounded-md flex justify-between">
-                          <span>Jersey: {p.jerseyName || reg?.jerseyName || p.name}</span>
-                          <span>No: {p.jerseyNumber || reg?.jerseyNumber || '-'}</span>
-                          <span>Size: {p.jerseySize || reg?.jerseySize || 'L'}</span>
+                          <span>Jersey: {getPlayerFieldValue(p, reg, 'jerseyName', p.name)}</span>
+                          <span>No: {getPlayerFieldValue(p, reg, 'jerseyNumber', '-')}</span>
+                          <span>Size: {getPlayerFieldValue(p, reg, 'jerseySize', '-')}</span>
                         </div>
                         <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-400">
                           ₹{Number(p.soldPrice || p.basePrice || 0).toLocaleString()}

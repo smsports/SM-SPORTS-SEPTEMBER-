@@ -8,7 +8,8 @@ import TeamPdfExportModal from './TeamPdfExportModal';
 import TeamPhotoPdfExportModal from './TeamPhotoPdfExportModal';
 import AuctionAwardsModal from './AuctionAwardsModal';
 import TeamStrategyCalculator from './TeamStrategyCalculator';
-import { resolveTeamSquad } from '../utils';
+import { resolveTeamSquad, findPlayerRegistration, getPlayerFieldValue } from '../utils';
+import * as XLSX from 'xlsx';
 
 interface Props {
     team: Team;
@@ -31,28 +32,39 @@ const TeamPostAuctionView: React.FC<Props> = ({ team }) => {
     const captainName = team.captainName || (isOwnerCaptain ? ownerName : '');
 
     const handleDownload = () => {
-        // CSV Generation Logic
-        const headers = ["Player Name", "Category", "Role", "Sold Price"];
-        const rows = squadPlayers.map(p => [
-            `"${p.name}"`, // Quote strings to handle commas
-            `"${p.category}"`,
-            `"${p.speciality || p.category}"`, 
-            p.soldPrice || 0
-        ]);
+        const customFields = state.registrationConfig?.customFields || [];
+        const rows = squadPlayers.map((p, idx) => {
+            const reg = findPlayerRegistration(p, state.registrations);
+            const isPlayerCaptain = (captainName && p.name.trim().toLowerCase() === captainName.trim().toLowerCase()) || p.isCaptain;
+            const row: Record<string, any> = {
+                'Player #': getPlayerFieldValue(p, reg, 'playerNumber', idx + 1),
+                'Player Name': isPlayerCaptain ? `${p.name} (C)` : p.name,
+                'Category': p.category || '',
+                'Role': p.role || p.speciality || '',
+                'Sold Price': Number(p.soldPrice || p.basePrice || 0),
+                'Team Name': team.name,
+                'Jersey Name': getPlayerFieldValue(p, reg, 'jerseyName', ''),
+                'Jersey Number': getPlayerFieldValue(p, reg, 'jerseyNumber', ''),
+                'Jersey Size': getPlayerFieldValue(p, reg, 'jerseySize', ''),
+                'Mobile Number': getPlayerFieldValue(p, reg, 'mobile', ''),
+                'DOB': getPlayerFieldValue(p, reg, 'dob', ''),
+                'Gender': getPlayerFieldValue(p, reg, 'gender', ''),
+            };
+            customFields.forEach(cf => {
+                row[cf.label] = getPlayerFieldValue(p, reg, cf.id, '');
+            });
+            return row;
+        });
 
-        const csvContent = [
-            headers.join(","),
-            ...rows.map(row => row.join(","))
-        ].join("\n");
+        if (rows.length === 0) {
+            alert("No players to export.");
+            return;
+        }
 
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.setAttribute("href", url);
-        link.setAttribute("download", `${team.name.replace(/\s+/g, '_')}_Squad_List.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, team.name.replace(/[\[\]\*\?\/\\:]/g, '').trim().substring(0, 31) || 'Squad');
+        XLSX.writeFile(wb, `${team.name.replace(/\s+/g, '_')}_Squad_With_Jersey.xlsx`);
     };
 
     // Calculate totals based on actual soldPrice in squad list
@@ -190,6 +202,10 @@ const TeamPostAuctionView: React.FC<Props> = ({ team }) => {
                             </thead>
                             <tbody className="divide-y divide-gray-100 bg-white">
                                 {squadPlayers.length > 0 ? squadPlayers.map((p, idx) => {
+                                    const reg = findPlayerRegistration(p, state.registrations);
+                                    const jName = getPlayerFieldValue(p, reg, 'jerseyName', '');
+                                    const jNum = getPlayerFieldValue(p, reg, 'jerseyNumber', '');
+                                    const jSize = getPlayerFieldValue(p, reg, 'jerseySize', '');
                                     const isPlayerCaptain = (captainName && p.name.trim().toLowerCase() === captainName.trim().toLowerCase()) || p.isCaptain;
 
                                     return (
@@ -204,6 +220,11 @@ const TeamPostAuctionView: React.FC<Props> = ({ team }) => {
                                                         </span>
                                                     )}
                                                 </div>
+                                                {(jName || jNum || jSize) && (
+                                                    <div className="text-[11px] font-semibold text-gray-500 mt-0.5">
+                                                        Jersey: {[jName, jNum ? `#${jNum}` : '', jSize ? `Size ${jSize}` : ''].filter(Boolean).join(' • ')}
+                                                    </div>
+                                                )}
                                             </td>
                                             <td className="p-3 md:p-4">
                                                 <span className="inline-block bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-md font-medium border border-gray-200 whitespace-nowrap">
