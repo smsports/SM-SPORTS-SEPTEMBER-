@@ -1699,6 +1699,7 @@ export const findPlayerRegistration = (
     player: Partial<Player> & {
         id?: string | number;
         name?: string;
+        photoUrl?: string;
         registrationId?: string;
         mobile?: string;
         playerNumber?: string | number;
@@ -1738,6 +1739,13 @@ export const findPlayerRegistration = (
         const numStr = String(player.playerNumber).trim();
         const numMatches = registrations.filter(r => r.playerNumber !== undefined && r.playerNumber !== null && String(r.playerNumber).trim() === numStr);
         if (numMatches.length === 1) return numMatches[0];
+    }
+
+    // 6. Unique photoUrl <-> profilePic fallback (recovers legacy renamed players who kept their registration photo)
+    const normPhoto = String(player.photoUrl || '').trim();
+    if (normPhoto.length > 30) {
+        const photoMatches = registrations.filter(r => String(r.profilePic || '').trim() === normPhoto);
+        if (photoMatches.length === 1) return photoMatches[0];
     }
 
     return undefined;

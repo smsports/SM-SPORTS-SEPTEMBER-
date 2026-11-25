@@ -30,6 +30,7 @@ import TeamPosterModal from '../components/TeamPosterModal';
 import TeamPdfExportModal from '../components/TeamPdfExportModal';
 import TeamPhotoPdfExportModal from '../components/TeamPhotoPdfExportModal';
 import AuctionAwardsModal from '../components/AuctionAwardsModal';
+import { RegistrationExportHub } from '../components/RegistrationExportHub';
 
 const DEFAULT_REG_CONFIG: RegistrationConfig = {
     isEnabled: false,
@@ -147,6 +148,7 @@ const AuctionManage: React.FC = () => {
     const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
     const [regSearchQuery, setRegSearchQuery] = useState('');
     const [regStatusFilter, setRegStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
+    const [selectedRegIds, setSelectedRegIds] = useState<string[]>([]);
     const [allAuctions, setAllAuctions] = useState<any[]>([]);
     const [confirmAction, setConfirmAction] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
     const [notification, setNotification] = useState<{ message: string; type: 'error' | 'success' } | null>(null);
@@ -342,6 +344,26 @@ const AuctionManage: React.FC = () => {
         const matchesStatus = regStatusFilter === 'ALL' || reg.status === regStatusFilter;
         return matchesSearch && matchesStatus;
     });
+
+    const toggleSelectReg = (regId: string) => {
+        setSelectedRegIds(prev =>
+            prev.includes(regId) ? prev.filter(id => id !== regId) : [...prev, regId]
+        );
+    };
+
+    const handleSelectAllVisibleRegs = () => {
+        const visibleIds = filteredRegistrations.map(r => String(r.id));
+        const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(rid => selectedRegIds.includes(rid));
+        if (allVisibleSelected) {
+            setSelectedRegIds(prev => prev.filter(rid => !visibleIds.includes(rid)));
+        } else {
+            setSelectedRegIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+        }
+    };
+
+    const handleClearRegSelection = () => {
+        setSelectedRegIds([]);
+    };
 
     const autoAssignPlayerNumbers = async () => {
         if (!auction?.id) return;
@@ -4345,8 +4367,55 @@ const AuctionManage: React.FC = () => {
                             </label>
                         </div>
 
+                        {/* Registration Export Hub (Styled Excel with SL No., Yellow Bold Header & Borders + A4 PDF) */}
+                        <RegistrationExportHub
+                            registrations={registrations}
+                            filteredRegistrations={filteredRegistrations}
+                            players={players}
+                            selectedRegIds={selectedRegIds}
+                            customFields={regConfig.customFields || []}
+                            categories={categories}
+                            auctionTitle={auction?.title || 'Tournament'}
+                            auctionLogoUrl={auction?.logoUrl}
+                            systemBranding={systemBranding}
+                            isDark={isDark}
+                            onNotify={showNotification}
+                            onSelectAllVisible={handleSelectAllVisibleRegs}
+                            onClearSelection={handleClearRegSelection}
+                        />
+
                         <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4 px-2">
-                             <h2 className="text-xl font-black text-gray-800 uppercase tracking-tighter">Registration Queue ({filteredRegistrations.length})</h2>
+                             <div className="flex flex-wrap items-center gap-3">
+                                 <h2 className="text-xl font-black text-gray-800 uppercase tracking-tighter">Registration Queue ({filteredRegistrations.length})</h2>
+                                 {filteredRegistrations.length > 0 && (
+                                     <button
+                                         type="button"
+                                         onClick={handleSelectAllVisibleRegs}
+                                         className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 transition-all ${
+                                             filteredRegistrations.every(r => selectedRegIds.includes(String(r.id)))
+                                                 ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                                                 : 'bg-white border-gray-200 text-gray-600 hover:border-blue-400 hover:text-blue-600'
+                                         }`}
+                                         title="Select or deselect all visible registrations for export"
+                                     >
+                                         {filteredRegistrations.every(r => selectedRegIds.includes(String(r.id))) ? (
+                                             <CheckSquare className="w-3.5 h-3.5" />
+                                         ) : (
+                                             <Square className="w-3.5 h-3.5" />
+                                         )}
+                                         {filteredRegistrations.every(r => selectedRegIds.includes(String(r.id))) ? 'Deselect All' : 'Select All'}
+                                     </button>
+                                 )}
+                                 {selectedRegIds.length > 0 && (
+                                     <button
+                                         type="button"
+                                         onClick={handleClearRegSelection}
+                                         className="px-2.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 flex items-center gap-1 transition-all"
+                                     >
+                                         <X className="w-3 h-3" /> Clear ({selectedRegIds.length})
+                                     </button>
+                                 )}
+                             </div>
                              <div className="flex flex-wrap items-center gap-2">
                                  <button 
                                      onClick={handleBulkReconcile}
@@ -4374,14 +4443,34 @@ const AuctionManage: React.FC = () => {
                         ) : (
                             <div className="grid grid-cols-1 gap-4">
                                 {filteredRegistrations.map(reg => {
-                                    const approvedPlayer = reg.status === 'APPROVED' ? players.find(p => p.name === reg.fullName) : null;
+                                    const approvedPlayer = reg.status === 'APPROVED' ? (
+                                        players.find(p => p.registrationId && String(p.registrationId) === String(reg.id)) ||
+                                        players.find(p => String(p.id) === String(reg.id)) ||
+                                        players.find(p => p.name === reg.fullName)
+                                    ) : null;
                                     const roleToDisplay = approvedPlayer?.role || approvedPlayer?.speciality || reg.playerType;
                                     const categoryToDisplay = approvedPlayer?.category || 'Standard';
+                                    const isRegSelected = selectedRegIds.includes(String(reg.id));
 
                                     return (
-                                        <div key={reg.id} className="bg-white p-6 rounded-[1.5rem] border border-gray-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6 hover:shadow-md transition-shadow">
-                                        <div className="flex items-center gap-6">
-                                            <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-lg border-2 border-gray-50 flex items-center justify-center bg-gray-50 cursor-pointer group/pic relative"
+                                        <div key={reg.id} className={`p-6 rounded-[1.5rem] border shadow-sm flex flex-col md:flex-row justify-between items-center gap-6 hover:shadow-md transition-all ${isRegSelected ? 'bg-blue-50/40 border-blue-400 ring-2 ring-blue-500/15' : 'bg-white border-gray-200'}`}>
+                                        <div className="flex items-center gap-4 sm:gap-5">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    toggleSelectReg(String(reg.id));
+                                                }}
+                                                className="p-1.5 rounded-lg hover:bg-blue-50 transition-colors shrink-0 cursor-pointer"
+                                                title={isRegSelected ? "Deselect registration" : "Select registration for export"}
+                                            >
+                                                {isRegSelected ? (
+                                                    <CheckSquare className="w-5 h-5 text-blue-600" />
+                                                ) : (
+                                                    <Square className="w-5 h-5 text-gray-300 hover:text-blue-400" />
+                                                )}
+                                            </button>
+                                            <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-lg border-2 border-gray-50 flex items-center justify-center bg-gray-50 cursor-pointer group/pic relative shrink-0"
                                                  onClick={() => setOverlayImage({ url: reg.profilePic, title: reg.fullName, type: 'REGISTRATION', id: reg.id, field: 'profilePic' })}
                                             >
                                                 {reg.profilePic ? (
@@ -4552,6 +4641,22 @@ const AuctionManage: React.FC = () => {
                                                         <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Role</p>
                                                         <p className="text-xs font-bold text-gray-700">{roleToDisplay}</p>
                                                     </div>
+                                                    {(reg.jerseyName || reg.jerseyNumber || reg.jerseySize) && (
+                                                        <>
+                                                            <div>
+                                                                <p className="text-[8px] font-black text-amber-500 uppercase tracking-widest mb-1">Jersey Name</p>
+                                                                <p className="text-xs font-bold text-gray-700">{reg.jerseyName || 'N/A'}</p>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-[8px] font-black text-amber-500 uppercase tracking-widest mb-1">Jersey Number</p>
+                                                                <p className="text-xs font-bold text-gray-700">{reg.jerseyNumber ?? 'N/A'}</p>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-[8px] font-black text-amber-500 uppercase tracking-widest mb-1">Jersey Size</p>
+                                                                <p className="text-xs font-bold text-gray-700">{reg.jerseySize || 'N/A'}</p>
+                                                            </div>
+                                                        </>
+                                                    )}
                                                     {regConfig.customFields.map(f => (
                                                         <div key={f.id}>
                                                             <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">{f.label}</p>
@@ -6200,6 +6305,69 @@ const AuctionManage: React.FC = () => {
                                             </div>
                                         </div>
                                     )}
+
+                                    {/* Link Registration Record (recovers old jersey & form fields for previously renamed players) */}
+                                    {registrations.length > 0 && (() => {
+                                        const currentlyLinked = registrations.find(r => String(r.id) === String(editItem?.registrationId || editItem?._linkedRegId || ''));
+                                        return (
+                                            <div className={`p-4 border rounded-2xl space-y-2 ${currentlyLinked ? 'bg-blue-50/70 border-blue-200' : 'bg-rose-50/70 border-rose-200'}`}>
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <p className={`text-[10px] font-black uppercase tracking-widest ${currentlyLinked ? 'text-blue-700' : 'text-rose-700'}`}>
+                                                        {currentlyLinked ? `Linked Registration: ${currentlyLinked.fullName}` : 'Link Original Registration (Recover Old Data)'}
+                                                    </p>
+                                                    {currentlyLinked?.playerNumber && (
+                                                        <span className="text-[9px] font-black px-2 py-0.5 rounded bg-white border border-blue-200 text-blue-700">
+                                                            #{currentlyLinked.playerNumber}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <select
+                                                    className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:border-blue-400 outline-none"
+                                                    value={String(editItem?.registrationId || editItem?._linkedRegId || '')}
+                                                    onChange={e => {
+                                                        const chosenId = e.target.value;
+                                                        const chosenReg = registrations.find(r => String(r.id) === String(chosenId));
+                                                        if (!chosenReg) {
+                                                            setEditItem({ ...editItem, registrationId: '', _linkedRegId: '' });
+                                                            return;
+                                                        }
+                                                        const customUpdates: Record<string, any> = {};
+                                                        (regConfig.customFields || []).forEach(cf => {
+                                                            if ((chosenReg as any)[cf.id] !== undefined && (chosenReg as any)[cf.id] !== '') {
+                                                                customUpdates[cf.id] = (chosenReg as any)[cf.id];
+                                                            }
+                                                        });
+                                                        setEditItem({
+                                                            ...editItem,
+                                                            registrationId: chosenReg.id,
+                                                            _linkedRegId: chosenReg.id,
+                                                            playerNumber: editItem?.playerNumber || chosenReg.playerNumber || '',
+                                                            mobile: editItem?.mobile || chosenReg.mobile || '',
+                                                            dob: editItem?.dob || chosenReg.dob || '',
+                                                            gender: editItem?.gender || chosenReg.gender || '',
+                                                            jerseyName: editItem?.jerseyName || (chosenReg as any).jerseyName || '',
+                                                            jerseyNumber: (editItem?.jerseyNumber !== undefined && editItem?.jerseyNumber !== '') ? editItem.jerseyNumber : ((chosenReg as any).jerseyNumber ?? ''),
+                                                            jerseySize: editItem?.jerseySize || (chosenReg as any).jerseySize || '',
+                                                            ...customUpdates
+                                                        });
+                                                        if (!previewImage && !editItem?.photoUrl && chosenReg.profilePic) {
+                                                            setPreviewImage(chosenReg.profilePic);
+                                                        }
+                                                    }}
+                                                >
+                                                    <option value="">-- Select Registered Player Record --</option>
+                                                    {[...registrations]
+                                                        .sort((a, b) => String(a.fullName || '').localeCompare(String(b.fullName || '')))
+                                                        .map(r => (
+                                                            <option key={r.id} value={r.id}>
+                                                                {r.fullName}{r.playerNumber ? ` (#${r.playerNumber})` : ''}{r.mobile ? ` • ${r.mobile}` : ''}{(r as any).jerseyName ? ` • Jersey: ${(r as any).jerseyName}` : ''}
+                                                            </option>
+                                                        ))
+                                                    }
+                                                </select>
+                                            </div>
+                                        );
+                                    })()}
 
                                     {/* Jersey Details */}
                                     <div className="p-4 bg-amber-50/60 border border-amber-200/80 rounded-2xl space-y-3">
