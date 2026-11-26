@@ -115,6 +115,8 @@ export interface ParsedCricHeroesLinks {
   tournamentId?: string;
   tournamentSlug?: string;
   tournamentTitle?: string;
+  matchId?: string;
+  matchTitle?: string;
   matchUrl?: string;
   sections: Record<CricHeroesSectionId, { label: string; url: string; description: string }>;
 }
@@ -124,6 +126,7 @@ export function formatSlugTitle(slug?: string): string {
   return slug
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase())
+    .replace(/\bVs\b/g, 'vs')
     .trim();
 }
 
@@ -180,6 +183,22 @@ export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): Parse
       : `https://${cleanMatch}`
     : undefined;
 
+  let matchId: string | undefined;
+  let matchTitle: string | undefined;
+  const matchSource = normalizedMatch || normalizedBase;
+  try {
+    const mp = new URL(matchSource).pathname.split('/').filter(Boolean);
+    const mIdx = mp.findIndex((p) => ['scorecard', 'live', 'match-detail'].includes(p));
+    if (mIdx !== -1 && mp[mIdx + 1]) {
+      matchId = mp[mIdx + 1];
+      if (mp[mIdx + 2] && !['live', 'scorecard', 'info', 'commentary'].includes(mp[mIdx + 2].toLowerCase())) {
+        matchTitle = formatSlugTitle(mp[mIdx + 2]);
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   const makeTournamentTabUrl = (tabPath: string) => {
     if (tournamentId && tournamentSlug) {
       return `${tournamentRoot}/${tabPath}`;
@@ -203,6 +222,8 @@ export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): Parse
     tournamentId,
     tournamentSlug,
     tournamentTitle,
+    matchId,
+    matchTitle,
     matchUrl: normalizedMatch,
     sections: {
       SCORECARD: {

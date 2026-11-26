@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
+  Activity,
   ArrowLeft,
   Calendar,
+  ChevronDown,
+  ChevronUp,
   Clock,
   ExternalLink,
   Film,
@@ -60,6 +63,10 @@ const LiveStreamCenter: React.FC = () => {
     searchParams.get('stream')
   );
   const [linkedMatch, setLinkedMatch] = useState<Match | null>(null);
+  const [testCricUrl, setTestCricUrl] = useState('');
+  const [testCricMatchUrl, setTestCricMatchUrl] = useState('');
+  const [activeTestStream, setActiveTestStream] = useState<LiveStreamItem | null>(null);
+  const [testerOpen, setTesterOpen] = useState(true);
 
   useEffect(() => {
     const unsub = db
@@ -394,8 +401,11 @@ const LiveStreamCenter: React.FC = () => {
               )}
             </section>
 
-            {/* JioHotstar IPL Live–style CricHeroes Scoreboard & Controls Below Video */}
-            <CricHeroesScoreboardHub stream={activeStream} linkedMatch={linkedMatch} />
+            {/* Show CricHeroes Scoreboard Hub ONLY when stream is LIVE AND Super Admin added a CricHeroes link */}
+            {activeStream.status === 'LIVE' &&
+              Boolean((activeStream.cricHeroesUrl || activeStream.cricHeroesMatchUrl || '').trim()) && (
+                <CricHeroesScoreboardHub stream={activeStream} linkedMatch={linkedMatch} />
+              )}
           </>
         ) : (
           /* No Live Video Standby Title Card */
@@ -641,6 +651,144 @@ const LiveStreamCenter: React.FC = () => {
             </div>
           </section>
         )}
+
+        {/* Dedicated CricHeroes Real-Time Fetch Tester (Works even with no Live Video) */}
+        <section className="rounded-2xl bg-[#0D1322] border border-cyan-500/25 overflow-hidden shadow-xl">
+          <div className="p-4 sm:p-5 bg-gradient-to-r from-[#10182E] to-[#0D1322] border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <Activity className="w-4 h-4 text-cyan-400" />
+                <h3
+                  className="text-base sm:text-lg font-bold text-white tracking-tight"
+                  style={{ fontFamily: "'Outfit', sans-serif" }}
+                >
+                  CricHeroes Real-Time Fetch Tester
+                </h3>
+              </div>
+              <p className="text-xs text-zinc-400">
+                Test live website data extraction &amp; real-time 10s scorecard updates using any public CricHeroes tournament or match link—even when no stream is live.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTesterOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-200 whitespace-nowrap shrink-0 self-start sm:self-auto"
+            >
+              {testerOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              {testerOpen ? 'Hide Tester' : 'Open Tester'}
+            </button>
+          </div>
+
+          {testerOpen && (
+            <div className="p-4 sm:p-6 space-y-5">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const cleanTourn = testCricUrl.trim();
+                  const cleanMatch = testCricMatchUrl.trim();
+                  if (!cleanTourn && !cleanMatch) return;
+                  const now = Date.now();
+                  setActiveTestStream({
+                    id: `tester_${now}`,
+                    title: 'CricHeroes Live Fetch Test',
+                    tournamentName: 'CricHeroes Public Test',
+                    youtubeUrl: '',
+                    streamVisibility: 'PUBLIC',
+                    status: 'LIVE',
+                    cricHeroesUrl: cleanTourn,
+                    cricHeroesMatchUrl: cleanMatch,
+                    playerGradientPreset: 'JIO_GOLD',
+                    createdAt: now,
+                    updatedAt: now,
+                  });
+                }}
+                className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end"
+              >
+                <div className="lg:col-span-5">
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
+                    CricHeroes Tournament Link
+                  </label>
+                  <input
+                    type="url"
+                    value={testCricUrl}
+                    onChange={(e) => setTestCricUrl(e.target.value)}
+                    placeholder="https://cricheroes.com/tournament/28243/rawat-cricket-cup-season-3-2018"
+                    className="w-full bg-black/60 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <div className="lg:col-span-4">
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
+                    CricHeroes Match Scorecard Link (Optional)
+                  </label>
+                  <input
+                    type="url"
+                    value={testCricMatchUrl}
+                    onChange={(e) => setTestCricMatchUrl(e.target.value)}
+                    placeholder="https://cricheroes.com/scorecard/..."
+                    className="w-full bg-black/60 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white outline-none focus:border-amber-400"
+                  />
+                </div>
+                <div className="lg:col-span-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="submit"
+                    style={{
+                      background: GRADIENT_PRESETS.JIO_GOLD.buttonGradient,
+                      boxShadow: GRADIENT_PRESETS.JIO_GOLD.glowShadow,
+                    }}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-bold whitespace-nowrap"
+                  >
+                    <Radio className="w-3.5 h-3.5" />
+                    Test Live Fetch
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const presetUrl =
+                        settings.youtubeChannelCricHeroesUrl ||
+                        settings.streams.find((s) => s.cricHeroesUrl)?.cricHeroesUrl ||
+                        'https://cricheroes.com/tournament/28243/rawat-cricket-cup-season-3-2018';
+                      setTestCricUrl(presetUrl);
+                      const now = Date.now();
+                      setActiveTestStream({
+                        id: `tester_${now}`,
+                        title: 'CricHeroes Live Fetch Test',
+                        tournamentName: 'CricHeroes Public Test',
+                        youtubeUrl: '',
+                        streamVisibility: 'PUBLIC',
+                        status: 'LIVE',
+                        cricHeroesUrl: presetUrl,
+                        cricHeroesMatchUrl: testCricMatchUrl.trim(),
+                        playerGradientPreset: 'JIO_GOLD',
+                        createdAt: now,
+                        updatedAt: now,
+                      });
+                    }}
+                    className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-200 whitespace-nowrap"
+                  >
+                    Sample
+                  </button>
+                  {activeTestStream && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTestStream(null)}
+                      className="px-3 py-2.5 rounded-xl bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-xs font-semibold text-red-200 whitespace-nowrap"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              {activeTestStream ? (
+                <CricHeroesScoreboardHub stream={activeTestStream} testerMode={true} />
+              ) : (
+                <div className="rounded-xl border border-dashed border-white/10 bg-black/25 p-5 text-center text-xs text-zinc-400">
+                  Paste any CricHeroes tournament or match scorecard URL above and click <span className="text-white font-semibold">Test Live Fetch</span> (or click <span className="text-cyan-300 font-semibold">Sample</span>) to verify real-time extraction and section controls.
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );

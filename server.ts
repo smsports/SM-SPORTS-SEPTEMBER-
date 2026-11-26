@@ -944,13 +944,19 @@ app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
         };
 
         const primaryRes = await fetchCricPage(targetUrl.toString());
+        let matchFallbackRes: { ok: boolean; status: number; iframeBlocked: boolean; html: string } | null = null;
+        if (!primaryRes.ok && rawMatchUrl && rawMatchUrl !== targetUrl.toString()) {
+            matchFallbackRes = await fetchCricPage(rawMatchUrl);
+        }
 
-        if (!primaryRes.ok) {
+        const effectivePrimary = primaryRes.ok ? primaryRes : (matchFallbackRes?.ok ? matchFallbackRes : null);
+
+        if (!effectivePrimary) {
             return res.json({
                 ok: false,
                 source: 'PROTECTED',
-                protectedByCloudflare: primaryRes.status === 403,
-                status: primaryRes.status,
+                protectedByCloudflare: primaryRes.status === 403 || matchFallbackRes?.status === 403,
+                status: primaryRes.status || matchFallbackRes?.status || 0,
                 fetchedAt: Date.now(),
                 tournamentId,
                 matchId,
@@ -958,12 +964,12 @@ app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
                 iframeBlocked: true,
                 url: targetUrl.toString(),
                 error: primaryRes.status === 403
-                    ? 'CricHeroes website returned Cloudflare protection (HTTP 403) to automated background fetch.'
+                    ? 'CricHeroes returned Cloudflare protection (HTTP 403) to automated background fetch.'
                     : `CricHeroes returned HTTP ${primaryRes.status}`
             });
         }
 
-        // Also fetch public sub-pages in parallel when primary page succeeded!
+        // Also fetch public sub-pages in parallel when website request succeeded!
         const subFetches = tournamentId
             ? await Promise.all([
                 fetchCricPage(`${tournamentRoot}/matches/live-matches`),
@@ -972,7 +978,7 @@ app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
                 fetchCricPage(`${tournamentRoot}/matches/teams`),
                 rawMatchUrl ? fetchCricPage(rawMatchUrl) : Promise.resolve({ ok: false, status: 0, iframeBlocked: true, html: '' })
               ])
-            : [null, null, null, null, rawMatchUrl ? await fetchCricPage(rawMatchUrl) : null];
+            : [null, null, null, null, rawMatchUrl && rawMatchUrl !== targetUrl.toString() ? await fetchCricPage(rawMatchUrl) : null];
 
         const extractMeta = (html: string, pattern: RegExp): string => {
             const match = html.match(pattern);
@@ -987,16 +993,18 @@ app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
                 : '';
         };
 
-        const html = primaryRes.html;
+        const html = effectivePrimary.html;
         const title =
             extractMeta(html, /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
             extractMeta(html, /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i) ||
+            extractMeta(html, /<meta[^>]+name=["']twitter:title["'][^>]+content=["']([^"']+)["']/i) ||
             extractMeta(html, /<title[^>]*>([^<]+)<\/title>/i) ||
             slugTitle;
 
         const description =
             extractMeta(html, /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i) ||
             extractMeta(html, /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i) ||
+            extractMeta(html, /<meta[^>]+name=["']twitter:description["'][^>]+content=["']([^"']+)["']/i) ||
             extractMeta(html, /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i);
 
         const imageUrl =
@@ -1011,31 +1019,33 @@ app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
         const scorecardProps = subFetches[4]?.ok ? extractPageProps(subFetches[4].html) : null;
 
         const nextDataSummary = {
-            tournamentDetail: primaryProps.tournamentDetail || primaryProps.tournament || primaryProps.tournamentInfo || null,
+            tournamentDetail:
+                primaryProps.tournamentDetail || primaryProps.tournament || primaryProps.tournamentInfo || primaryProps.tournamentData || null,
             matches:
-                matchesProps?.matches || matchesProps?.matchList ||
-                primaryProps.matches || primaryProps.matchList || null,
+                matchesProps?.matches || matchesProps?.matchList || matchesProps?.liveMatches ||
+                primaryProps.matches || primaryProps.matchList || primaryProps.liveMatches || null,
             pointsTable:
-                pointsProps?.pointsTable || pointsProps?.pointTable ||
-                primaryProps.pointsTable || primaryProps.pointTable || null,
+                pointsProps?.pointsTable || pointsProps?.pointTable || pointsProps?.pointTableList ||
+                primaryProps.pointsTable || primaryProps.pointTable || primaryProps.pointTableList || null,
             leaderboard:
                 leaderProps?.leaderboard || leaderProps?.topPerformers || leaderProps?.stats ||
                 primaryProps.leaderboard || primaryProps.topPerformers || primaryProps.stats || null,
             teams:
-                teamsProps?.teams || primaryProps.teams || null,
+                teamsProps?.teams || teamsProps?.teamList || primaryProps.teams || primaryProps.teamList || null,
             scorecard:
-                scorecardProps?.scorecard || scorecardProps?.matchDetail ||
-                primaryProps.scorecard || primaryProps.matchDetail || null,
+                scorecardProps?.scorecard || scorecardProps?.scoreCardData || scorecardProps?.matchDetail || scorecardProps?.matchData || scorecardProps?.matchInfo ||
+                primaryProps.scorecard || primaryProps.scoreCardData || primaryProps.matchDetail || primaryProps.matchData || primaryProps.matchInfo || null,
         };
 
         return res.json({
             ok: true,
             source: 'CRICHEROES_WEB',
+            status: effectivePrimary.status,
             fetchedAt: Date.now(),
             tournamentId,
             matchId,
             url: targetUrl.toString(),
-            iframeBlocked: primaryRes.iframeBlocked,
+            iframeBlocked: effectivePrimary.iframeBlocked,
             title,
             description,
             imageUrl,

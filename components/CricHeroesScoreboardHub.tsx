@@ -27,6 +27,7 @@ import {
 interface CricHeroesMetaResponse {
   ok: boolean;
   source?: string;
+  status?: number;
   protectedByCloudflare?: boolean;
   fetchedAt?: number;
   iframeBlocked?: boolean;
@@ -47,6 +48,7 @@ interface CricHeroesMetaResponse {
 interface CricHeroesScoreboardHubProps {
   stream: LiveStreamItem;
   linkedMatch?: Match | null;
+  testerMode?: boolean;
 }
 
 const SECTION_TABS: Array<{
@@ -66,6 +68,7 @@ const SECTION_TABS: Array<{
 const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
   stream,
   linkedMatch,
+  testerMode = false,
 }) => {
   const [activeSection, setActiveSection] = useState<CricHeroesSectionId>('SCORECARD');
   const [cricMeta, setCricMeta] = useState<CricHeroesMetaResponse | null>(null);
@@ -191,6 +194,13 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
                   LIVE TELEMETRY
                 </span>
               )}
+              {testerMode && cricMeta && (
+                <span className="text-[11px] font-mono tabular-nums text-cyan-300">
+                  {cricMeta.ok
+                    ? `HTTP ${cricMeta.status || 200} • Web Extract OK`
+                    : `HTTP ${cricMeta.status || 403} • ${cricMeta.protectedByCloudflare ? 'Cloudflare Shield' : 'Unavailable'}`}
+                </span>
+              )}
               {lastSyncedAt && (
                 <span className="text-[11px] font-mono text-zinc-500 tabular-nums">
                   Updated {new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
@@ -204,7 +214,7 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
                 ? `${liveCricMatch.team_a || liveCricMatch.teamAName || 'Team A'} vs ${liveCricMatch.team_b || liveCricMatch.teamBName || 'Team B'}`
                 : snap?.teamAName && snap?.teamBName
                 ? `${snap.teamAName} vs ${snap.teamBName}`
-                : cricMeta?.title || parsedLinks.tournamentTitle || stream.title}
+                : cricMeta?.title || parsedLinks.matchTitle || parsedLinks.tournamentTitle || stream.title}
             </h2>
             {(snap?.statusNote || liveCricMatch?.match_result || cricMeta?.description) && (
               <p className="text-xs sm:text-sm text-cyan-300 font-medium">
