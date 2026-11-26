@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Calendar,
@@ -12,11 +12,13 @@ import {
   Play,
   Plus,
   Radio,
+  RefreshCw,
   Save,
   Trash2,
   Trophy,
   Tv,
   X,
+  Youtube,
 } from 'lucide-react';
 import { db } from '../firebase';
 import {
@@ -80,22 +82,80 @@ const emptyDraft = (): StreamDraft => ({
   },
 });
 
+interface ChannelVideoEntry {
+  videoId: string;
+  title: string;
+  status: LiveStreamStatus;
+  metaText: string;
+  durationText: string;
+  scheduledAt: string;
+  thumbnailUrl: string;
+  youtubeUrl: string;
+  isStream: boolean;
+}
+
+interface ChannelSyncResponse {
+  ok: boolean;
+  fetchedAt?: number;
+  channelId?: string;
+  channelTitle?: string;
+  channelUrl?: string;
+  live?: ChannelVideoEntry[];
+  upcoming?: ChannelVideoEntry[];
+  past?: ChannelVideoEntry[];
+  all?: ChannelVideoEntry[];
+  error?: string;
+}
+
 const SuperAdminLiveStreamPanel: React.FC = () => {
   const [settings, setSettings] = useState<LiveStreamSettings>({
     noLiveFallbackTitle: DEFAULT_FALLBACK_TITLE,
     noLiveFallbackSubtitle: DEFAULT_FALLBACK_SUBTITLE,
+    youtubeChannelUrl: '',
+    youtubeChannelCricHeroesUrl: '',
+    autoSyncChannel: true,
     streams: [],
     updatedAt: 0,
   });
   const [fallbackTitle, setFallbackTitle] = useState(DEFAULT_FALLBACK_TITLE);
   const [fallbackSubtitle, setFallbackSubtitle] = useState(DEFAULT_FALLBACK_SUBTITLE);
+  const [channelUrl, setChannelUrl] = useState('');
+  const [channelCricHeroesUrl, setChannelCricHeroesUrl] = useState('');
+  const [autoSyncChannel, setAutoSyncChannel] = useState(true);
+  const [syncingChannel, setSyncingChannel] = useState(false);
+  const [channelSyncResult, setChannelSyncResult] = useState<ChannelSyncResponse | null>(null);
   const [draft, setDraft] = useState<StreamDraft>(emptyDraft());
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
   const [matches, setMatches] = useState<Match[]>([]);
 
+  const fetchChannelPreview = useCallback(async (targetChannelUrl: string) => {
+    const clean = targetChannelUrl.trim();
+    if (!clean) {
+      setChannelSyncResult(null);
+      return null;
+    }
+    setSyncingChannel(true);
+    try {
+      const resp = await fetch(`/api/youtube-channel-videos?channelUrl=${encodeURIComponent(clean)}`);
+      const data: ChannelSyncResponse = await resp.json();
+      setChannelSyncResult(data);
+      return data;
+    } catch {
+      const errRes: ChannelSyncResponse = {
+        ok: false,
+        error: 'Failed to reach YouTube channel auto-sync service.',
+      };
+      setChannelSyncResult(errRes);
+      return errRes;
+    } finally {
+      setSyncingChannel(false);
+    }
+  }, []);
+
   useEffect(() => {
+    let initialSyncedUrl = '';
     const unsubStreams = db
       .collection('appConfig')
       .doc('liveStreams')
@@ -104,14 +164,29 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
           const data = doc.data() as Partial<LiveStreamSettings>;
           const loadedTitle = data.noLiveFallbackTitle || DEFAULT_FALLBACK_TITLE;
           const loadedSub = data.noLiveFallbackSubtitle || DEFAULT_FALLBACK_SUBTITLE;
+          const loadedChannelUrl = data.youtubeChannelUrl || '';
+          const loadedChannelCric = data.youtubeChannelCricHeroesUrl || '';
+          const loadedAutoSync = data.autoSyncChannel !== false;
+
           setSettings({
             noLiveFallbackTitle: loadedTitle,
             noLiveFallbackSubtitle: loadedSub,
+            youtubeChannelUrl: loadedChannelUrl,
+            youtubeChannelCricHeroesUrl: loadedChannelCric,
+            autoSyncChannel: loadedAutoSync,
             streams: Array.isArray(data.streams) ? data.streams : [],
             updatedAt: data.updatedAt || Date.now(),
           });
           setFallbackTitle(loadedTitle);
           setFallbackSubtitle(loadedSub);
+          setChannelUrl(loadedChannelUrl);
+          setChannelCricHeroesUrl(loadedChannelCric);
+          setAutoSyncChannel(loadedAutoSync);
+
+          if (loadedChannelUrl && loadedChannelUrl !== initialSyncedUrl) {
+            initialSyncedUrl = loadedChannelUrl;
+            fetchChannelPreview(loadedChannelUrl);
+          }
         }
       });
 
@@ -130,7 +205,7 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
       unsubStreams();
       unsubMatches();
     };
-  }, []);
+  }, [fetchChannelPreview]);
 
   const notify = (type: 'ok' | 'err', msg: string) => {
     setFeedback({ type, msg });
@@ -160,6 +235,55 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
       updatedAt: Date.now(),
     };
     await persistSettings(next, 'Offline standby title saved.');
+  };
+
+  const handleSaveAndSyncChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const next: LiveStreamSettings = {
+      ...settings,
+      youtubeChannelUrl: channelUrl.trim(),
+      youtubeChannelCricHeroesUrl: channelCricHeroesUrl.trim(),
+      autoSyncChannel,
+      updatedAt: Date.now(),
+    };
+    await persistSettings(next, channelUrl.trim() ? 'YouTube Channel saved. Syncing streams...' : 'YouTube Channel cleared.');
+    if (channelUrl.trim()) {
+      const result = await fetchChannelPreview(channelUrl.trim());
+      if (result?.ok) {
+        notify(
+          'ok',
+          `Synced ${result.live?.length || 0} live, ${result.upcoming?.length || 0} upcoming & ${result.past?.length || 0} past videos from ${result.channelTitle || 'channel'}.`
+        );
+      } else if (result?.error) {
+        notify('err', result.error);
+      }
+    } else {
+      setChannelSyncResult(null);
+    }
+  };
+
+  const handleCustomizeChannelVideo = (v: ChannelVideoEntry) => {
+    const existing = settings.streams.find(
+      (s) => (s.youtubeVideoId || extractYouTubeVideoId(s.youtubeUrl)) === v.videoId
+    );
+    if (existing) {
+      handleEditStream(existing);
+      return;
+    }
+    setDraft({
+      ...emptyDraft(),
+      title: v.title,
+      subtitle: v.metaText || '',
+      tournamentName: channelSyncResult?.channelTitle || 'Official Broadcast',
+      youtubeUrl: v.youtubeUrl,
+      streamVisibility: 'PUBLIC',
+      status: v.status,
+      scheduledAt: v.scheduledAt || '',
+      cricHeroesUrl: channelCricHeroesUrl.trim() || '',
+      isFeatured: v.status === 'LIVE',
+    });
+    setIsEditing(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSaveStream = async (e: React.FormEvent) => {
@@ -333,6 +457,142 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
           <span>{feedback.msg}</span>
         </div>
       )}
+
+      {/* YouTube Channel Auto-Sync Configuration */}
+      <form
+        onSubmit={handleSaveAndSyncChannel}
+        className="bg-zinc-900/40 border border-white/10 rounded-3xl p-6 space-y-5"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-black uppercase tracking-wider text-white flex items-center gap-2">
+              <Youtube className="w-4 h-4 text-red-500" />
+              YouTube Channel Auto-Sync (No API Key Needed)
+            </h3>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Paste your YouTube channel link to automatically pull all ongoing live, upcoming, and past videos with their YouTube titles onto /live.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <label className="inline-flex items-center gap-2 text-xs font-semibold text-zinc-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoSyncChannel}
+                onChange={(e) => setAutoSyncChannel(e.target.checked)}
+                className="w-4 h-4 rounded accent-red-600"
+              />
+              Auto-Sync Enabled
+            </label>
+            <button
+              type="submit"
+              disabled={saving || syncingChannel}
+              className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-black uppercase tracking-wider inline-flex items-center gap-2 transition-colors shrink-0 disabled:opacity-50 whitespace-nowrap"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncingChannel ? 'animate-spin' : ''}`} />
+              {syncingChannel ? 'Syncing...' : 'Save & Sync Channel'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
+              YouTube Channel URL (@handle or /channel/UC...)
+            </label>
+            <input
+              type="text"
+              value={channelUrl}
+              onChange={(e) => setChannelUrl(e.target.value)}
+              placeholder="https://www.youtube.com/@YourChannelName"
+              className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm font-semibold text-white outline-none focus:border-red-500"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
+              Default CricHeroes Tournament Link for Channel Streams (Optional)
+            </label>
+            <input
+              type="url"
+              value={channelCricHeroesUrl}
+              onChange={(e) => setChannelCricHeroesUrl(e.target.value)}
+              placeholder="https://cricheroes.com/tournament/123456/Tournament-Name"
+              className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-amber-400"
+            />
+          </div>
+        </div>
+
+        {channelSyncResult && (
+          <div className="rounded-2xl bg-black/50 border border-white/10 p-4 space-y-4">
+            {channelSyncResult.ok ? (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="font-bold text-white flex items-center gap-2">
+                    <span className="text-emerald-400">Synced:</span>
+                    <span>{channelSyncResult.channelTitle || 'YouTube Channel'}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 font-mono tabular-nums text-[11px]">
+                    <span className="text-red-400 font-bold">
+                      {channelSyncResult.live?.length || 0} Live
+                    </span>
+                    <span className="text-amber-300 font-bold">
+                      {channelSyncResult.upcoming?.length || 0} Upcoming
+                    </span>
+                    <span className="text-zinc-400">
+                      {channelSyncResult.past?.length || 0} Past Videos
+                    </span>
+                  </div>
+                </div>
+
+                {(channelSyncResult.all?.length || 0) > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-1">
+                    {channelSyncResult.all!.slice(0, 12).map((v) => (
+                      <div
+                        key={v.videoId}
+                        className="rounded-xl bg-zinc-900/70 border border-white/10 p-3 flex flex-col justify-between gap-2.5"
+                      >
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          <img
+                            src={v.thumbnailUrl}
+                            alt={v.title}
+                            className="w-20 aspect-video rounded-lg object-cover bg-black shrink-0"
+                          />
+                          <div className="min-w-0 space-y-1">
+                            <span
+                              className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                                v.status === 'LIVE'
+                                  ? 'bg-red-600 text-white'
+                                  : v.status === 'UPCOMING'
+                                  ? 'bg-amber-400 text-black'
+                                  : 'bg-zinc-700 text-zinc-200'
+                              }`}
+                            >
+                              {v.status === 'ENDED' ? 'PAST' : v.status}
+                            </span>
+                            <div className="text-xs font-bold text-white line-clamp-2">
+                              {v.title}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCustomizeChannelVideo(v)}
+                          className="w-full py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-cyan-500/20 border border-white/10 hover:border-cyan-400/40 text-[11px] font-bold text-cyan-300 transition-colors"
+                        >
+                          Customize / Attach CricHeroes
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-xs text-rose-300 font-semibold">
+                {channelSyncResult.error || 'Could not extract channel videos.'}
+              </div>
+            )}
+          </div>
+        )}
+      </form>
 
       {/* Offline / No Live Video Fallback Settings */}
       <form
@@ -586,7 +846,7 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5 flex items-center gap-1.5">
                   <Palette className="w-3.5 h-3.5 text-cyan-400" />
-                  Player Gradient Theme (Play / Pause / Timeline)
+                  Broadcast Accent Theme (OTT Scoreboard & Actions)
                 </label>
                 <select
                   value={draft.playerGradientPreset}

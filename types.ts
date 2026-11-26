@@ -777,6 +777,9 @@ export interface LiveStreamItem {
     playerGradientPreset?: PlayerGradientPreset;
     scoreSnapshot?: LiveScoreSnapshot;
     isFeatured?: boolean;
+    fromChannel?: boolean;
+    metaText?: string;
+    durationText?: string;
     createdAt: number;
     updatedAt: number;
 }
@@ -784,6 +787,9 @@ export interface LiveStreamItem {
 export interface LiveStreamSettings {
     noLiveFallbackTitle: string;
     noLiveFallbackSubtitle?: string;
+    youtubeChannelUrl?: string;
+    youtubeChannelCricHeroesUrl?: string;
+    autoSyncChannel?: boolean;
     streams: LiveStreamItem[];
     updatedAt: number;
 }

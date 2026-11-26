@@ -842,20 +842,23 @@ app.post(['/api/reconcile-payment', '/reconcile-payment'], async (req: Request, 
 });
 
 /**
- * 5. CRICHEROES TOURNAMENT / SCOREBOARD METADATA FETCHER
- * Fetches OpenGraph & Next.js __NEXT_DATA__ metadata from official CricHeroes URLs
- * without browser CORS errors and reports whether iframe embedding is permitted.
+ * 5. CRICHEROES PUBLIC WEBSITE DATA EXTRACTOR (No API key required)
+ * Fetches publicly visible OpenGraph & Next.js __NEXT_DATA__ across CricHeroes tournament sub-pages
+ * (/matches/live-matches, /point-table, /leaderboard, /matches/teams) and match scorecard URLs.
  */
 app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
     try {
         const rawUrl = String(req.query.url || '').trim();
-        if (!rawUrl) {
+        const rawMatchUrl = String(req.query.matchUrl || '').trim();
+
+        if (!rawUrl && !rawMatchUrl) {
             return res.status(400).json({ ok: false, error: 'Missing url query parameter' });
         }
 
+        const primaryRaw = rawUrl || rawMatchUrl;
         let targetUrl: URL;
         try {
-            targetUrl = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
+            targetUrl = new URL(/^https?:\/\//i.test(primaryRaw) ? primaryRaw : `https://${primaryRaw}`);
         } catch {
             return res.status(400).json({ ok: false, error: 'Invalid URL format' });
         }
@@ -865,41 +868,113 @@ app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
             return res.status(400).json({ ok: false, error: 'Only official cricheroes.com / cricheroes.in links are supported' });
         }
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const pathParts = targetUrl.pathname.split('/').filter(Boolean);
+        let tournamentId: string | undefined;
+        let tournamentSlug: string | undefined;
+        let tournamentRoot = targetUrl.toString();
+        const tIdx = pathParts.findIndex((p) => p === 'tournament-detail' || p === 'tournament');
+        if (tIdx !== -1 && pathParts[tIdx + 1]) {
+            tournamentId = pathParts[tIdx + 1];
+            tournamentSlug = pathParts[tIdx + 2] || 'tournament';
+            tournamentRoot = `${targetUrl.protocol}//${targetUrl.host}/${pathParts[tIdx]}/${tournamentId}/${tournamentSlug}`;
+        }
 
-        const upstream = await fetch(targetUrl.toString(), {
-            method: 'GET',
-            redirect: 'follow',
-            signal: controller.signal,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9'
+        const slugTitle = tournamentSlug
+            ? tournamentSlug.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).trim()
+            : '';
+
+        let matchId: string | undefined;
+        const mUrlStr = rawMatchUrl || rawUrl;
+        try {
+            const mUrl = new URL(/^https?:\/\//i.test(mUrlStr) ? mUrlStr : `https://${mUrlStr}`);
+            const mParts = mUrl.pathname.split('/').filter(Boolean);
+            const sIdx = mParts.findIndex((p) => ['scorecard', 'live', 'match-detail'].includes(p));
+            if (sIdx !== -1 && mParts[sIdx + 1] && /^\d+$/.test(mParts[sIdx + 1])) {
+                matchId = mParts[sIdx + 1];
             }
-        });
-        clearTimeout(timeoutId);
+        } catch {
+            // ignore
+        }
 
-        const xFrame = (upstream.headers.get('x-frame-options') || '').toLowerCase();
-        const csp = (upstream.headers.get('content-security-policy') || '').toLowerCase();
-        const iframeBlocked =
-            xFrame.includes('deny') ||
-            xFrame.includes('sameorigin') ||
-            (csp.includes('frame-ancestors') && !csp.includes('frame-ancestors *'));
+        const fetchCricPage = async (pageUrl: string) => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 7500);
+            try {
+                const upstream = await fetch(pageUrl, {
+                    method: 'GET',
+                    redirect: 'follow',
+                    signal: controller.signal,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                    }
+                });
+                clearTimeout(timeoutId);
+                const xFrame = (upstream.headers.get('x-frame-options') || '').toLowerCase();
+                const csp = (upstream.headers.get('content-security-policy') || '').toLowerCase();
+                const iframeBlocked =
+                    xFrame.includes('deny') ||
+                    xFrame.includes('sameorigin') ||
+                    (csp.includes('frame-ancestors') && !csp.includes('frame-ancestors *'));
 
-        if (!upstream.ok) {
+                if (!upstream.ok) {
+                    return { ok: false, status: upstream.status, iframeBlocked: true, html: '' };
+                }
+                const html = await upstream.text();
+                return { ok: true, status: upstream.status, iframeBlocked, html };
+            } catch {
+                clearTimeout(timeoutId);
+                return { ok: false, status: 0, iframeBlocked: true, html: '' };
+            }
+        };
+
+        const extractPageProps = (html: string) => {
+            const m = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+            if (!m?.[1]) return null;
+            try {
+                const parsedNext = JSON.parse(m[1]);
+                return parsedNext?.props?.pageProps || null;
+            } catch {
+                return null;
+            }
+        };
+
+        const primaryRes = await fetchCricPage(targetUrl.toString());
+
+        if (!primaryRes.ok) {
             return res.json({
                 ok: false,
-                status: upstream.status,
+                source: 'PROTECTED',
+                protectedByCloudflare: primaryRes.status === 403,
+                status: primaryRes.status,
+                fetchedAt: Date.now(),
+                tournamentId,
+                matchId,
+                title: slugTitle || 'CricHeroes Tournament',
                 iframeBlocked: true,
                 url: targetUrl.toString(),
-                error: `CricHeroes returned HTTP ${upstream.status}`
+                error: primaryRes.status === 403
+                    ? 'CricHeroes website returned Cloudflare protection (HTTP 403) to automated background fetch.'
+                    : `CricHeroes returned HTTP ${primaryRes.status}`
             });
         }
 
-        const html = await upstream.text();
+        // Also fetch public sub-pages in parallel when primary page succeeded!
+        const subFetches = tournamentId
+            ? await Promise.all([
+                fetchCricPage(`${tournamentRoot}/matches/live-matches`),
+                fetchCricPage(`${tournamentRoot}/point-table`),
+                fetchCricPage(`${tournamentRoot}/leaderboard`),
+                fetchCricPage(`${tournamentRoot}/matches/teams`),
+                rawMatchUrl ? fetchCricPage(rawMatchUrl) : Promise.resolve({ ok: false, status: 0, iframeBlocked: true, html: '' })
+              ])
+            : [null, null, null, null, rawMatchUrl ? await fetchCricPage(rawMatchUrl) : null];
 
-        const extractMeta = (pattern: RegExp): string => {
+        const extractMeta = (html: string, pattern: RegExp): string => {
             const match = html.match(pattern);
             return match?.[1]
                 ? match[1]
@@ -912,49 +987,55 @@ app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
                 : '';
         };
 
+        const html = primaryRes.html;
         const title =
-            extractMeta(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
-            extractMeta(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i) ||
-            extractMeta(/<title[^>]*>([^<]+)<\/title>/i);
+            extractMeta(html, /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
+            extractMeta(html, /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i) ||
+            extractMeta(html, /<title[^>]*>([^<]+)<\/title>/i) ||
+            slugTitle;
 
         const description =
-            extractMeta(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i) ||
-            extractMeta(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i) ||
-            extractMeta(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i);
+            extractMeta(html, /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i) ||
+            extractMeta(html, /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i) ||
+            extractMeta(html, /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i);
 
         const imageUrl =
-            extractMeta(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-            extractMeta(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+            extractMeta(html, /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+            extractMeta(html, /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
 
-        let nextDataSummary: any = null;
-        const nextMatch = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
-        if (nextMatch?.[1]) {
-            try {
-                const parsedNext = JSON.parse(nextMatch[1]);
-                const pageProps = parsedNext?.props?.pageProps || {};
-                const rawJson = JSON.stringify(pageProps);
-                // Keep response compact & inspect top-level tournament/match keys
-                if (rawJson.length <= 250000) {
-                    nextDataSummary = {
-                        tournamentDetail: pageProps.tournamentDetail || pageProps.tournament || pageProps.tournamentInfo || null,
-                        matches: Array.isArray(pageProps.matches) ? pageProps.matches.slice(0, 20) :
-                                 Array.isArray(pageProps.matchList) ? pageProps.matchList.slice(0, 20) : null,
-                        pointsTable: Array.isArray(pageProps.pointsTable) ? pageProps.pointsTable.slice(0, 30) :
-                                     Array.isArray(pageProps.pointTable) ? pageProps.pointTable.slice(0, 30) : null,
-                        leaderboard: pageProps.leaderboard || pageProps.topPerformers || pageProps.stats || null,
-                        teams: Array.isArray(pageProps.teams) ? pageProps.teams.slice(0, 30) : null,
-                        scorecard: pageProps.scorecard || pageProps.matchDetail || null
-                    };
-                }
-            } catch {
-                // ignore malformed JSON
-            }
-        }
+        const primaryProps = extractPageProps(html) || {};
+        const matchesProps = subFetches[0]?.ok ? extractPageProps(subFetches[0].html) : null;
+        const pointsProps = subFetches[1]?.ok ? extractPageProps(subFetches[1].html) : null;
+        const leaderProps = subFetches[2]?.ok ? extractPageProps(subFetches[2].html) : null;
+        const teamsProps = subFetches[3]?.ok ? extractPageProps(subFetches[3].html) : null;
+        const scorecardProps = subFetches[4]?.ok ? extractPageProps(subFetches[4].html) : null;
+
+        const nextDataSummary = {
+            tournamentDetail: primaryProps.tournamentDetail || primaryProps.tournament || primaryProps.tournamentInfo || null,
+            matches:
+                matchesProps?.matches || matchesProps?.matchList ||
+                primaryProps.matches || primaryProps.matchList || null,
+            pointsTable:
+                pointsProps?.pointsTable || pointsProps?.pointTable ||
+                primaryProps.pointsTable || primaryProps.pointTable || null,
+            leaderboard:
+                leaderProps?.leaderboard || leaderProps?.topPerformers || leaderProps?.stats ||
+                primaryProps.leaderboard || primaryProps.topPerformers || primaryProps.stats || null,
+            teams:
+                teamsProps?.teams || primaryProps.teams || null,
+            scorecard:
+                scorecardProps?.scorecard || scorecardProps?.matchDetail ||
+                primaryProps.scorecard || primaryProps.matchDetail || null,
+        };
 
         return res.json({
             ok: true,
+            source: 'CRICHEROES_WEB',
+            fetchedAt: Date.now(),
+            tournamentId,
+            matchId,
             url: targetUrl.toString(),
-            iframeBlocked,
+            iframeBlocked: primaryRes.iframeBlocked,
             title,
             description,
             imageUrl,
@@ -963,8 +1044,259 @@ app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
     } catch (err: any) {
         return res.json({
             ok: false,
+            source: 'ERROR',
+            fetchedAt: Date.now(),
             iframeBlocked: true,
             error: err?.name === 'AbortError' ? 'CricHeroes request timed out' : (err?.message || 'Unable to reach CricHeroes')
+        });
+    }
+});
+
+/**
+ * 6. YOUTUBE PUBLIC CHANNEL AUTO-SYNC (No API key required)
+ * Extracts Live, Upcoming, and Past videos + titles directly from a YouTube Channel URL
+ * (supports @handle, /channel/UC..., /c/..., /user/...).
+ */
+app.get('/api/youtube-channel-videos', async (req: Request, res: Response) => {
+    try {
+        const rawChannel = String(req.query.channelUrl || '').trim();
+        if (!rawChannel) {
+            return res.status(400).json({ ok: false, error: 'Missing channelUrl query parameter' });
+        }
+
+        let normalized = rawChannel;
+        if (!/^https?:\/\//i.test(normalized)) {
+            if (normalized.startsWith('@')) {
+                normalized = `https://www.youtube.com/${normalized}`;
+            } else if (/^UC[a-zA-Z0-9_-]{20,}$/.test(normalized)) {
+                normalized = `https://www.youtube.com/channel/${normalized}`;
+            } else {
+                normalized = `https://${normalized}`;
+            }
+        }
+
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(normalized);
+        } catch {
+            return res.status(400).json({ ok: false, error: 'Invalid YouTube channel URL' });
+        }
+
+        const host = parsedUrl.hostname.replace(/^www\./i, '').replace(/^m\./i, '').toLowerCase();
+        if (host !== 'youtube.com') {
+            return res.status(400).json({ ok: false, error: 'URL must be an official youtube.com channel link' });
+        }
+
+        // Clean trailing tab suffixes like /videos, /streams, /featured, /live
+        const cleanPath = parsedUrl.pathname
+            .replace(/\/(videos|streams|live|featured|playlists|shorts|about)\/?$/i, '')
+            .replace(/\/+$/, '');
+        const baseChannelUrl = `https://www.youtube.com${cleanPath}`;
+
+        const ytHeaders: Record<string, string> = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+        };
+
+        const fetchTab = async (tabUrl: string) => {
+            const ac = new AbortController();
+            const tid = setTimeout(() => ac.abort(), 9000);
+            try {
+                const r = await fetch(tabUrl, { headers: ytHeaders, signal: ac.signal });
+                clearTimeout(tid);
+                if (!r.ok) return '';
+                return await r.text();
+            } catch {
+                clearTimeout(tid);
+                return '';
+            }
+        };
+
+        const [streamsHtml, videosHtml] = await Promise.all([
+            fetchTab(`${baseChannelUrl}/streams`),
+            fetchTab(`${baseChannelUrl}/videos`),
+        ]);
+
+        const primaryHtml = streamsHtml || videosHtml;
+        if (!primaryHtml) {
+            return res.json({ ok: false, error: 'Could not reach YouTube channel page.' });
+        }
+
+        const channelId =
+            primaryHtml.match(/"externalId":"(UC[a-zA-Z0-9_-]+)"/)?.[1] ||
+            primaryHtml.match(/"browseId":"(UC[a-zA-Z0-9_-]+)"/)?.[1] ||
+            '';
+
+        const channelTitle =
+            primaryHtml.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+            primaryHtml.match(/<meta[^>]+name=["']title["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+            cleanPath.replace(/^\//, '');
+
+        interface ExtractedVideo {
+            videoId: string;
+            title: string;
+            status: 'LIVE' | 'UPCOMING' | 'ENDED';
+            metaText: string;
+            durationText: string;
+            scheduledAt: string;
+            thumbnailUrl: string;
+            youtubeUrl: string;
+            isStream: boolean;
+        }
+
+        const parseYtTabHtml = (html: string, isStreamTab: boolean): ExtractedVideo[] => {
+            if (!html) return [];
+            const match = html.match(/var ytInitialData = (\{[\s\S]*?\});<\/script>/);
+            if (!match?.[1]) return [];
+
+            let data: any;
+            try {
+                data = JSON.parse(match[1]);
+            } catch {
+                return [];
+            }
+
+            const items: ExtractedVideo[] = [];
+            const walk = (node: any) => {
+                if (!node || typeof node !== 'object') return;
+
+                // Format A: modern lockupViewModel
+                if (node.lockupViewModel && node.lockupViewModel.contentId) {
+                    const lm = node.lockupViewModel;
+                    const vid = String(lm.contentId || '').trim();
+                    if (/^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+                        const meta = lm.metadata?.lockupMetadataViewModel;
+                        const title = meta?.title?.content || '';
+                        const rows: string[] = (meta?.metadata?.contentMetadataViewModel?.metadataRows || [])
+                            .flatMap((r: any) => (r.metadataParts || []).map((p: any) => p.text?.content || ''))
+                            .filter(Boolean);
+                        const badges: any[] = [];
+                        for (const ov of lm.contentImage?.thumbnailViewModel?.overlays || []) {
+                            for (const b of ov.thumbnailBottomOverlayViewModel?.badges || []) {
+                                if (b.thumbnailBadgeViewModel) badges.push(b.thumbnailBadgeViewModel);
+                            }
+                        }
+
+                        const isLive =
+                            badges.some((b) => String(b.badgeStyle || '').includes('LIVE') || /^live$/i.test(b.text || '')) ||
+                            rows.some((r) => /watching/i.test(r));
+                        const isUpcoming =
+                            !isLive &&
+                            (badges.some((b) => String(b.badgeStyle || '').includes('UPCOMING') || /upcoming|premiere|scheduled/i.test(b.text || '')) ||
+                                rows.some((r) => /scheduled|premieres|waiting/i.test(r)));
+
+                        const thumbs = lm.contentImage?.thumbnailViewModel?.image?.sources || [];
+                        const thumbUrl = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+                        const metaJoined = rows.join(' • ');
+                        const schedulePart = rows.find((r) => /scheduled|premieres/i.test(r)) || '';
+
+                        items.push({
+                            videoId: vid,
+                            title: title || `Stream ${vid}`,
+                            status: isLive ? 'LIVE' : isUpcoming ? 'UPCOMING' : 'ENDED',
+                            metaText: metaJoined,
+                            durationText: !isLive && !isUpcoming ? (badges[0]?.text || '') : '',
+                            scheduledAt: schedulePart,
+                            thumbnailUrl: thumbUrl,
+                            youtubeUrl: `https://www.youtube.com/watch?v=${vid}`,
+                            isStream: isStreamTab,
+                        });
+                    }
+                    return;
+                }
+
+                // Format B: classic videoRenderer / gridVideoRenderer
+                const vr = node.videoRenderer || node.gridVideoRenderer;
+                if (vr && vr.videoId) {
+                    const vid = String(vr.videoId).trim();
+                    if (/^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+                        const title =
+                            vr.title?.runs?.map((r: any) => r.text).join('') ||
+                            vr.title?.simpleText ||
+                            `Video ${vid}`;
+                        const badgeText = (vr.badges || [])
+                            .map((b: any) => b.metadataBadgeRenderer?.label || b.metadataBadgeRenderer?.style || '')
+                            .join(' ');
+                        const overlayStyles = (vr.thumbnailOverlays || [])
+                            .map((o: any) => o.thumbnailOverlayTimeStatusRenderer?.style || o.thumbnailOverlayTimeStatusRenderer?.text?.simpleText || '')
+                            .join(' ');
+                        const isLive = /LIVE/i.test(badgeText) || /LIVE/i.test(overlayStyles);
+                        const isUpcoming = !isLive && (Boolean(vr.upcomingEventData) || /UPCOMING/i.test(overlayStyles));
+
+                        let scheduledAt = '';
+                        if (vr.upcomingEventData?.startTime) {
+                            const ts = Number(vr.upcomingEventData.startTime) * 1000;
+                            if (Number.isFinite(ts) && ts > 0) {
+                                scheduledAt = new Date(ts).toLocaleString([], {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                });
+                            }
+                        }
+
+                        const publishedText = vr.publishedTimeText?.simpleText || '';
+                        const viewText = vr.shortViewCountText?.simpleText || '';
+                        const thumbs = vr.thumbnail?.thumbnails || [];
+                        const thumbUrl = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+
+                        items.push({
+                            videoId: vid,
+                            title,
+                            status: isLive ? 'LIVE' : isUpcoming ? 'UPCOMING' : 'ENDED',
+                            metaText: [viewText, publishedText].filter(Boolean).join(' • '),
+                            durationText: vr.lengthText?.simpleText || '',
+                            scheduledAt: scheduledAt || (isUpcoming ? publishedText : ''),
+                            thumbnailUrl: thumbUrl,
+                            youtubeUrl: `https://www.youtube.com/watch?v=${vid}`,
+                            isStream: isStreamTab,
+                        });
+                    }
+                    return;
+                }
+
+                if (Array.isArray(node)) {
+                    for (const child of node) walk(child);
+                } else {
+                    for (const val of Object.values(node)) walk(val);
+                }
+            };
+
+            walk(data);
+            return items;
+        };
+
+        const streamItems = parseYtTabHtml(streamsHtml, true);
+        const videoItems = parseYtTabHtml(videosHtml, false);
+
+        // Merge & deduplicate by videoId (prioritize LIVE > UPCOMING > streams tab > videos tab)
+        const byId = new Map<string, ExtractedVideo>();
+        const priority = { LIVE: 3, UPCOMING: 2, ENDED: 1 };
+        for (const item of [...streamItems, ...videoItems]) {
+            const prev = byId.get(item.videoId);
+            if (!prev || priority[item.status] > priority[prev.status]) {
+                byId.set(item.videoId, item);
+            }
+        }
+
+        const all = Array.from(byId.values());
+        return res.json({
+            ok: true,
+            fetchedAt: Date.now(),
+            channelId,
+            channelTitle,
+            channelUrl: baseChannelUrl,
+            live: all.filter((v) => v.status === 'LIVE'),
+            upcoming: all.filter((v) => v.status === 'UPCOMING'),
+            past: all.filter((v) => v.status === 'ENDED'),
+            all,
+        });
+    } catch (err: any) {
+        return res.json({
+            ok: false,
+            error: err?.message || 'Failed to read YouTube channel videos',
         });
     }
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -11,10 +11,11 @@ import {
   Radio,
   Trophy,
   Tv,
+  Youtube,
 } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuction } from '../hooks/useAuction';
-import { LiveStreamItem, LiveStreamSettings, Match } from '../types';
+import { LiveStreamItem, LiveStreamSettings, LiveStreamStatus, Match } from '../types';
 import {
   extractYouTubeVideoId,
   getYouTubeThumbnail,
@@ -27,15 +28,33 @@ const DEFAULT_FALLBACK_TITLE = 'No Live Broadcast On Air Right Now';
 const DEFAULT_FALLBACK_SUBTITLE =
   'Check upcoming fixtures below or follow live tournament scores on SM SPORTS.';
 
+interface ChannelVideoEntry {
+  videoId: string;
+  title: string;
+  status: LiveStreamStatus;
+  metaText?: string;
+  durationText?: string;
+  scheduledAt?: string;
+  thumbnailUrl?: string;
+  youtubeUrl: string;
+}
+
 const LiveStreamCenter: React.FC = () => {
   const { state } = useAuction();
   const [searchParams, setSearchParams] = useSearchParams();
   const [settings, setSettings] = useState<LiveStreamSettings>({
     noLiveFallbackTitle: DEFAULT_FALLBACK_TITLE,
     noLiveFallbackSubtitle: DEFAULT_FALLBACK_SUBTITLE,
+    youtubeChannelUrl: '',
+    youtubeChannelCricHeroesUrl: '',
+    autoSyncChannel: true,
     streams: [],
     updatedAt: 0,
   });
+  const [channelSync, setChannelSync] = useState<{
+    channelTitle: string;
+    videos: ChannelVideoEntry[];
+  }>({ channelTitle: '', videos: [] });
   const [loading, setLoading] = useState(true);
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(
     searchParams.get('stream')
@@ -54,6 +73,9 @@ const LiveStreamCenter: React.FC = () => {
               noLiveFallbackTitle: data.noLiveFallbackTitle?.trim() || DEFAULT_FALLBACK_TITLE,
               noLiveFallbackSubtitle:
                 data.noLiveFallbackSubtitle?.trim() || DEFAULT_FALLBACK_SUBTITLE,
+              youtubeChannelUrl: data.youtubeChannelUrl?.trim() || '',
+              youtubeChannelCricHeroesUrl: data.youtubeChannelCricHeroesUrl?.trim() || '',
+              autoSyncChannel: data.autoSyncChannel !== false,
               streams: Array.isArray(data.streams) ? data.streams : [],
               updatedAt: data.updatedAt || Date.now(),
             });
@@ -61,6 +83,9 @@ const LiveStreamCenter: React.FC = () => {
             setSettings({
               noLiveFallbackTitle: DEFAULT_FALLBACK_TITLE,
               noLiveFallbackSubtitle: DEFAULT_FALLBACK_SUBTITLE,
+              youtubeChannelUrl: '',
+              youtubeChannelCricHeroesUrl: '',
+              autoSyncChannel: true,
               streams: [],
               updatedAt: 0,
             });
@@ -74,31 +99,101 @@ const LiveStreamCenter: React.FC = () => {
     return () => unsub();
   }, []);
 
+  const syncChannelVideos = useCallback(async (url: string) => {
+    if (!url.trim()) {
+      setChannelSync({ channelTitle: '', videos: [] });
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/youtube-channel-videos?channelUrl=${encodeURIComponent(url.trim())}`);
+      const data = await resp.json();
+      if (data?.ok && Array.isArray(data.all)) {
+        setChannelSync({
+          channelTitle: data.channelTitle || 'Official Channel',
+          videos: data.all,
+        });
+      }
+    } catch {
+      // Keep previous synced videos on transient network errors
+    }
+  }, []);
+
+  useEffect(() => {
+    const chUrl = settings.youtubeChannelUrl || '';
+    if (!chUrl || settings.autoSyncChannel === false) {
+      setChannelSync({ channelTitle: '', videos: [] });
+      return;
+    }
+
+    syncChannelVideos(chUrl);
+    const intervalId = window.setInterval(() => {
+      syncChannelVideos(chUrl);
+    }, 60000);
+    return () => window.clearInterval(intervalId);
+  }, [settings.youtubeChannelUrl, settings.autoSyncChannel, syncChannelVideos]);
+
+  const mergedStreams: LiveStreamItem[] = useMemo(() => {
+    const manual = settings.streams.map((s) => ({
+      ...s,
+      youtubeVideoId: s.youtubeVideoId || extractYouTubeVideoId(s.youtubeUrl) || '',
+    }));
+
+    const manualVideoIds = new Set(
+      manual.map((s) => s.youtubeVideoId).filter(Boolean)
+    );
+
+    const syncedItems: LiveStreamItem[] = channelSync.videos
+      .filter((v) => v.videoId && !manualVideoIds.has(v.videoId))
+      .map((v) => ({
+        id: `yt_${v.videoId}`,
+        title: v.title,
+        subtitle: v.metaText || '',
+        tournamentName: channelSync.channelTitle || 'SM SPORTS Official Channel',
+        youtubeUrl: v.youtubeUrl,
+        youtubeVideoId: v.videoId,
+        streamVisibility: 'PUBLIC',
+        status: v.status,
+        scheduledAt: v.scheduledAt || '',
+        cricHeroesUrl: settings.youtubeChannelCricHeroesUrl || '',
+        cricHeroesMatchUrl: '',
+        linkedMatchId: '',
+        playerGradientPreset: 'JIO_GOLD',
+        isFeatured: v.status === 'LIVE',
+        fromChannel: true,
+        metaText: v.metaText,
+        durationText: v.durationText,
+        createdAt: 0,
+        updatedAt: 0,
+      }));
+
+    return [...manual, ...syncedItems];
+  }, [settings.streams, settings.youtubeChannelCricHeroesUrl, channelSync]);
+
   const liveStreams = useMemo(
-    () => settings.streams.filter((s) => s.status === 'LIVE'),
-    [settings.streams]
+    () => mergedStreams.filter((s) => s.status === 'LIVE'),
+    [mergedStreams]
   );
 
   const upcomingStreams = useMemo(
-    () => settings.streams.filter((s) => s.status === 'UPCOMING'),
-    [settings.streams]
+    () => mergedStreams.filter((s) => s.status === 'UPCOMING'),
+    [mergedStreams]
   );
 
   const endedStreams = useMemo(
-    () => settings.streams.filter((s) => s.status === 'ENDED'),
-    [settings.streams]
+    () => mergedStreams.filter((s) => s.status === 'ENDED'),
+    [mergedStreams]
   );
 
   const activeStream: LiveStreamItem | null = useMemo(() => {
     if (selectedStreamId) {
-      const explicit = settings.streams.find((s) => s.id === selectedStreamId);
+      const explicit = mergedStreams.find((s) => s.id === selectedStreamId);
       if (explicit) return explicit;
     }
     const featuredLive = liveStreams.find((s) => s.isFeatured);
     if (featuredLive) return featuredLive;
     if (liveStreams.length > 0) return liveStreams[0];
     return null;
-  }, [selectedStreamId, settings.streams, liveStreams]);
+  }, [selectedStreamId, mergedStreams, liveStreams]);
 
   useEffect(() => {
     const matchId = activeStream?.linkedMatchId;
@@ -183,6 +278,12 @@ const LiveStreamCenter: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
+            {channelSync.channelTitle && (
+              <span className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-zinc-300 text-xs font-semibold whitespace-nowrap">
+                <Youtube className="w-3.5 h-3.5 text-red-500" />
+                <span>{channelSync.channelTitle}</span>
+              </span>
+            )}
             {liveStreams.length > 0 ? (
               <button
                 type="button"
@@ -443,7 +544,7 @@ const LiveStreamCenter: React.FC = () => {
           )}
         </section>
 
-        {/* Past / Replay Broadcasts */}
+        {/* Past / Replay Broadcasts & Channel Videos */}
         {endedStreams.length > 0 && (
           <section className="space-y-4">
             <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-3">
@@ -453,9 +554,12 @@ const LiveStreamCenter: React.FC = () => {
                   className="text-lg font-bold text-white tracking-tight"
                   style={{ fontFamily: "'Outfit', sans-serif" }}
                 >
-                  Recent Broadcasts & Highlights
+                  Recent Broadcasts &amp; Channel Videos
                 </h3>
               </div>
+              <span className="text-xs font-mono tabular-nums text-zinc-400">
+                {endedStreams.length} Videos
+              </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {endedStreams.map((stream) => {
@@ -465,14 +569,14 @@ const LiveStreamCenter: React.FC = () => {
                 return (
                   <div
                     key={stream.id}
-                    className="rounded-2xl bg-[#0D1322] border border-white/10 overflow-hidden flex flex-col group"
+                    className="rounded-2xl bg-[#0D1322] border border-white/10 hover:border-cyan-400/35 overflow-hidden flex flex-col group transition-colors"
                   >
                     <div className="relative aspect-video bg-black overflow-hidden">
                       {thumb ? (
                         <img
                           src={thumb}
                           alt={stream.title}
-                          className="w-full h-full object-cover opacity-75 group-hover:scale-105 transition-transform duration-500"
+                          className="w-full h-full object-cover opacity-80 group-hover:scale-105 transition-transform duration-500"
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
@@ -480,6 +584,11 @@ const LiveStreamCenter: React.FC = () => {
                         </div>
                       )}
                       <div className="absolute inset-0 bg-gradient-to-t from-[#0D1322] via-transparent to-transparent" />
+                      {stream.durationText && (
+                        <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded bg-black/80 border border-white/10 text-[10px] font-mono tabular-nums text-white">
+                          {stream.durationText}
+                        </span>
+                      )}
                       <button
                         type="button"
                         onClick={() => handleSelectStream(stream)}
@@ -487,26 +596,44 @@ const LiveStreamCenter: React.FC = () => {
                       >
                         <span className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white text-black text-xs font-bold">
                           <Play className="w-4 h-4 fill-current" />
-                          Watch Replay
+                          Watch Video
                         </span>
                       </button>
                     </div>
-                    <div className="p-4 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-xs text-zinc-400 truncate">
+                    <div className="p-4 flex-1 flex flex-col justify-between gap-3">
+                      <div className="space-y-1 min-w-0">
+                        <div className="text-xs text-cyan-300 font-semibold truncate">
                           {stream.tournamentName}
                         </div>
-                        <h4 className="text-sm font-bold text-white truncate">
+                        <h4 className="text-sm font-bold text-white line-clamp-2">
                           {stream.title}
                         </h4>
+                        {stream.metaText && (
+                          <div className="text-[11px] text-zinc-400 truncate">
+                            {stream.metaText}
+                          </div>
+                        )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleSelectStream(stream)}
-                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-semibold text-white shrink-0 whitespace-nowrap"
-                      >
-                        Watch
-                      </button>
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectStream(stream)}
+                          className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-semibold text-white shrink-0 whitespace-nowrap"
+                        >
+                          Watch Now
+                        </button>
+                        {stream.cricHeroesUrl && (
+                          <a
+                            href={stream.cricHeroesUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300 hover:underline whitespace-nowrap"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            CricHeroes
+                          </a>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

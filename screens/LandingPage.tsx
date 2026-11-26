@@ -129,9 +129,47 @@ const LandingPage: React.FC = () => {
       };
   }, []);
 
-  const liveStreamsList = (liveSettings?.streams || []).filter(s => s.status === 'LIVE');
-  const upcomingStreamsList = (liveSettings?.streams || []).filter(s => s.status === 'UPCOMING');
-  const featuredLiveStream = liveStreamsList.find(s => s.isFeatured) || liveStreamsList[0] || null;
+  const [channelLiveStreams, setChannelLiveStreams] = useState<Array<{ id: string; title: string; status: 'LIVE' | 'UPCOMING' | 'ENDED' }>>([]);
+
+  useEffect(() => {
+    const chUrl = liveSettings?.youtubeChannelUrl?.trim();
+    if (!chUrl || liveSettings?.autoSyncChannel === false) {
+      setChannelLiveStreams([]);
+      return;
+    }
+    let active = true;
+    fetch(`/api/youtube-channel-videos?channelUrl=${encodeURIComponent(chUrl)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (active && data?.ok && Array.isArray(data.all)) {
+          setChannelLiveStreams(
+            data.all.map((v: any) => ({
+              id: `yt_${v.videoId}`,
+              title: v.title,
+              status: v.status,
+            }))
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [liveSettings?.youtubeChannelUrl, liveSettings?.autoSyncChannel]);
+
+  const manualVideoIds = new Set(
+    (liveSettings?.streams || []).map((s) => s.youtubeVideoId || '').filter(Boolean)
+  );
+  const combinedLiveStatus = [
+    ...(liveSettings?.streams || []),
+    ...channelLiveStreams.filter((c) => !manualVideoIds.has(c.id.replace(/^yt_/, ''))),
+  ];
+  const liveStreamsList = combinedLiveStatus.filter((s) => s.status === 'LIVE');
+  const upcomingStreamsList = combinedLiveStatus.filter((s) => s.status === 'UPCOMING');
+  const featuredLiveStream =
+    (liveSettings?.streams || []).find((s) => s.status === 'LIVE' && s.isFeatured) ||
+    liveStreamsList[0] ||
+    null;
 
   const getStatusBadge = (status: string) => {
       const s = (status || '').toUpperCase();

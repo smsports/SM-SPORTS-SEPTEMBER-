@@ -114,8 +114,17 @@ export interface ParsedCricHeroesLinks {
   baseUrl: string;
   tournamentId?: string;
   tournamentSlug?: string;
+  tournamentTitle?: string;
   matchUrl?: string;
   sections: Record<CricHeroesSectionId, { label: string; url: string; description: string }>;
+}
+
+export function formatSlugTitle(slug?: string): string {
+  if (!slug) return '';
+  return slug
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
 }
 
 export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): ParsedCricHeroesLinks {
@@ -128,9 +137,9 @@ export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): Parse
       baseUrl: '',
       sections: {
         SCORECARD: { label: 'Live Scorecard', url: '', description: 'Full batting & bowling innings scorecard' },
-        LIVE_FEED: { label: 'Commentary', url: '', description: 'Ball-by-ball updates & match overview' },
+        LIVE_FEED: { label: 'Live Matches', url: '', description: 'Live ongoing matches & commentary feed' },
         POINTS_TABLE: { label: 'Points Table', url: '', description: 'Standings, wins, losses & net run rate' },
-        MATCHES: { label: 'Matches', url: '', description: 'Fixtures, live scores & completed results' },
+        MATCHES: { label: 'Past & Fixtures', url: '', description: 'Upcoming fixtures & completed results' },
         LEADERBOARD: { label: 'Leaderboard', url: '', description: 'Top batters, bowlers & tournament MVP' },
         TEAMS: { label: 'Teams', url: '', description: 'Participating squads & franchise rosters' },
         STATS: { label: 'Tournament Stats', url: '', description: 'Tournament milestones, sixes & records' },
@@ -146,6 +155,7 @@ export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): Parse
   let origin = 'https://cricheroes.com';
   let tournamentId: string | undefined;
   let tournamentSlug: string | undefined;
+  let tournamentTitle: string | undefined;
   let tournamentRoot = normalizedBase;
 
   try {
@@ -153,12 +163,11 @@ export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): Parse
     origin = `${parsed.protocol}//${parsed.host}`;
     const parts = parsed.pathname.split('/').filter(Boolean);
 
-    // Common CricHeroes tournament patterns:
-    // /tournament-detail/{id}/{slug}/... OR /tournament/{id}/{slug}/...
     const tIndex = parts.findIndex((p) => p === 'tournament-detail' || p === 'tournament');
     if (tIndex !== -1 && parts[tIndex + 1]) {
       tournamentId = parts[tIndex + 1];
       tournamentSlug = parts[tIndex + 2] || 'tournament';
+      tournamentTitle = formatSlugTitle(tournamentSlug);
       tournamentRoot = `${origin}/${parts[tIndex]}/${tournamentId}/${tournamentSlug}`;
     }
   } catch {
@@ -182,17 +191,18 @@ export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): Parse
     ? normalizedMatch.includes('/scorecard')
       ? normalizedMatch
       : `${normalizedMatch.replace(/\/+$/, '')}/scorecard`
-    : makeTournamentTabUrl('matches');
+    : makeTournamentTabUrl('matches/live-matches');
 
   const liveFeedUrl = normalizedMatch
     ? `${normalizedMatch.replace(/\/+$/, '')}/live`
-    : makeTournamentTabUrl('summary');
+    : makeTournamentTabUrl('matches/live-matches');
 
   return {
     isValid: true,
     baseUrl: normalizedBase,
     tournamentId,
     tournamentSlug,
+    tournamentTitle,
     matchUrl: normalizedMatch,
     sections: {
       SCORECARD: {
@@ -201,9 +211,9 @@ export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): Parse
         description: 'Batting, bowling, extras & fall of wickets',
       },
       LIVE_FEED: {
-        label: 'Commentary',
+        label: 'Live Matches',
         url: liveFeedUrl,
-        description: 'Live over-by-over flow & match summary',
+        description: 'Ongoing match tracker & live commentary',
       },
       POINTS_TABLE: {
         label: 'Points Table',
@@ -212,7 +222,7 @@ export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): Parse
       },
       MATCHES: {
         label: 'Matches',
-        url: makeTournamentTabUrl('matches'),
+        url: makeTournamentTabUrl('matches/past-matches'),
         description: 'Live, upcoming & completed match center',
       },
       LEADERBOARD: {
@@ -222,7 +232,7 @@ export function parseCricHeroesUrl(rawUrl?: string, rawMatchUrl?: string): Parse
       },
       TEAMS: {
         label: 'Teams',
-        url: makeTournamentTabUrl('teams'),
+        url: makeTournamentTabUrl('matches/teams'),
         description: 'Franchise teams & player rosters',
       },
       STATS: {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   Award,
@@ -7,6 +7,7 @@ import {
   ExternalLink,
   ListOrdered,
   MessageSquareText,
+  Radio,
   RefreshCw,
   Shield,
   Trophy,
@@ -25,6 +26,9 @@ import {
 
 interface CricHeroesMetaResponse {
   ok: boolean;
+  source?: string;
+  protectedByCloudflare?: boolean;
+  fetchedAt?: number;
   iframeBlocked?: boolean;
   title?: string;
   description?: string;
@@ -66,6 +70,8 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
   const [activeSection, setActiveSection] = useState<CricHeroesSectionId>('SCORECARD');
   const [cricMeta, setCricMeta] = useState<CricHeroesMetaResponse | null>(null);
   const [loadingMeta, setLoadingMeta] = useState(false);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [showEmbeddedFrame, setShowEmbeddedFrame] = useState(false);
 
   const theme =
@@ -79,40 +85,54 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
 
   const activeSectionInfo = parsedLinks.sections[activeSection];
 
-  const fetchCricHeroesMeta = async (targetUrl?: string) => {
-    const urlToFetch = targetUrl || parsedLinks.baseUrl;
-    if (!urlToFetch) {
+  const fetchCricHeroesMeta = useCallback(
+    async (targetUrl?: string) => {
+      const urlToFetch = targetUrl || parsedLinks.baseUrl;
+      if (!urlToFetch) {
+        setCricMeta(null);
+        return;
+      }
+      setLoadingMeta(true);
+      try {
+        const params = new URLSearchParams({ url: urlToFetch });
+        if (stream.cricHeroesMatchUrl) {
+          params.set('matchUrl', stream.cricHeroesMatchUrl);
+        }
+        const resp = await fetch(`/api/cricheroes-info?${params.toString()}`);
+        const data: CricHeroesMetaResponse = await resp.json();
+        setCricMeta(data);
+        setLastSyncedAt(data.fetchedAt || Date.now());
+      } catch {
+        setCricMeta({
+          ok: false,
+          iframeBlocked: true,
+          error: 'Could not sync live CricHeroes metadata.',
+        });
+      } finally {
+        setLoadingMeta(false);
+      }
+    },
+    [parsedLinks.baseUrl, stream.cricHeroesMatchUrl]
+  );
+
+  // Initial fetch & real-time 10-second polling while stream is LIVE
+  useEffect(() => {
+    setShowEmbeddedFrame(false);
+    if (!parsedLinks.isValid) {
       setCricMeta(null);
       return;
     }
-    setLoadingMeta(true);
-    try {
-      const resp = await fetch(
-        `/api/cricheroes-info?url=${encodeURIComponent(urlToFetch)}`
-      );
-      const data = await resp.json();
-      setCricMeta(data);
-    } catch {
-      setCricMeta({
-        ok: false,
-        iframeBlocked: true,
-        error: 'Could not sync live CricHeroes metadata.',
-      });
-    } finally {
-      setLoadingMeta(false);
-    }
-  };
 
-  useEffect(() => {
-    setShowEmbeddedFrame(false);
-    if (parsedLinks.isValid) {
-      fetchCricHeroesMeta(parsedLinks.baseUrl);
-    } else {
-      setCricMeta(null);
-    }
-  }, [parsedLinks.baseUrl]);
+    fetchCricHeroesMeta(parsedLinks.baseUrl);
 
-  // Derived Score Header from Linked SM SPORTS Match OR Super Admin Snapshot OR CricHeroes Meta
+    if (stream.status === 'LIVE' && autoSyncEnabled) {
+      const intervalId = window.setInterval(() => {
+        fetchCricHeroesMeta(parsedLinks.baseUrl);
+      }, 10000);
+      return () => window.clearInterval(intervalId);
+    }
+  }, [parsedLinks.isValid, parsedLinks.baseUrl, stream.status, autoSyncEnabled, fetchCricHeroesMeta]);
+
   const innings1 = linkedMatch?.innings?.[1];
   const innings2 = linkedMatch?.innings?.[2];
   const currentInn = linkedMatch
@@ -135,6 +155,26 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
   const parsedTeams: any[] = Array.isArray(cricMeta?.parsed?.teams)
     ? cricMeta!.parsed!.teams!
     : [];
+  const parsedScorecard: any = cricMeta?.parsed?.scorecard || null;
+  const parsedLeaderboard: any = cricMeta?.parsed?.leaderboard || null;
+
+  // Pick first active CricHeroes live match if match-list is populated
+  const liveCricMatch = useMemo(() => {
+    if (!parsedMatches.length) return null;
+    return (
+      parsedMatches.find((m: any) =>
+        String(m.status || m.match_status || '').toLowerCase().includes('live')
+      ) || parsedMatches[0]
+    );
+  }, [parsedMatches]);
+
+  const cricScoreInnings: any[] = useMemo(() => {
+    if (!parsedScorecard) return [];
+    if (Array.isArray(parsedScorecard)) return parsedScorecard;
+    if (Array.isArray(parsedScorecard.innings)) return parsedScorecard.innings;
+    if (Array.isArray(parsedScorecard.scorecard)) return parsedScorecard.scorecard;
+    return [];
+  }, [parsedScorecard]);
 
   return (
     <section className="rounded-2xl bg-[#0D1322] border border-white/10 overflow-hidden shadow-2xl">
@@ -142,32 +182,39 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
       <div className="p-4 sm:p-6 bg-gradient-to-r from-[#111A30] via-[#0E1629] to-[#131B2E] border-b border-white/10">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-400">
               <Trophy className="w-3.5 h-3.5 text-amber-400" />
-              <span className="text-zinc-200">{stream.tournamentName}</span>
-              {snap?.venue && (
-                <>
-                  <span className="text-zinc-600">•</span>
-                  <span>{snap.venue}</span>
-                </>
+              <span className="text-zinc-200">{parsedLinks.tournamentTitle || stream.tournamentName}</span>
+              {(linkedMatch || cricMeta?.ok) && (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-emerald-400">
+                  <Radio className="w-3 h-3 animate-pulse" />
+                  LIVE TELEMETRY
+                </span>
+              )}
+              {lastSyncedAt && (
+                <span className="text-[11px] font-mono text-zinc-500 tabular-nums">
+                  Updated {new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
               )}
             </div>
             <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
               {linkedMatch
                 ? `${linkedMatch.teamAName} vs ${linkedMatch.teamBName}`
+                : liveCricMatch
+                ? `${liveCricMatch.team_a || liveCricMatch.teamAName || 'Team A'} vs ${liveCricMatch.team_b || liveCricMatch.teamBName || 'Team B'}`
                 : snap?.teamAName && snap?.teamBName
                 ? `${snap.teamAName} vs ${snap.teamBName}`
-                : cricMeta?.title || stream.title}
+                : cricMeta?.title || parsedLinks.tournamentTitle || stream.title}
             </h2>
-            {(snap?.statusNote || cricMeta?.description) && (
+            {(snap?.statusNote || liveCricMatch?.match_result || cricMeta?.description) && (
               <p className="text-xs sm:text-sm text-cyan-300 font-medium">
-                {snap?.statusNote || cricMeta?.description}
+                {snap?.statusNote || liveCricMatch?.match_result || cricMeta?.description}
               </p>
             )}
           </div>
 
-          {/* Scoreboard Readout Boxes */}
-          {(linkedMatch || hasSnapshot) && (
+          {/* Real-Time Score Readout Cards */}
+          {(linkedMatch || hasSnapshot || liveCricMatch) && (
             <div className="flex flex-wrap items-center gap-3">
               {linkedMatch ? (
                 <>
@@ -193,6 +240,25 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
                         : innings2?.battingTeamId === linkedMatch.teamBId
                         ? `${innings2.totalRuns}/${innings2.wickets} (${innings2.overs}.${innings2.ballsInCurrentOver})`
                         : 'Yet to Bat'}
+                    </div>
+                  </div>
+                </>
+              ) : liveCricMatch && (liveCricMatch.team_a_summary || liveCricMatch.team_b_summary) ? (
+                <>
+                  <div className="px-4 py-2.5 rounded-xl bg-black/35 border border-white/10 min-w-[155px]">
+                    <div className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                      {liveCricMatch.team_a || 'Team A'}
+                    </div>
+                    <div className="text-xl font-bold text-white font-mono tabular-nums mt-0.5">
+                      {liveCricMatch.team_a_summary || '—'}
+                    </div>
+                  </div>
+                  <div className="px-4 py-2.5 rounded-xl bg-black/35 border border-white/10 min-w-[155px]">
+                    <div className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                      {liveCricMatch.team_b || 'Team B'}
+                    </div>
+                    <div className="text-xl font-bold text-white font-mono tabular-nums mt-0.5">
+                      {liveCricMatch.team_b_summary || 'Yet to Bat'}
                     </div>
                   </div>
                 </>
@@ -233,9 +299,23 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
             </div>
           )}
 
-          {/* Direct CricHeroes Link & Sync Action */}
+          {/* Real-Time Auto-Sync Controls + CricHeroes Launcher */}
           {parsedLinks.isValid && (
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {stream.status === 'LIVE' && (
+                <button
+                  type="button"
+                  onClick={() => setAutoSyncEnabled((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                    autoSyncEnabled
+                      ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
+                      : 'bg-white/5 border-white/10 text-zinc-400'
+                  }`}
+                >
+                  <Radio className={`w-3.5 h-3.5 ${autoSyncEnabled ? 'animate-pulse' : ''}`} />
+                  {autoSyncEnabled ? 'Auto-Sync 10s' : 'Auto-Sync Off'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => fetchCricHeroesMeta(activeSectionInfo.url || parsedLinks.baseUrl)}
@@ -243,7 +323,7 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-200 transition-colors whitespace-nowrap shrink-0"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loadingMeta ? 'animate-spin' : ''}`} />
-                Sync Stats
+                Sync Now
               </button>
               <a
                 href={activeSectionInfo.url || parsedLinks.baseUrl}
@@ -289,7 +369,6 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
 
       {/* Active Section Workspace */}
       <div className="p-4 sm:p-6 space-y-5">
-        {/* Section Header + Direct Deep Link */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -327,7 +406,25 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
           )}
         </div>
 
-        {/* Optional Embedded CricHeroes Frame when permitted */}
+        {/* Calm notice when CricHeroes restricts automated server scraping */}
+        {!linkedMatch && cricMeta?.protectedByCloudflare && (
+          <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 px-4 py-3 text-xs text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span>
+              CricHeroes restricts automated background page requests on this tournament link. Use the section tabs above to jump straight to any CricHeroes view, or link an active SM SPORTS Match for ball-by-ball telemetry below.
+            </span>
+            {activeSectionInfo.url && (
+              <a
+                href={activeSectionInfo.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-bold underline shrink-0"
+              >
+                Open Live Tab
+              </a>
+            )}
+          </div>
+        )}
+
         {showEmbeddedFrame && parsedLinks.isValid && activeSectionInfo.url ? (
           <div className="rounded-xl overflow-hidden border border-white/10 bg-black">
             <iframe
@@ -486,6 +583,113 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
                         </table>
                       </div>
                     </div>
+                  </div>
+                ) : cricScoreInnings.length > 0 ? (
+                  <div className="space-y-4">
+                    {cricScoreInnings.map((inn: any, idx: number) => {
+                      const bats: any[] = inn.batting || inn.batsmen || [];
+                      const bowls: any[] = inn.bowling || inn.bowlers || [];
+                      return (
+                        <div
+                          key={idx}
+                          className="rounded-xl bg-black/30 border border-white/10 p-4 space-y-4"
+                        >
+                          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                            <span className="text-sm font-bold text-white">
+                              {inn.teamName || inn.team_name || `Innings ${idx + 1}`}
+                            </span>
+                            <span className="text-sm font-mono font-bold text-cyan-300 tabular-nums">
+                              {inn.score || `${inn.total_runs ?? 0}/${inn.total_wicket ?? 0}`}
+                            </span>
+                          </div>
+                          {bats.length > 0 && (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-xs">
+                                <thead className="text-zinc-500 border-b border-white/5">
+                                  <tr>
+                                    <th className="py-2 pr-4">Batter</th>
+                                    <th className="py-2 px-2 text-right">R</th>
+                                    <th className="py-2 px-2 text-right">B</th>
+                                    <th className="py-2 px-2 text-right">4s</th>
+                                    <th className="py-2 px-2 text-right">6s</th>
+                                    <th className="py-2 pl-2 text-right">SR</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                  {bats.map((b: any, bIdx: number) => (
+                                    <tr key={bIdx}>
+                                      <td className="py-2 pr-4 font-semibold text-white">
+                                        {b.name || b.player_name}
+                                        {b.out_string && (
+                                          <div className="text-[11px] font-normal text-zinc-500">
+                                            {b.out_string}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-mono tabular-nums font-bold text-white">
+                                        {b.runs ?? 0}
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-mono tabular-nums text-zinc-300">
+                                        {b.balls ?? 0}
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-mono tabular-nums text-zinc-400">
+                                        {b['4s'] ?? b.fours ?? 0}
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-mono tabular-nums text-zinc-400">
+                                        {b['6s'] ?? b.sixes ?? 0}
+                                      </td>
+                                      <td className="py-2 pl-2 text-right font-mono tabular-nums text-cyan-300">
+                                        {b.strike_rate ?? b.SR ?? '—'}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {bowls.length > 0 && (
+                            <div className="overflow-x-auto pt-2 border-t border-white/5">
+                              <table className="w-full text-left text-xs">
+                                <thead className="text-zinc-500 border-b border-white/5">
+                                  <tr>
+                                    <th className="py-2 pr-4">Bowler</th>
+                                    <th className="py-2 px-2 text-right">O</th>
+                                    <th className="py-2 px-2 text-right">M</th>
+                                    <th className="py-2 px-2 text-right">R</th>
+                                    <th className="py-2 px-2 text-right">W</th>
+                                    <th className="py-2 pl-2 text-right">ECON</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                  {bowls.map((bw: any, bwIdx: number) => (
+                                    <tr key={bwIdx}>
+                                      <td className="py-2 pr-4 font-semibold text-white">
+                                        {bw.name || bw.player_name}
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-mono tabular-nums text-zinc-300">
+                                        {bw.overs ?? 0}
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-mono tabular-nums text-zinc-400">
+                                        {bw.maidens ?? 0}
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-mono tabular-nums text-zinc-300">
+                                        {bw.runs ?? 0}
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-mono tabular-nums font-bold text-amber-300">
+                                        {bw.wickets ?? 0}
+                                      </td>
+                                      <td className="py-2 pl-2 text-right font-mono tabular-nums text-cyan-300">
+                                        {bw.economy_rate ?? bw.econ ?? '—'}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="rounded-xl bg-black/30 border border-white/10 p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -705,26 +909,78 @@ const CricHeroesScoreboardHub: React.FC<CricHeroesScoreboardHubProps> = ({
 
             {/* SECTION 5: LEADERBOARD */}
             {activeSection === 'LEADERBOARD' && (
-              <div className="rounded-xl bg-black/30 border border-white/10 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h4 className="text-sm font-bold text-white">
-                    Top Batters, Top Bowlers & Tournament MVP
-                  </h4>
-                  <p className="text-xs text-zinc-400 mt-1">
-                    Access live run-scoring leaders, wicket-taking rankings, and MVP standings on CricHeroes.
-                  </p>
-                </div>
-                {parsedLinks.isValid && (
-                  <a
-                    href={activeSectionInfo.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ background: theme.buttonGradient }}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-xs font-bold shrink-0 whitespace-nowrap"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    View Leaderboard
-                  </a>
+              <div className="space-y-4">
+                {parsedLeaderboard &&
+                (Array.isArray(parsedLeaderboard.batting) ||
+                  Array.isArray(parsedLeaderboard.bowling) ||
+                  Array.isArray(parsedLeaderboard)) ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {Array.isArray(parsedLeaderboard.batting || parsedLeaderboard) && (
+                      <div className="rounded-xl bg-black/30 border border-white/10 p-4 space-y-2">
+                        <div className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                          Top Run Scorers
+                        </div>
+                        {(parsedLeaderboard.batting || parsedLeaderboard)
+                          .slice(0, 6)
+                          .map((p: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between py-1.5 border-b border-white/5 last:border-0 text-xs"
+                            >
+                              <span className="text-white font-semibold">
+                                {idx + 1}. {p.player_name || p.name}
+                              </span>
+                              <span className="font-mono tabular-nums font-bold text-cyan-300">
+                                {p.runs ?? p.total_runs ?? 0} runs
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                    {Array.isArray(parsedLeaderboard.bowling) && (
+                      <div className="rounded-xl bg-black/30 border border-white/10 p-4 space-y-2">
+                        <div className="text-xs font-bold uppercase tracking-wider text-fuchsia-300">
+                          Top Wicket Takers
+                        </div>
+                        {parsedLeaderboard.bowling.slice(0, 6).map((p: any, idx: number) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between py-1.5 border-b border-white/5 last:border-0 text-xs"
+                          >
+                            <span className="text-white font-semibold">
+                              {idx + 1}. {p.player_name || p.name}
+                            </span>
+                            <span className="font-mono tabular-nums font-bold text-amber-300">
+                              {p.wickets ?? p.total_wickets ?? 0} wkts
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-black/30 border border-white/10 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h4 className="text-sm font-bold text-white">
+                        Top Batters, Top Bowlers & Tournament MVP
+                      </h4>
+                      <p className="text-xs text-zinc-400 mt-1">
+                        Access live run-scoring leaders, wicket-taking rankings, and MVP standings on CricHeroes.
+                      </p>
+                    </div>
+                    {parsedLinks.isValid && (
+                      <a
+                        href={activeSectionInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ background: theme.buttonGradient }}
+                        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-xs font-bold shrink-0 whitespace-nowrap"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        View Leaderboard
+                      </a>
+                    )}
+                  </div>
                 )}
               </div>
             )}
