@@ -946,15 +946,16 @@ export const getEffectiveBasePrice = (player: Player, categories: any[]): number
  * into the root document to prevent exceeding Firestore's 1,048,576 bytes (1 MiB) limit.
  */
 export const ALLOWED_AUCTION_FIELDS = [
-    'title', 'fullTournamentName', 'season', 'sport', 'date', 'dateTBD', 'matchesDate',
-    'venue', 'eventVenue', 'purseValue', 'basePrice', 'bidIncrement', 'playersPerTeam',
+    'title', 'tournamentName', 'fullTournamentName', 'season', 'sport', 'date', 'dateTBD', 'matchesDate',
+    'venue', 'eventVenue', 'purseValue', 'basePrice', 'bidIncrement', 'playersPerTeam', 'maxPlayersPerTeam',
     'totalTeams', 'unlimitedPurse', 'autoReserveFunds', 'slabs', 'status', 'isPaid',
-    'plan', 'planId', 'createdAt', 'createdBy', 'updatedAt', 'autoDeleteAt', 'isLifetime',
+    'plan', 'planId', 'createdAt', 'createdBy', 'updatedAt', 'autoDeleteAt', 'isLifetime', 'defaultRetentionDays',
     'hideScoringSection', 'sponsorConfig', 'projectorLayout', 'obsLayout', 'adminViewOverride',
     'biddingStatus', 'playerSelectionMode', 'logoUrl', 'auctionLogoUrl', 'registrationConfig',
     'successAdPosterUrl', 'isAdPosterEnabled', 'globalJerseyUrl', 'globalJerseyOverlayUrl',
     'currentPlayerId', 'currentBid', 'highestBidderId', 'timer',
-    'auctionType', 'draftBoardState', 'spinWheelState', 'customAudio', 'soldPopupDurationSeconds'
+    'auctionType', 'draftBoardState', 'spinWheelState', 'customAudio', 'soldPopupDurationSeconds',
+    'curatorPassword', 'hidePlayerNumbers'
 ];
 
 export const FORBIDDEN_BLOATED_AUCTION_FIELDS = [
@@ -964,10 +965,215 @@ export const FORBIDDEN_BLOATED_AUCTION_FIELDS = [
 ];
 
 /**
+ * Keeps compact HTTPS URLs and small refs; strips inline Base64 / blob URLs > 1000 chars
+ * from summary/history/overlay objects stored on the root auction document.
+ */
+export const compactMediaRef = (url: any): string => {
+    if (typeof url !== 'string') return '';
+    const trimmed = url.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('blob:')) return '';
+    if (trimmed.startsWith('data:') && trimmed.length > 1000) return '';
+    if (trimmed.length > 2000) return '';
+    return trimmed;
+};
+
+export const sanitizeDraftBoardState = (rawDraft: any): any => {
+    if (!rawDraft || typeof rawDraft !== 'object') return rawDraft;
+    const draft = { ...rawDraft };
+
+    if (Array.isArray(draft.history)) {
+        draft.history = draft.history.map((h: any) => {
+            if (!h || typeof h !== 'object') return h;
+            return {
+                ...h,
+                teamLogo: compactMediaRef(h.teamLogo),
+                playerPhoto: compactMediaRef(h.playerPhoto)
+            };
+        });
+    }
+
+    if (draft.lastSoldCelebration && typeof draft.lastSoldCelebration === 'object') {
+        draft.lastSoldCelebration = {
+            ...draft.lastSoldCelebration,
+            playerPhoto: compactMediaRef(draft.lastSoldCelebration.playerPhoto),
+            teamLogo: compactMediaRef(draft.lastSoldCelebration.teamLogo)
+        };
+    }
+
+    if (draft.lastUnsoldEvent && typeof draft.lastUnsoldEvent === 'object') {
+        draft.lastUnsoldEvent = {
+            ...draft.lastUnsoldEvent,
+            playerPhoto: compactMediaRef(draft.lastUnsoldEvent.playerPhoto)
+        };
+    }
+
+    return draft;
+};
+
+export const sanitizeSpinWheelState = (rawSpin: any): any => {
+    if (!rawSpin || typeof rawSpin !== 'object') return rawSpin;
+    const spin = { ...rawSpin };
+    if (Array.isArray(spin.items)) {
+        spin.items = spin.items.map((item: any) =>
+            item && typeof item === 'object' ? { ...item, logoUrl: compactMediaRef(item.logoUrl) } : item
+        );
+    }
+    if (spin.winner && typeof spin.winner === 'object') {
+        spin.winner = { ...spin.winner, logoUrl: compactMediaRef(spin.winner.logoUrl) };
+    }
+    return spin;
+};
+
+export const sanitizeAuctionUpdatePayload = (fields: Record<string, any>): Record<string, any> => {
+    if (!fields || typeof fields !== 'object') return {};
+    const out: Record<string, any> = {};
+
+    for (const [k, v] of Object.entries(fields)) {
+        if (k === 'draftBoardState' && v && typeof v === 'object') {
+            out[k] = sanitizeDraftBoardState(v);
+        } else if (k === 'draftBoardState.history' && Array.isArray(v)) {
+            out[k] = v.map((h: any) =>
+                h && typeof h === 'object'
+                    ? { ...h, teamLogo: compactMediaRef(h.teamLogo), playerPhoto: compactMediaRef(h.playerPhoto) }
+                    : h
+            );
+        } else if (k === 'draftBoardState.lastSoldCelebration' && v && typeof v === 'object') {
+            out[k] = {
+                ...v,
+                playerPhoto: compactMediaRef(v.playerPhoto),
+                teamLogo: compactMediaRef(v.teamLogo)
+            };
+        } else if (k === 'draftBoardState.lastUnsoldEvent' && v && typeof v === 'object') {
+            out[k] = {
+                ...v,
+                playerPhoto: compactMediaRef(v.playerPhoto)
+            };
+        } else if (k === 'spinWheelState' && v && typeof v === 'object') {
+            out[k] = sanitizeSpinWheelState(v);
+        } else {
+            out[k] = v;
+        }
+    }
+
+    return out;
+};
+
+export const isFirestoreSizeOverflowError = (err: any): boolean => {
+    if (!err) return false;
+    const msg = String(err?.message || err || '').toLowerCase();
+    const code = String(err?.code || '').toLowerCase();
+    return (
+        msg.includes('exceeds the maximum allowed size') ||
+        msg.includes('1,048,576') ||
+        msg.includes('1048576') ||
+        (code.includes('invalid-argument') && msg.includes('size')) ||
+        (code.includes('resource-exhausted') && msg.includes('size'))
+    );
+};
+
+const setNestedAuctionPath = (target: Record<string, any>, dotPath: string, value: any) => {
+    const parts = dotPath.split('.').filter(Boolean);
+    if (parts.length === 0) return;
+    if (!ALLOWED_AUCTION_FIELDS.includes(parts[0])) return;
+
+    let cursor: Record<string, any> = target;
+    for (let i = 0; i < parts.length - 1; i++) {
+        const seg = parts[i];
+        if (!cursor[seg] || typeof cursor[seg] !== 'object' || Array.isArray(cursor[seg])) {
+            cursor[seg] = {};
+        } else {
+            cursor[seg] = { ...cursor[seg] };
+        }
+        cursor = cursor[seg];
+    }
+    cursor[parts[parts.length - 1]] = value;
+};
+
+const externalizeAudioUrlIfNeeded = async (
+    auctionId: string,
+    soundKey: 'sold' | 'timeup' | 'unsold',
+    url: string,
+    dbInstance: any
+): Promise<string> => {
+    if (!url || !url.startsWith('data:') || url.length < 20000) return url;
+    const ts = Date.now();
+    const docPayload = {
+        auctionId,
+        soundKey,
+        fileName: `${soundKey}.audio`,
+        mimeType: 'audio/mpeg',
+        dataUrl: url,
+        updatedAt: ts
+    };
+    try {
+        await dbInstance.collection('auctions').doc(auctionId).collection('audioAssets').doc(soundKey).set(docPayload);
+        return `firestore-asset://${auctionId}/${soundKey}?v=${ts}`;
+    } catch {}
+    try {
+        const scoringDocId = `${auctionId}_audio_${soundKey}`;
+        await dbInstance.collection('scoringAssets').doc(scoringDocId).set(docPayload);
+        return `scoring-asset://${scoringDocId}?v=${ts}`;
+    } catch {}
+    try {
+        const draftAssetId = `audio_${soundKey}`;
+        await dbInstance.collection('auctions').doc(auctionId).collection('arrangementDrafts').doc(draftAssetId).set(docPayload);
+        return `draft-asset://${auctionId}/${draftAssetId}?v=${ts}`;
+    } catch {}
+    return url;
+};
+
+const compressInlineDataImages = async (
+    cleanData: Record<string, any>,
+    maxDataUrlLength: number,
+    maxWidth: number,
+    maxHeight: number
+) => {
+    const compressOne = async (val: any): Promise<any> => {
+        if (typeof val === 'string' && val.startsWith('data:image/') && val.length > maxDataUrlLength) {
+            try {
+                return await compressImage(val, { maxWidth, maxHeight, maxDataUrlLength });
+            } catch {
+                return val;
+            }
+        }
+        return val;
+    };
+
+    for (const topKey of ['logoUrl', 'auctionLogoUrl', 'successAdPosterUrl', 'globalJerseyUrl', 'globalJerseyOverlayUrl']) {
+        if (cleanData[topKey]) {
+            cleanData[topKey] = await compressOne(cleanData[topKey]);
+        }
+    }
+
+    if (cleanData.registrationConfig && typeof cleanData.registrationConfig === 'object') {
+        const rc = { ...cleanData.registrationConfig };
+        for (const rcKey of ['bannerUrl', 'welcomePosterUrl', 'logoUrl', 'qrCodeUrl']) {
+            if (rc[rcKey]) {
+                rc[rcKey] = await compressOne(rc[rcKey]);
+            }
+        }
+        if (Array.isArray(rc.showcaseImages)) {
+            rc.showcaseImages = await Promise.all(
+                rc.showcaseImages.slice(0, 10).map(async (item: any) => {
+                    if (!item || typeof item !== 'object') return item;
+                    return {
+                        ...item,
+                        imageUrl: await compressOne(item.imageUrl)
+                    };
+                })
+            );
+        }
+        cleanData.registrationConfig = rc;
+    }
+};
+
+/**
  * Safely writes/updates an auction document by:
  * 1. Stripping duplicate subcollection arrays (players, teams, registrations, logs) which cause the 1 MiB limit error.
- * 2. Compressing any overgrown Base64 images in settings or registrationConfig.
- * 3. Overwriting with .set(cleanData) (WITHOUT merge: true) to permanently purge trapped bloated fields from Firestore.
+ * 2. Compacting draftBoardState (history, lastSoldCelebration, lastUnsoldEvent) and spinWheelState Base64 media.
+ * 3. Externalizing/deduplicating large inline audio and compressing oversized Base64 images so UTF-8 payload <= 860 KB.
+ * 4. Overwriting with .set(cleanData) (WITHOUT merge: true) to permanently purge trapped bloated fields from Firestore.
  */
 export const safeSaveAuctionDocument = async (
     id: string, 
@@ -987,8 +1193,7 @@ export const safeSaveAuctionDocument = async (
         console.warn("[SM SPORTS] Could not fetch current doc before safe save:", e);
     }
 
-    const originalJson = JSON.stringify(currentData);
-    const originalSize = originalJson.length;
+    const originalSize = getUtf8ByteSize(currentData);
 
     // Build pristine cleanData retaining only ALLOWED top-level fields
     const cleanData: Record<string, any> = {};
@@ -998,65 +1203,141 @@ export const safeSaveAuctionDocument = async (
         }
     });
 
-    // Apply updates
-    Object.keys(updates).forEach(key => {
-        if (ALLOWED_AUCTION_FIELDS.includes(key)) {
-            cleanData[key] = updates[key];
+    // Apply updates (supports both top-level keys and Firestore dot-notation keys)
+    const sanitizedUpdates = sanitizeAuctionUpdatePayload(updates);
+    Object.keys(sanitizedUpdates).forEach(key => {
+        if (key.includes('.')) {
+            setNestedAuctionPath(cleanData, key, sanitizedUpdates[key]);
+        } else if (ALLOWED_AUCTION_FIELDS.includes(key)) {
+            cleanData[key] = sanitizedUpdates[key];
         }
     });
 
-    // Ensure timestamp
     cleanData.updatedAt = Date.now();
 
-    // Sanitize any oversize base64 images in cleanData
-    if (cleanData.logoUrl && typeof cleanData.logoUrl === 'string' && cleanData.logoUrl.startsWith('data:') && cleanData.logoUrl.length > 35000) {
-        try {
-            cleanData.logoUrl = await compressImage(cleanData.logoUrl, 'LOGO');
-        } catch (e) {
-            console.warn("Logo compression error:", e);
-        }
+    // Always compact draftBoardState & spinWheelState to prevent Base64 logo/photo duplication
+    if (cleanData.draftBoardState) {
+        cleanData.draftBoardState = sanitizeDraftBoardState(cleanData.draftBoardState);
     }
-    if (cleanData.auctionLogoUrl && typeof cleanData.auctionLogoUrl === 'string' && cleanData.auctionLogoUrl.startsWith('data:') && cleanData.auctionLogoUrl.length > 35000) {
-        try {
-            cleanData.auctionLogoUrl = await compressImage(cleanData.auctionLogoUrl, 'LOGO');
-        } catch (e) {
-            console.warn("Auction logo compression error:", e);
-        }
+    if (cleanData.spinWheelState) {
+        cleanData.spinWheelState = sanitizeSpinWheelState(cleanData.spinWheelState);
     }
 
-    // Sanitize registrationConfig if present
-    if (cleanData.registrationConfig && typeof cleanData.registrationConfig === 'object') {
-        const rc = { ...cleanData.registrationConfig };
-        if (rc.bannerUrl && typeof rc.bannerUrl === 'string' && rc.bannerUrl.startsWith('data:') && rc.bannerUrl.length > 45000) {
-            try { rc.bannerUrl = await compressImage(rc.bannerUrl, 'REG_BANNER'); } catch {}
+    // Deduplicate identical customAudio inline data URLs across root customAudio and draftBoardState.customAudio
+    if (cleanData.customAudio && cleanData.draftBoardState?.customAudio) {
+        const rootCA = { ...cleanData.customAudio };
+        const draftCA = cleanData.draftBoardState.customAudio;
+        for (const [urlF, nameF] of [
+            ['soldMusicUrl', 'soldMusicName'],
+            ['timeUpMusicUrl', 'timeUpMusicName'],
+            ['unsoldMusicUrl', 'unsoldMusicName']
+        ] as const) {
+            if (typeof rootCA[urlF] === 'string' && rootCA[urlF].startsWith('data:') && draftCA[urlF]) {
+                rootCA[urlF] = '';
+                rootCA[nameF] = '';
+            }
         }
-        if (rc.welcomePosterUrl && typeof rc.welcomePosterUrl === 'string' && rc.welcomePosterUrl.startsWith('data:') && rc.welcomePosterUrl.length > 45000) {
-            try { rc.welcomePosterUrl = await compressImage(rc.welcomePosterUrl, 'REG_WELCOME_POSTER'); } catch {}
+        cleanData.customAudio = rootCA;
+    }
+
+    // Pass 1: Moderate image compression for oversized Base64 fields
+    await compressInlineDataImages(cleanData, 42000, 900, 900);
+
+    // Check size after Pass 1; if still high (> 760 KB), externalize large inline audio and run Pass 2 image compression
+    if (getUtf8ByteSize(cleanData) > 760_000) {
+        const audioTargets: Array<{ container: any; urlField: string; soundKey: 'sold' | 'timeup' | 'unsold' }> = [];
+        const addAudioTargets = (container: any) => {
+            if (!container || typeof container !== 'object') return;
+            audioTargets.push(
+                { container, urlField: 'soldMusicUrl', soundKey: 'sold' },
+                { container, urlField: 'timeUpMusicUrl', soundKey: 'timeup' },
+                { container, urlField: 'unsoldMusicUrl', soundKey: 'unsold' }
+            );
+        };
+        addAudioTargets(cleanData.draftBoardState?.customAudio);
+        addAudioTargets(cleanData.customAudio);
+
+        for (const t of audioTargets) {
+            const rawUrl = t.container?.[t.urlField];
+            if (typeof rawUrl === 'string' && rawUrl.startsWith('data:') && rawUrl.length > 20000) {
+                t.container[t.urlField] = await externalizeAudioUrlIfNeeded(id, t.soundKey, rawUrl, dbInstance);
+            }
         }
-        if (rc.logoUrl && typeof rc.logoUrl === 'string' && rc.logoUrl.startsWith('data:') && rc.logoUrl.length > 30000) {
-            try { rc.logoUrl = await compressImage(rc.logoUrl, 'REG_LOGO'); } catch {}
+
+        await compressInlineDataImages(cleanData, 22000, 600, 600);
+    }
+
+    // Pass 3: Tight compression if still > 820 KB
+    if (getUtf8ByteSize(cleanData) > 820_000) {
+        await compressInlineDataImages(cleanData, 10000, 400, 400);
+    }
+
+    // Pass 4 (Emergency ceiling): Guarantee document size stays safely below Firestore's 1,048,576-byte limit
+    if (getUtf8ByteSize(cleanData) > 860_000 && cleanData.registrationConfig?.showcaseImages) {
+        const imgs = Array.isArray(cleanData.registrationConfig.showcaseImages)
+            ? [...cleanData.registrationConfig.showcaseImages]
+            : [];
+        while (imgs.length > 0 && getUtf8ByteSize({ ...cleanData, registrationConfig: { ...cleanData.registrationConfig, showcaseImages: imgs } }) > 860_000) {
+            const idxToTrim = imgs.findIndex(item => typeof item?.imageUrl === 'string' && item.imageUrl.startsWith('data:'));
+            if (idxToTrim !== -1) {
+                imgs.splice(idxToTrim, 1);
+            } else {
+                break;
+            }
         }
-        if (rc.qrCodeUrl && typeof rc.qrCodeUrl === 'string' && rc.qrCodeUrl.startsWith('data:') && rc.qrCodeUrl.length > 30000) {
-            try { rc.qrCodeUrl = await compressImage(rc.qrCodeUrl, 'QR'); } catch {}
+        cleanData.registrationConfig = { ...cleanData.registrationConfig, showcaseImages: imgs };
+    }
+
+    if (getUtf8ByteSize(cleanData) > 880_000) {
+        // Strip remaining large inline data URLs inside customAudio if asset collections were blocked
+        for (const container of [cleanData.customAudio, cleanData.draftBoardState?.customAudio]) {
+            if (container && typeof container === 'object') {
+                for (const key of ['soldMusicUrl', 'timeUpMusicUrl', 'unsoldMusicUrl']) {
+                    if (typeof container[key] === 'string' && container[key].startsWith('data:') && container[key].length > 50000) {
+                        container[key] = '';
+                    }
+                }
+            }
         }
-        if (rc.showcaseImages && Array.isArray(rc.showcaseImages)) {
-            rc.showcaseImages = rc.showcaseImages.slice(0, 10); // Bound array size
-        }
-        cleanData.registrationConfig = rc;
     }
 
     // Remove any undefined or non-serializable values
     const finalPayload = JSON.parse(JSON.stringify(cleanData));
-    const cleanSize = JSON.stringify(finalPayload).length;
+    const cleanSize = getUtf8ByteSize(finalPayload);
 
     // Use .set() WITHOUT merge: true to completely replace the document.
-    // This permanently purges bloated duplicate arrays (players, teams, etc.)
-    // leaving subcollections untouched.
+    // This permanently purges bloated duplicate arrays (players, teams, etc.) and Base64 bloat
+    // while leaving subcollections untouched.
     await docRef.set(finalPayload);
     const prunedBytes = Math.max(0, originalSize - cleanSize);
     console.log(`[SM SPORTS] Safe save succeeded for auction ${id}. Clean size: ${(cleanSize / 1024).toFixed(1)} KB (Pruned: ${(prunedBytes / 1024).toFixed(1)} KB)`);
 
     return { success: true, prunedBytes, cleanSize, originalSize };
+};
+
+/**
+ * Safely updates specific fields on `/auctions/{id}`.
+ * Sanitizes draftBoardState/spinWheelState media first, and if Firestore rejects the write due to
+ * the document exceeding 1,048,576 bytes, automatically runs safeSaveAuctionDocument with the
+ * pending updates so the bloated document heals itself cleanly without losing updates.
+ */
+export const safeUpdateAuctionDoc = async (
+    id: string,
+    fields: Record<string, any>,
+    dbInstance: any
+): Promise<void> => {
+    if (!id || !dbInstance || !fields || Object.keys(fields).length === 0) return;
+    const cleanFields = JSON.parse(JSON.stringify(sanitizeAuctionUpdatePayload(fields)));
+    try {
+        await dbInstance.collection('auctions').doc(id).update(cleanFields);
+    } catch (err: any) {
+        if (isFirestoreSizeOverflowError(err)) {
+            console.warn(`[SM SPORTS] Auction ${id} update hit 1 MiB limit; auto-repairing via safeSaveAuctionDocument...`);
+            await safeSaveAuctionDocument(id, cleanFields, dbInstance);
+            return;
+        }
+        throw err;
+    }
 };
 
 /**
@@ -1316,10 +1597,11 @@ export const resolveTeamSquad = (team: Team, allPlayers: Player[] = []): Player[
         if (!teamIdentifier && !tId) return false;
         const norm = (teamIdentifier || '').trim().toLowerCase();
         const idStr = String(tId || '').trim();
-        return (
-            (norm && (norm === teamNameLower || (teamShortLower && norm === teamShortLower) || norm === teamIdStr)) ||
-            (idStr && idStr === teamIdStr)
-        );
+        // If soldTo team name is explicitly set, it takes precedence over any stale teamId/soldToId
+        if (norm) {
+            return norm === teamNameLower || (teamShortLower && norm === teamShortLower) || norm === teamIdStr;
+        }
+        return Boolean(idStr && idStr === teamIdStr);
     };
 
     // If allPlayers is provided and non-empty, allPlayers is the authoritative registry
@@ -1339,7 +1621,7 @@ export const resolveTeamSquad = (team: Team, allPlayers: Player[] = []): Player[
             // If status is explicit, it must be SOLD (or TRADED to this team)
             if (p.status && p.status !== 'SOLD' && p.status !== 'TRADED') return false;
             // Must match this team
-            return isMatchForThisTeam(p.soldTo, p.teamId);
+            return isMatchForThisTeam(p.soldTo, (p as any).soldToId || p.teamId);
         });
 
         // 2. Direct squad from team.players array, filtering out anyone who is UNSOLD or sold elsewhere
@@ -1354,14 +1636,14 @@ export const resolveTeamSquad = (team: Team, allPlayers: Player[] = []): Player[
                 if (latest.status && latest.status !== 'SOLD' && latest.status !== 'TRADED') return false;
                 // If latest has no SOLD/TRADED status and no team assignment, they belong to POOL -> EXCLUDE
                 if (!latest.status && !latest.soldTo && !(latest as any).soldToId && !latest.teamId) return false;
-                // If latest soldTo belongs to a different team, EXCLUDE
-                if ((latest.soldTo || latest.teamId) && !isMatchForThisTeam(latest.soldTo, latest.teamId)) return false;
+                // If latest soldTo/teamId belongs to a different team, EXCLUDE
+                if ((latest.soldTo || (latest as any).soldToId || latest.teamId) && !isMatchForThisTeam(latest.soldTo, (latest as any).soldToId || latest.teamId)) return false;
                 return true;
             }
 
             // Fallback for players only on team object: must not be UNSOLD/POOL
             if (p.status === 'UNSOLD' || p.status === 'POOL') return false;
-            if (p.soldTo && !isMatchForThisTeam(p.soldTo, p.teamId)) return false;
+            if ((p.soldTo || (p as any).soldToId || p.teamId) && !isMatchForThisTeam(p.soldTo, (p as any).soldToId || p.teamId)) return false;
             return true;
         });
 
@@ -1437,10 +1719,10 @@ export const resolveDraftTeamSquad = (
         if (!teamIdentifier && !tId) return false;
         const norm = (teamIdentifier || '').trim().toLowerCase();
         const idStr = String(tId || '').trim();
-        return (
-            (norm && (norm === teamNameLower || (teamShortLower && norm === teamShortLower) || norm === teamIdStr)) ||
-            (idStr && idStr === teamIdStr)
-        );
+        if (norm) {
+            return norm === teamNameLower || (teamShortLower && norm === teamShortLower) || norm === teamIdStr;
+        }
+        return Boolean(idStr && idStr === teamIdStr);
     };
 
     const playerById = new Map<string, Player>();
@@ -1453,8 +1735,15 @@ export const resolveDraftTeamSquad = (
     const result: (Player & { pickNumber?: number; round?: number })[] = [];
     const seenKeys = new Set<string>();
 
+    // Use latest history pick per player in case a player was reassigned after initial draft
+    const latestHistoryByPlayer = new Map<string, any>();
+    (draftHistory || []).forEach(h => {
+        const key = String(h?.playerId ?? h?.playerName ?? '').trim().toLowerCase();
+        if (key) latestHistoryByPlayer.set(key, h);
+    });
+
     // 1. Draft picks in history for this team (skip if authoritatively reverted to POOL/UNSOLD or assigned elsewhere)
-    const teamPicks = (draftHistory || []).filter(h => String(h?.teamId) === teamIdStr);
+    const teamPicks = Array.from(latestHistoryByPlayer.values()).filter(h => String(h?.teamId) === teamIdStr);
     teamPicks.forEach(pick => {
         const pIdKey = String(pick.playerId ?? '').trim().toLowerCase();
         const pNameKey = (pick.playerName || '').trim().toLowerCase();
@@ -1746,6 +2035,17 @@ export const findPlayerRegistration = (
     if (normPhoto.length > 30) {
         const photoMatches = registrations.filter(r => String(r.profilePic || '').trim() === normPhoto);
         if (photoMatches.length === 1) return photoMatches[0];
+    }
+
+    // 7. Unique Jersey Name + Jersey Number match fallback
+    const jName = String((player as any).jerseyName || '').trim().toLowerCase();
+    const jNum = String((player as any).jerseyNumber ?? '').trim().toLowerCase();
+    if (jName && jNum) {
+        const jerseyMatches = registrations.filter(r =>
+            String((r as any).jerseyName || '').trim().toLowerCase() === jName &&
+            String((r as any).jerseyNumber ?? '').trim().toLowerCase() === jNum
+        );
+        if (jerseyMatches.length === 1) return jerseyMatches[0];
     }
 
     return undefined;

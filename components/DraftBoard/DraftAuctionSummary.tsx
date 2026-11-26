@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Team, Player, DraftBoardState, DraftPickHistory, RegisteredPlayer, RegistrationConfig } from '../../types';
-import { Trophy, Download, RotateCcw, Printer, Sparkles, FileText, Image as ImageIcon, FileSpreadsheet } from 'lucide-react';
+import { Trophy, Download, RotateCcw, Printer, Sparkles, FileText, Image as ImageIcon, FileSpreadsheet, SlidersHorizontal } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import * as XLSX from 'xlsx';
 import { getDraftTheme } from '../../utils/draftThemes';
 import { resolveDraftTeamSquad, findPlayerRegistration, getPlayerFieldValue, compactTeamPlayersList } from '../../utils';
+import { downloadMultiSheetStyledExcel, downloadStyledRegistrationExcel, StyledExcelColumn, StyledExcelSheetSpec } from '../../utils/styledExcelExport';
 import TeamPdfExportModal from '../TeamPdfExportModal';
 import TeamPhotoPdfExportModal from '../TeamPhotoPdfExportModal';
+import { SummaryExportHub } from '../SummaryExportHub';
 
 interface Props {
     tournamentName?: string;
@@ -45,6 +46,7 @@ export const DraftAuctionSummary: React.FC<Props> = ({
     const hideNumbers = Boolean(draftState.hidePlayerNumbers);
     const [showPdfModal, setShowPdfModal] = useState(false);
     const [showPhotoPdfModal, setShowPhotoPdfModal] = useState(false);
+    const [showExportHubModal, setShowExportHubModal] = useState(false);
     const [pdfTargetTeamId, setPdfTargetTeamId] = useState<string | number>('ALL');
     const customFields = registrationConfig?.customFields || [];
 
@@ -157,34 +159,58 @@ export const DraftAuctionSummary: React.FC<Props> = ({
         return Array.from(map.entries());
     }, [players, draftPickMap]);
 
+    const buildExcelColumns = (): StyledExcelColumn[] => [
+        { key: 'teamName', header: 'Team Name', align: 'left', minWidth: 18 },
+        { key: 'pickNumber', header: 'Pick #', align: 'center', minWidth: 9 },
+        { key: 'round', header: 'Round', align: 'center', minWidth: 9 },
+        { key: 'playerNumber', header: 'Player #', align: 'center', minWidth: 11 },
+        { key: 'name', header: 'Player Name', align: 'left', minWidth: 22 },
+        { key: 'category', header: 'Category', align: 'center', minWidth: 14 },
+        { key: 'role', header: 'Role', align: 'left', minWidth: 16 },
+        { key: 'soldPrice', header: 'Sold Price', align: 'right', minWidth: 13 },
+        { key: 'jerseyName', header: 'Jersey Name', align: 'left', minWidth: 18 },
+        { key: 'jerseyNumber', header: 'Jersey No.', align: 'center', minWidth: 12 },
+        { key: 'jerseySize', header: 'Jersey Size', align: 'center', minWidth: 12 },
+        { key: 'mobile', header: 'Mobile Number', align: 'center', minWidth: 15 },
+        { key: 'dob', header: 'DOB', align: 'center', minWidth: 13 },
+        { key: 'gender', header: 'Gender', align: 'center', minWidth: 11 },
+        ...customFields.map(cf => ({
+            key: `cf_${cf.id}`,
+            header: cf.label,
+            align: 'left' as const,
+            minWidth: 16
+        }))
+    ];
+
     const buildExcelRow = (team: Team, p: any, idx: number) => {
         const reg = findPlayerRegistration(p, registrations);
         const row: Record<string, any> = {
-            'Team Name': team.name,
-            'Pick #': p.pickNumber || (idx + 1),
-            'Round': p.round || '',
-            'Player Number': getPlayerFieldValue(p, reg, 'playerNumber', ''),
-            'Player Name': p.name,
-            'Category': p.category || '',
-            'Role': p.role || p.speciality || '',
-            'Sold Price': Number(p.soldPrice || 0),
-            'Jersey Name': getPlayerFieldValue(p, reg, 'jerseyName', ''),
-            'Jersey Number': getPlayerFieldValue(p, reg, 'jerseyNumber', ''),
-            'Jersey Size': getPlayerFieldValue(p, reg, 'jerseySize', ''),
-            'Mobile Number': getPlayerFieldValue(p, reg, 'mobile', ''),
-            'DOB': getPlayerFieldValue(p, reg, 'dob', ''),
-            'Gender': getPlayerFieldValue(p, reg, 'gender', '')
+            teamName: team.name,
+            pickNumber: p.pickNumber || (idx + 1),
+            round: p.round || '-',
+            playerNumber: getPlayerFieldValue(p, reg, 'playerNumber', '-'),
+            name: p.name || '-',
+            category: p.category || '-',
+            role: p.role || p.speciality || '-',
+            soldPrice: Number(p.soldPrice || 0),
+            jerseyName: getPlayerFieldValue(p, reg, 'jerseyName', '-'),
+            jerseyNumber: getPlayerFieldValue(p, reg, 'jerseyNumber', '-'),
+            jerseySize: getPlayerFieldValue(p, reg, 'jerseySize', '-'),
+            mobile: getPlayerFieldValue(p, reg, 'mobile', '-'),
+            dob: getPlayerFieldValue(p, reg, 'dob', '-'),
+            gender: getPlayerFieldValue(p, reg, 'gender', '-')
         };
         customFields.forEach(cf => {
-            row[cf.label] = getPlayerFieldValue(p, reg, cf.id, '');
+            row[`cf_${cf.id}`] = getPlayerFieldValue(p, reg, cf.id, '-');
         });
         return row;
     };
 
-    // Export Master Excel (Master Data sheet + Individual Team sheets)
-    const handleExportMasterExcel = () => {
+    // Export Master Excel (Master Data sheet + Individual Team sheets) with SL No., Bold Yellow Headers, All Borders
+    const handleExportMasterExcel = async () => {
+        const columns = buildExcelColumns();
         const masterRows: any[] = [];
-        const teamSheets: { name: string; rows: any[] }[] = [];
+        const teamSheets: StyledExcelSheetSpec[] = [];
 
         teamSquads.forEach(({ team, squad }) => {
             const tRows: any[] = [];
@@ -194,7 +220,12 @@ export const DraftAuctionSummary: React.FC<Props> = ({
                 tRows.push(row);
             });
             if (tRows.length > 0) {
-                teamSheets.push({ name: team.name, rows: tRows });
+                teamSheets.push({
+                    sheetName: team.name,
+                    columns,
+                    rows: tRows,
+                    includeSlNo: true
+                });
             }
         });
 
@@ -203,35 +234,36 @@ export const DraftAuctionSummary: React.FC<Props> = ({
             return;
         }
 
-        const wb = XLSX.utils.book_new();
-        const wsMaster = XLSX.utils.json_to_sheet(masterRows);
-        XLSX.utils.book_append_sheet(wb, wsMaster, "Master Data");
-
-        teamSheets.forEach(({ name, rows }) => {
-            const base = name.replace(/[\[\]\*\?\/\\:]/g, '').trim().substring(0, 28) || 'Team';
-            let sheetName = base;
-            let suffix = 1;
-            while (wb.SheetNames.includes(sheetName)) {
-                sheetName = `${base.substring(0, 25)}_${suffix++}`;
-            }
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), sheetName);
+        await downloadMultiSheetStyledExcel({
+            fileName: `${tournamentName.replace(/\s+/g, '_')}_Master_Draft_Summary.xlsx`,
+            sheets: [
+                {
+                    sheetName: 'Master Data',
+                    columns,
+                    rows: masterRows,
+                    includeSlNo: true
+                },
+                ...teamSheets
+            ]
         });
-
-        XLSX.writeFile(wb, `${tournamentName.replace(/\s+/g, '_')}_Master_Draft_Summary.xlsx`);
     };
 
-    // Export Individual Team Excel with Jersey Details
-    const handleExportTeamExcel = (team: Team) => {
+    // Export Individual Team Excel with Jersey Details & Styling
+    const handleExportTeamExcel = async (team: Team) => {
         const entry = teamSquads.find(ts => String(ts.team.id) === String(team.id));
         if (!entry || entry.squad.length === 0) {
             alert(`No drafted players found for ${team.name}.`);
             return;
         }
+        const columns = buildExcelColumns();
         const rows = entry.squad.map((p, idx) => buildExcelRow(team, p, idx));
-        const wb = XLSX.utils.book_new();
-        const sheetName = team.name.replace(/[\[\]\*\?\/\\:]/g, '').trim().substring(0, 31) || 'Squad';
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), sheetName);
-        XLSX.writeFile(wb, `${team.name.replace(/\s+/g, '_')}_Squad_With_Jersey.xlsx`);
+        await downloadStyledRegistrationExcel({
+            fileName: `${team.name.replace(/\s+/g, '_')}_Squad_With_Jersey.xlsx`,
+            sheetName: team.name,
+            columns,
+            rows,
+            includeSlNo: true
+        });
     };
 
     // Print summary
@@ -302,6 +334,13 @@ export const DraftAuctionSummary: React.FC<Props> = ({
                                 title="Download Master Data + Team Sheets Excel with Jersey Details"
                             >
                                 <FileSpreadsheet className="w-3.5 h-3.5" /> Master Excel
+                            </button>
+                            <button
+                                onClick={() => setShowExportHubModal(true)}
+                                className="py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-[11px] uppercase tracking-wider flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+                                title="Select specific fields, specific players, Styled Excel or Registration-style PDF"
+                            >
+                                <SlidersHorizontal className="w-3.5 h-3.5" /> Export Hub
                             </button>
                             <button
                                 onClick={() => { setPdfTargetTeamId('ALL'); setShowPdfModal(true); }}
@@ -480,6 +519,29 @@ export const DraftAuctionSummary: React.FC<Props> = ({
                         registrationConfig={registrationConfig}
                         systemLogoUrl={systemLogoUrl}
                     />
+                    {showExportHubModal && (
+                        <div className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+                            <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-[2rem] shadow-2xl custom-scrollbar">
+                                <SummaryExportHub
+                                    teams={teams}
+                                    players={players}
+                                    registrations={registrations}
+                                    registrationConfig={registrationConfig}
+                                    auctionTitle={tournamentName}
+                                    auctionLogoUrl={auctionLogoUrl}
+                                    systemBranding={{
+                                        logo: systemLogoUrl || '',
+                                        tagline: 'Your streaming partner'
+                                    }}
+                                    draftHistory={draftState.history || []}
+                                    draftPickMap={draftPickMap}
+                                    isDark={true}
+                                    defaultExpanded={true}
+                                    onClose={() => setShowExportHubModal(false)}
+                                />
+                            </div>
+                        </div>
+                    )}
                 </>
             )}
         </div>

@@ -9,11 +9,12 @@ import {
     Upload, Save, Eye, EyeOff, Layout, XCircle, Plus, CreditCard, CheckCircle, 
     Tag, Clock, Ban, Check, Zap, Server, Activity, AlertTriangle, HardDrive, 
     Calendar, ShieldCheck, Megaphone, Bell, Timer, Infinity as InfinityIcon, 
-    MessageSquare, Layers, Newspaper, Headset, UserMinus, UserPlus, Mail, ShieldAlert, Key, Filter, ChevronDown, UserX, Monitor, Fingerprint,
+    MessageSquare, Layers, Newspaper, Headset, UserMinus, UserPlus, Mail, ShieldAlert, Key, Filter, ChevronDown, UserX, Monitor, Fingerprint, Radio,
     Type as Shirt
 } from 'lucide-react';
 
 import { compressImage } from '../utils';
+import SuperAdminLiveStreamPanel from '../components/SuperAdminLiveStreamPanel';
 
 const SuperAdminDashboard: React.FC = () => {
     const { state, logout, joinAuction } = useAuction();
@@ -27,7 +28,7 @@ const SuperAdminDashboard: React.FC = () => {
         return remainingDays > 0 ? remainingDays : 0;
     };
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'AUCTIONS' | 'PLANS' | 'COUPONS' | 'POPUP' | 'BROADCAST' | 'SYSTEM' | 'IMAGES'>('DASHBOARD');
+    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'AUCTIONS' | 'PLANS' | 'COUPONS' | 'POPUP' | 'BROADCAST' | 'LIVE' | 'SYSTEM' | 'IMAGES'>('DASHBOARD');
     const [auctions, setAuctions] = useState<AuctionSetup[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -222,6 +223,7 @@ const SuperAdminDashboard: React.FC = () => {
                             {id: 'COUPONS', label: 'Coupons', icon: <Tag className="w-4 h-4"/>}, 
                             {id: 'POPUP', label: 'Alerts', icon: <Megaphone className="w-4 h-4"/>}, 
                             {id: 'BROADCAST', label: 'Ticker', icon: <Newspaper className="w-4 h-4"/>}, 
+                            {id: 'LIVE', label: 'Live TV', icon: <Radio className="w-4 h-4"/>},
                             {id: 'SYSTEM', label: 'System', icon: <HardDrive className="w-4 h-4"/>}, 
                             {id: 'IMAGES', label: 'Images', icon: <ImageIcon className="w-4 h-4"/>}
                         ].map(t => (
@@ -537,6 +539,8 @@ const SuperAdminDashboard: React.FC = () => {
                         </div>
                     </div>
                 )}
+
+                {activeTab === 'LIVE' && <SuperAdminLiveStreamPanel />}
 
                 {activeTab === 'SYSTEM' && (
                     <div className="space-y-8 animate-fade-in">

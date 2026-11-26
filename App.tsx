@@ -18,6 +18,7 @@ import ScoringDashboard from './screens/ScoringDashboard';
 import MatchScorer from './screens/MatchScorer';
 import MatchOverlay from './screens/MatchOverlay';
 import PlatformGuide from './screens/PlatformGuide';
+import LiveStreamCenter from './screens/LiveStreamCenter';
 import SupportWidget from './components/SupportWidget';
 import RecollectionManager from './screens/RecollectionManager';
 import RecollectionPublicForm from './screens/RecollectionPublicForm';
@@ -128,6 +129,7 @@ const AppContent: React.FC = () => {
     <ErrorBoundary>
       <Routes>
           <Route path="/" element={<LandingPage />} />
+          <Route path="/live" element={<LiveStreamCenter />} />
           <Route path="/guide" element={<PlatformGuide />} />
           <Route path="/auction/:id" element={<Dashboard />} />
           <Route path="/auction/:id/curator" element={<CuratorPortal />} />

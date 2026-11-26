@@ -1440,15 +1440,17 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                 No picks have occurred yet. Picks will stream here in real-time.
                             </div>
                         ) : (
-                            draftState.history.slice().reverse().map(h => (
+                            draftState.history.slice().reverse().map(h => {
+                                const hPhoto = h.playerPhoto || players.find(p => String(p.id) === String(h.playerId))?.photoUrl || '';
+                                return (
                                 <div
                                     key={h.id}
                                     className="p-3 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-between gap-3 shadow-md hover:border-zinc-700 transition-all"
                                 >
                                     <div className="flex items-center gap-3 min-w-0">
                                         <div className="w-10 h-10 rounded-xl overflow-hidden bg-zinc-950 shrink-0 border border-white/10">
-                                            {h.playerPhoto ? (
-                                                <img src={h.playerPhoto} alt="" className="w-full h-full object-contain" />
+                                            {hPhoto ? (
+                                                <img src={hPhoto} alt="" className="w-full h-full object-contain" />
                                             ) : (
                                                 <div className="w-full h-full flex items-center justify-center font-black text-sm text-zinc-600">
                                                     {h.playerName.charAt(0)}
@@ -1471,7 +1473,8 @@ export const TeamDraftDashboard: React.FC<Props> = ({
                                         </span>
                                     </div>
                                 </div>
-                            ))
+                                );
+                            })
                         )}
                     </div>
                 )}

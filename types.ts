@@ -744,6 +744,50 @@ export interface Tournament {
     createdBy?: string;
 }
 
+export type LiveStreamStatus = 'LIVE' | 'UPCOMING' | 'ENDED';
+export type StreamVisibility = 'PUBLIC' | 'UNLISTED' | 'PRIVATE';
+export type PlayerGradientPreset = 'JIO_GOLD' | 'CYBER_NEON' | 'CRIMSON_FIRE' | 'EMERALD_PULSE';
+export type CricHeroesSectionId = 'SCORECARD' | 'LIVE_FEED' | 'POINTS_TABLE' | 'MATCHES' | 'LEADERBOARD' | 'TEAMS' | 'STATS';
+
+export interface LiveScoreSnapshot {
+    teamAName?: string;
+    teamAScore?: string;
+    teamAOvers?: string;
+    teamBName?: string;
+    teamBScore?: string;
+    teamBOvers?: string;
+    statusNote?: string;
+    target?: string;
+    venue?: string;
+}
+
+export interface LiveStreamItem {
+    id: string;
+    title: string;
+    subtitle?: string;
+    tournamentName: string;
+    youtubeUrl: string;
+    youtubeVideoId?: string;
+    streamVisibility: StreamVisibility;
+    status: LiveStreamStatus;
+    scheduledAt?: string;
+    cricHeroesUrl?: string;
+    cricHeroesMatchUrl?: string;
+    linkedMatchId?: string;
+    playerGradientPreset?: PlayerGradientPreset;
+    scoreSnapshot?: LiveScoreSnapshot;
+    isFeatured?: boolean;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface LiveStreamSettings {
+    noLiveFallbackTitle: string;
+    noLiveFallbackSubtitle?: string;
+    streams: LiveStreamItem[];
+    updatedAt: number;
+}
+
 export interface CategoryArrangementSlot {
     playerId: string | number;
     playerName: string;

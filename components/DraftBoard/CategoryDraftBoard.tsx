@@ -22,7 +22,7 @@ import SoldCelebrationPopup from './SoldCelebrationPopup';
 import { getDraftTheme } from '../../utils/draftThemes';
 import confetti from 'canvas-confetti';
 import { playCountdownTickSound, playHeartbeatSound, playTimeUpSound, playUnsoldSoundTrack, isDraftAudioMuted, setDraftAudioMuted, mergeCustomAudioConfig } from '../../utils/draftAudio';
-import { compactTeamPlayerEntry, safeBuildTeamUpdatePayload, resolveDraftTeamSquad, validateDraftCategoryPick, getTeamCategoryQuotaSummary, checkDraftCategoryEligibilityFromSummary } from '../../utils';
+import { compactTeamPlayerEntry, safeBuildTeamUpdatePayload, resolveDraftTeamSquad, validateDraftCategoryPick, getTeamCategoryQuotaSummary, checkDraftCategoryEligibilityFromSummary, safeUpdateAuctionDoc, safeSaveAuctionDocument, compactMediaRef } from '../../utils';
 
 interface Props {
     isAdmin?: boolean;
@@ -118,6 +118,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         lastTopRequestIdRef.current = topId;
     }, [pendingPickRequests]);
     const [activeUnsoldBanner, setActiveUnsoldBanner] = useState<{
+        playerId?: string | number;
         playerName: string;
         role?: string;
         category?: string;
@@ -267,7 +268,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
     const updateAuctionFieldsWithRelay = async (fields: Record<string, any>) => {
         if (!auctionId) return;
         try {
-            await db.collection('auctions').doc(auctionId).update(fields);
+            await safeUpdateAuctionDoc(auctionId, fields, db);
         } catch (err: any) {
             if (isCurator && isPermissionErr(err)) {
                 await dispatchCuratorRelay('UPDATE_AUCTION_FIELDS', { fields });
@@ -367,16 +368,16 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 return;
             }
             if (draftState.timerTimeRemaining > 1) {
-                db.collection('auctions').doc(auctionId).update({
+                safeUpdateAuctionDoc(auctionId, {
                     'draftBoardState.timerTimeRemaining': draftState.timerTimeRemaining - 1,
                     'draftBoardState.updatedAt': Date.now()
-                }).catch(() => {});
+                }, db).catch(() => {});
             } else if (draftState.timerTimeRemaining === 1) {
-                db.collection('auctions').doc(auctionId).update({
+                safeUpdateAuctionDoc(auctionId, {
                     'draftBoardState.timerTimeRemaining': 0,
                     'draftBoardState.isTimerRunning': false,
                     'draftBoardState.updatedAt': Date.now()
-                }).catch(() => {});
+                }, db).catch(() => {});
             }
         }, 1000);
 
@@ -778,7 +779,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             if (isAdmin) {
                 try {
                     await syncPlayerAndTeamDocs(player, targetTeam, effectivePrice);
-                    await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
+                    await safeUpdateAuctionDoc(auctionId, draftBoardAtomicUpdate, db);
                 } catch (adminErr: any) {
                     if (isCurator && isPermissionErr(adminErr)) {
                         await dispatchCuratorRelay('ASSIGN_PLAYER', {
@@ -800,7 +801,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 if (!isApprovalRequired) {
                     // 1) Update root draftBoardState FIRST when direct picking is active so history, turn advance, SOLD popup & sound sync immediately
                     try {
-                        await db.collection('auctions').doc(auctionId).update(draftBoardAtomicUpdate);
+                        await safeUpdateAuctionDoc(auctionId, draftBoardAtomicUpdate, db);
                         directRootSucceeded = true;
                     } catch (rootErr: any) {
                         const isPerm = rootErr?.code === 'permission-denied' || String(rootErr?.message || '').toLowerCase().includes('permission');
@@ -1418,14 +1419,10 @@ export const CategoryDraftBoard: React.FC<Props> = ({
         const updatedHistory = (currentDraft.history || []).filter(h => String(h.playerId) !== String(player.id));
         const cleanHistory = JSON.parse(JSON.stringify(updatedHistory));
 
-        const payload = {
-            draftBoardState: {
-                ...currentDraft,
-                history: cleanHistory,
-                updatedAt: Date.now()
-            }
-        };
-        await db.collection('auctions').doc(auctionId).set(JSON.parse(JSON.stringify(payload)), { merge: true });
+        await safeUpdateAuctionDoc(auctionId, {
+            'draftBoardState.history': cleanHistory,
+            'draftBoardState.updatedAt': Date.now()
+        }, db);
     };
 
     const startNextRoundAction = async () => {
@@ -1439,22 +1436,17 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             ? reversed
             : currentTeams.map(t => t.id);
 
-        const nextPayload = {
-            draftBoardState: {
-                ...currentDraft,
-                currentRound: nextRoundNumber,
-                currentTurnIndex: 0,
-                currentTeamId: newRoundOrder[0] || null,
-                roundOrder: newRoundOrder,
-                roundStatus: 'IN_PROGRESS',
-                timerTimeRemaining: Number(currentDraft.turnTimerSeconds || 45),
-                isTimerRunning: true,
-                updatedAt: Date.now()
-            }
-        };
-        const cleanNext = JSON.parse(JSON.stringify(nextPayload));
         try {
-            await db.collection('auctions').doc(auctionId).set(cleanNext, { merge: true });
+            await safeUpdateAuctionDoc(auctionId, {
+                'draftBoardState.currentRound': nextRoundNumber,
+                'draftBoardState.currentTurnIndex': 0,
+                'draftBoardState.currentTeamId': newRoundOrder[0] || null,
+                'draftBoardState.roundOrder': newRoundOrder,
+                'draftBoardState.roundStatus': 'IN_PROGRESS',
+                'draftBoardState.timerTimeRemaining': Number(currentDraft.turnTimerSeconds || 45),
+                'draftBoardState.isTimerRunning': true,
+                'draftBoardState.updatedAt': Date.now()
+            }, db);
         } catch (err: any) {
             if (isCurator && isPermissionErr(err)) {
                 await dispatchCuratorRelay('START_NEXT_ROUND');
@@ -1484,7 +1476,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
 
         try {
             if (action === 'UPDATE_AUCTION_FIELDS' && data.fields) {
-                await db.collection('auctions').doc(auctionId).update(data.fields);
+                await safeUpdateAuctionDoc(auctionId, data.fields, db);
             } else if (action === 'ASSIGN_PLAYER') {
                 const mp = playersRef.current.find(p => String(p.id) === String(data.playerId));
                 const mt = teamsRef.current.find(t => String(t.id) === String(data.teamId));
@@ -1498,12 +1490,12 @@ export const CategoryDraftBoard: React.FC<Props> = ({
             } else if (action === 'START_NEXT_ROUND') {
                 await startNextRoundAction();
             } else if (action === 'REOPEN_DRAFT') {
-                await db.collection('auctions').doc(auctionId).update({
+                await safeUpdateAuctionDoc(auctionId, {
                     status: 'ACTIVE',
                     'draftBoardState.roundStatus': 'IN_PROGRESS',
                     'draftBoardState.broadcastView': 'PLAYERS',
                     'draftBoardState.updatedAt': Date.now()
-                });
+                }, db);
             } else if (action === 'UNDO_LAST_PICK') {
                 const currentDraft = draftStateRef.current;
                 const history = currentDraft.history || [];
@@ -1526,7 +1518,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         );
                         await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
                     }
-                    await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+                    await safeUpdateAuctionDoc(auctionId, {
                         'draftBoardState.history': history.slice(0, -1),
                         'draftBoardState.currentTurnIndex': Math.max(0, Number(currentDraft.currentTurnIndex || 0) - 1),
                         'draftBoardState.currentTeamId': lastPick.teamId || null,
@@ -1534,7 +1526,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                         'draftBoardState.timerTimeRemaining': Number(currentDraft.turnTimerSeconds || 45),
                         'draftBoardState.isTimerRunning': false,
                         'draftBoardState.updatedAt': Date.now()
-                    })));
+                    }, db);
                 }
             } else if (action === 'RESET_CURRENT_ROUND') {
                 const currentDraft = draftStateRef.current;
@@ -1572,7 +1564,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                 }
                 const remainingHistory = (currentDraft.history || []).filter(h => h.round !== currentRound);
                 const firstTeamId = currentDraft.roundOrder?.[0] || teamsRef.current[0]?.id || null;
-                await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+                await safeUpdateAuctionDoc(auctionId, {
                     'draftBoardState.history': remainingHistory,
                     'draftBoardState.currentTurnIndex': 0,
                     'draftBoardState.currentTeamId': firstTeamId,
@@ -1580,7 +1572,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     'draftBoardState.timerTimeRemaining': Number(currentDraft.turnTimerSeconds || 45),
                     'draftBoardState.isTimerRunning': false,
                     'draftBoardState.updatedAt': Date.now()
-                })));
+                }, db);
             } else if (action === 'RESET_FULL_DRAFT') {
                 const currentDraft = draftStateRef.current;
                 const allDraftPicks = currentDraft.history || [];
@@ -1612,7 +1604,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     );
                     await db.collection('auctions').doc(auctionId).collection('teams').doc(String(t.id)).update(teamPayload);
                 }
-                await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+                await safeUpdateAuctionDoc(auctionId, {
                     'draftBoardState.currentRound': 1,
                     'draftBoardState.currentTurnIndex': 0,
                     'draftBoardState.currentTeamId': teamsRef.current[0]?.id || null,
@@ -1622,7 +1614,7 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     'draftBoardState.isTimerRunning': false,
                     'draftBoardState.history': [],
                     'draftBoardState.updatedAt': Date.now()
-                })));
+                }, db);
             }
 
             db.collection('scoringAssets').doc(`curator_action_${auctionId}`).get().then(snap => {
@@ -1756,12 +1748,12 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                     onReopenDraft={async () => {
                         if (!auctionId) return;
                         try {
-                            await db.collection('auctions').doc(auctionId).update({
+                            await safeUpdateAuctionDoc(auctionId, {
                                 status: 'ACTIVE',
                                 'draftBoardState.roundStatus': 'IN_PROGRESS',
                                 'draftBoardState.broadcastView': 'PLAYERS',
                                 'draftBoardState.updatedAt': Date.now()
-                            });
+                            }, db);
                         } catch (err: any) {
                             if (isCurator && isPermissionErr(err)) {
                                 await dispatchCuratorRelay('REOPEN_DRAFT');
@@ -1888,12 +1880,16 @@ export const CategoryDraftBoard: React.FC<Props> = ({
 
     const renderUnsoldBannerOverlay = () => {
         if (!activeUnsoldBanner) return null;
+        const matchedUnsoldP = activeUnsoldBanner.playerId
+            ? players.find(p => String(p.id) === String(activeUnsoldBanner.playerId))
+            : players.find(p => String(p.name || '').trim().toLowerCase() === String(activeUnsoldBanner.playerName || '').trim().toLowerCase());
+        const resolvedPhoto = activeUnsoldBanner.playerPhoto || matchedUnsoldP?.photoUrl || '';
         return (
             <div className="fixed bottom-6 right-6 z-[950] pointer-events-none animate-in fade-in slide-in-from-bottom-4 duration-300">
                 <div className="flex items-center gap-3.5 px-5 py-3.5 rounded-2xl bg-red-950/95 border-2 border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.5)] backdrop-blur-xl">
                     <div className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-900 border border-red-400/50 shrink-0 flex items-center justify-center">
-                        {activeUnsoldBanner.playerPhoto ? (
-                            <img src={activeUnsoldBanner.playerPhoto} alt={activeUnsoldBanner.playerName} className="w-full h-full object-contain" />
+                        {resolvedPhoto ? (
+                            <img src={resolvedPhoto} alt={activeUnsoldBanner.playerName} className="w-full h-full object-contain" />
                         ) : (
                             <Ban className="w-6 h-6 text-red-400" />
                         )}
@@ -3025,11 +3021,13 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                         <Sparkles className="w-4 h-4" /> Recent Draft Picks
                                     </h4>
                                     <div className="space-y-2 max-h-96 overflow-y-auto custom-scrollbar">
-                                        {(draftState.history || []).slice().reverse().map(h => (
+                                        {(draftState.history || []).slice().reverse().map(h => {
+                                            const hPhoto = h.playerPhoto || players.find(p => String(p.id) === String(h.playerId))?.photoUrl || '';
+                                            return (
                                             <div key={h.id} className="p-2 rounded-xl border border-zinc-800 bg-zinc-800/40 flex items-center justify-between gap-2 text-xs">
                                                 <div className="flex items-center gap-2 min-w-0">
-                                                    {h.playerPhoto ? (
-                                                        <img src={h.playerPhoto} alt="" className="w-7 h-7 rounded-lg object-contain bg-zinc-950 shrink-0" />
+                                                    {hPhoto ? (
+                                                        <img src={hPhoto} alt="" className="w-7 h-7 rounded-lg object-contain bg-zinc-950 shrink-0" />
                                                     ) : (
                                                         <div className="w-7 h-7 rounded-lg bg-zinc-700 flex items-center justify-center font-bold text-[10px]">
                                                             {h.playerName.charAt(0)}
@@ -3046,7 +3044,8 @@ export const CategoryDraftBoard: React.FC<Props> = ({
                                                     </span>
                                                 </div>
                                             </div>
-                                        ))}
+                                            );
+                                        })}
                                         {(!draftState.history || draftState.history.length === 0) && (
                                             <p className="text-[10px] text-zinc-500 uppercase tracking-widest text-center py-6 font-bold">
                                                 Draft picks will appear here live

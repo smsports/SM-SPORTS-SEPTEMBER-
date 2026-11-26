@@ -14,6 +14,10 @@ export interface RegistrationPdfRecord {
     status?: string;
     paymentStatus?: string;
     paymentSummary?: string;
+    teamName?: string;
+    soldTo?: string;
+    soldPrice?: number | string;
+    isTraded?: boolean;
     profilePic?: string;
     jerseyName?: string;
     jerseyNumber?: string | number;
@@ -35,6 +39,7 @@ export interface RegistrationPdfOptions {
     systemBranding: { logo: string; tagline: string };
     fileName: string;
     subtitle?: string;
+    groupByField?: 'category' | 'team';
     onProgress?: (pct: number) => void;
     isCancelledRef?: { current: boolean };
 }
@@ -62,6 +67,7 @@ export const generateRegistrationStylePDF = async ({
     systemBranding,
     fileName,
     subtitle = 'Official Player Registrations',
+    groupByField = 'category',
     onProgress,
     isCancelledRef,
 }: RegistrationPdfOptions): Promise<void> => {
@@ -77,21 +83,31 @@ export const generateRegistrationStylePDF = async ({
     try {
         const sortedRecords = [...records];
 
+        const getGroupValue = (rec: RegistrationPdfRecord) =>
+            groupByField === 'team'
+                ? (rec.teamName || rec.soldTo || 'Unassigned')
+                : (rec.category || 'Standard');
+
         if (exportCategorizedPDF) {
             const categoryOrder: { [name: string]: number } = {};
-            [...categories]
-                .sort((a, b) => (a.order || 0) - (b.order || 0))
-                .forEach((cat, idx) => {
-                    categoryOrder[cat.name] = idx;
-                });
+            if (groupByField === 'category') {
+                [...categories]
+                    .sort((a, b) => (a.order || 0) - (b.order || 0))
+                    .forEach((cat, idx) => {
+                        categoryOrder[cat.name] = idx;
+                    });
+            }
 
             sortedRecords.sort((a, b) => {
-                const catA = a.category || 'Standard';
-                const catB = b.category || 'Standard';
-                if (catA !== catB) {
-                    const orderA = categoryOrder[catA] ?? 999;
-                    const orderB = categoryOrder[catB] ?? 999;
-                    if (orderA !== orderB) return orderA - orderB;
+                const grpA = getGroupValue(a);
+                const grpB = getGroupValue(b);
+                if (grpA !== grpB) {
+                    if (groupByField === 'category') {
+                        const orderA = categoryOrder[grpA] ?? 999;
+                        const orderB = categoryOrder[grpB] ?? 999;
+                        if (orderA !== orderB) return orderA - orderB;
+                    }
+                    return grpA.localeCompare(grpB);
                 }
                 const numA =
                     a.playerNumber !== undefined && a.playerNumber !== null && a.playerNumber !== ''
@@ -111,7 +127,7 @@ export const generateRegistrationStylePDF = async ({
                         ? Number(a.playerNumber)
                         : 999999;
                 const numB =
-                    b.playerNumber !== undefined && b.playerNumber !== null && b.playerNumber !== ''
+                    b.playerNumber !== undefined && b.playerNumber !== null && a.playerNumber !== ''
                         ? Number(b.playerNumber)
                         : 999999;
                 if (numA !== numB) return numA - numB;
@@ -134,7 +150,7 @@ export const generateRegistrationStylePDF = async ({
                 const categoriesInOrder: string[] = [];
 
                 sortedRecords.forEach((reg, idx) => {
-                    const cat = reg.category || 'Standard';
+                    const cat = getGroupValue(reg);
                     if (!groups[cat]) {
                         groups[cat] = [];
                         categoriesInOrder.push(cat);
@@ -212,6 +228,12 @@ export const generateRegistrationStylePDF = async ({
                 cardHeight = 'auto';
             }
 
+            const showName = selectedFields.includes('fullName') || selectedFields.includes('name');
+            const showRole = selectedFields.includes('playerType') || selectedFields.includes('role');
+            const showPhoto = selectedFields.includes('profilePic') || selectedFields.includes('photoUrl');
+            const showTeam = selectedFields.includes('teamName') || selectedFields.includes('soldTo');
+            const showSoldPrice = selectedFields.includes('soldPrice');
+
             pdfContainer.innerHTML = `
                 <div id="pdf-page" style="
                     width: 210mm;
@@ -264,10 +286,10 @@ export const generateRegistrationStylePDF = async ({
                         overflow: hidden;
                     ">
                         ${pageRegs.map((reg, idx) => {
-                            const currentCat = reg.category || 'Standard';
+                            const currentGroup = getGroupValue(reg);
                             const prevReg = idx > 0 ? pageRegs[idx - 1] : null;
-                            const prevCat = prevReg ? (prevReg.category || 'Standard') : null;
-                            const showHeader = exportCategorizedPDF && currentCat !== prevCat;
+                            const prevGroup = prevReg ? getGroupValue(prevReg) : null;
+                            const showHeader = exportCategorizedPDF && currentGroup !== prevGroup;
 
                             const slNo = globalStartIndex + idx + 1;
                             const playerNum =
@@ -278,18 +300,26 @@ export const generateRegistrationStylePDF = async ({
                             const isSingle = playersPerPage === 1;
                             const isList = playersPerPage === 'LIST';
 
-                            const extraFieldsToDisplay = [
-                                { id: 'category', label: 'Category', value: reg.category },
-                                { id: 'paymentStatus', label: 'Payment', value: reg.paymentSummary || reg.paymentStatus },
-                                { id: 'jerseyName', label: 'Jersey Name', value: reg.jerseyName },
-                                { id: 'jerseyNumber', label: 'Jersey No.', value: reg.jerseyNumber },
-                                { id: 'jerseySize', label: 'Jersey Size', value: reg.jerseySize },
-                                ...(customFields || []).map((f) => ({
-                                    id: `cf_${f.id}`,
-                                    label: f.label,
-                                    value: reg[f.id],
-                                })),
-                            ].filter((f) => selectedFields.includes(f.id));
+                            const teamDisplay = reg.teamName || reg.soldTo || '';
+                            const priceDisplay =
+                                reg.soldPrice !== undefined && reg.soldPrice !== null && String(reg.soldPrice) !== ''
+                                    ? (isNaN(Number(reg.soldPrice)) ? String(reg.soldPrice) : `₹${Number(reg.soldPrice).toLocaleString()}`)
+                                    : '-';
+
+                            const extraFieldsToDisplay: { id: string; label: string; value: any }[] = [];
+                            if (showTeam) extraFieldsToDisplay.push({ id: 'teamName', label: 'Team', value: teamDisplay || '-' });
+                            if (showSoldPrice) extraFieldsToDisplay.push({ id: 'soldPrice', label: 'Sold Price', value: priceDisplay });
+                            if (selectedFields.includes('category')) extraFieldsToDisplay.push({ id: 'category', label: 'Category', value: reg.category });
+                            if (selectedFields.includes('paymentStatus')) extraFieldsToDisplay.push({ id: 'paymentStatus', label: 'Payment', value: reg.paymentSummary || reg.paymentStatus });
+                            if (selectedFields.includes('isTraded')) extraFieldsToDisplay.push({ id: 'isTraded', label: 'Traded', value: reg.isTraded ? 'YES' : 'NO' });
+                            if (selectedFields.includes('jerseyName')) extraFieldsToDisplay.push({ id: 'jerseyName', label: 'Jersey Name', value: reg.jerseyName });
+                            if (selectedFields.includes('jerseyNumber')) extraFieldsToDisplay.push({ id: 'jerseyNumber', label: 'Jersey No.', value: reg.jerseyNumber });
+                            if (selectedFields.includes('jerseySize')) extraFieldsToDisplay.push({ id: 'jerseySize', label: 'Jersey Size', value: reg.jerseySize });
+                            (customFields || []).forEach((f) => {
+                                if (selectedFields.includes(`cf_${f.id}`) || selectedFields.includes(f.id)) {
+                                    extraFieldsToDisplay.push({ id: `cf_${f.id}`, label: f.label, value: reg[f.id] });
+                                }
+                            });
 
                             let itemHtml = '';
 
@@ -308,7 +338,7 @@ export const generateRegistrationStylePDF = async ({
                                     <div style="font-size: 9pt; font-weight: 900; min-width: 9mm; color: ${pdfTheme === 'ADVAYA' ? '#fbbf24' : '#3b82f6'};">
                                         ${selectedFields.includes('playerNumber') ? `#${escapeHtml(playerNum)}` : `${slNo}.`}
                                     </div>
-                                    ${selectedFields.includes('profilePic') ? `
+                                    ${showPhoto ? `
                                         <div style="width: 10mm; height: 10mm; border-radius: 1mm; overflow: hidden; flex-shrink: 0; background: #e2e8f0; display: flex; align-items: center; justify-content: center;">
                                             ${reg.profilePic ? `
                                                 <img src="${reg.profilePic}" referrerpolicy="no-referrer" style="width: 100%; height: 100%; object-fit: cover;" />
@@ -318,10 +348,10 @@ export const generateRegistrationStylePDF = async ({
                                         </div>
                                     ` : ''}
                                     <div style="flex: 1; min-width: 0;">
-                                        ${selectedFields.includes('fullName') ? `<h3 style="margin: 0; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; line-height: 1.2; padding: 0.5mm 0;">${escapeHtml(reg.fullName)}</h3>` : ''}
+                                        ${showName ? `<h3 style="margin: 0; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; line-height: 1.2; padding: 0.5mm 0;">${escapeHtml(reg.fullName)}</h3>` : ''}
                                         <p style="margin: 0; font-size: 7pt; font-weight: 700; opacity: 0.65;">
                                             ${[
-                                                selectedFields.includes('playerType') ? escapeHtml(reg.playerType) : null,
+                                                showRole ? escapeHtml(reg.playerType) : null,
                                                 selectedFields.includes('mobile') ? escapeHtml(reg.mobile) : null,
                                                 selectedFields.includes('dob') && reg.dob ? `DOB: ${escapeHtml(reg.dob)}` : null,
                                                 selectedFields.includes('gender') && reg.gender ? escapeHtml(reg.gender) : null,
@@ -329,11 +359,11 @@ export const generateRegistrationStylePDF = async ({
                                             ].filter(Boolean).join(' • ')}
                                         </p>
                                     </div>
-                                    <div style="display: flex; gap: 3mm; flex-wrap: wrap; justify-content: flex-end; max-width: 52%;">
+                                    <div style="display: flex; gap: 3mm; flex-wrap: wrap; justify-content: flex-end; max-width: 55%;">
                                         ${extraFieldsToDisplay.map((field) => `
                                             <div style="text-align: right; min-width: 13mm;">
                                                 <p style="margin: 0; font-size: 5pt; font-weight: 900; opacity: 0.5; text-transform: uppercase;">${escapeHtml(field.label)}</p>
-                                                <p style="margin: 0; font-size: 7.5pt; font-weight: 700;">${escapeHtml(field.value || '-')}</p>
+                                                <p style="margin: 0; font-size: 7.5pt; font-weight: 700;">${escapeHtml(field.value !== undefined && field.value !== null && String(field.value) !== '' ? field.value : '-')}</p>
                                             </div>
                                         `).join('')}
                                     </div>
@@ -362,7 +392,7 @@ export const generateRegistrationStylePDF = async ({
                                         </div>
                                     ` : ''}
                                     <div style="display: flex; gap: ${isSingle ? '12mm' : '3.5mm'}; align-items: start;">
-                                        ${selectedFields.includes('profilePic') ? `
+                                        ${showPhoto ? `
                                             <div style="width: ${isSingle ? '68mm' : isDense ? '17mm' : '28mm'}; height: ${isSingle ? '80mm' : isDense ? '21mm' : '36mm'}; border-radius: ${isSingle ? '8mm' : '2.5mm'}; overflow: hidden; border: ${isSingle ? '6px' : '2px'} solid ${pdfTheme === 'ADVAYA' ? '#fbbf2444' : '#f1f5f9'}; flex-shrink: 0; background: ${pdfTheme === 'ADVAYA' ? '#1e293b' : '#f1f5f9'}; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
                                                 ${reg.profilePic ? `
                                                     <img src="${reg.profilePic}" referrerpolicy="no-referrer" style="width: 100%; height: 100%; object-fit: cover;" />
@@ -372,15 +402,15 @@ export const generateRegistrationStylePDF = async ({
                                             </div>
                                         ` : ''}
                                         <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
-                                            ${selectedFields.includes('fullName') ? `
+                                            ${showName ? `
                                                 <h3 style="margin: 0 0 1.5mm 0; padding-right: ${selectedFields.includes('playerNumber') ? (isSingle ? '30mm' : '12mm') : '0'}; font-size: ${isSingle ? '30pt' : isDense ? '8.5pt' : '11.5pt'}; font-weight: 900; text-transform: uppercase; line-height: 1.2; color: ${pdfTheme === 'ADVAYA' ? '#fbbf24' : '#0f172a'}; word-wrap: break-word; overflow-wrap: break-word; word-break: normal; letter-spacing: -0.2px;">
                                                     ${escapeHtml(reg.fullName)}
                                                 </h3>
                                             ` : ''}
-                                            ${selectedFields.includes('playerType') ? `
+                                            ${showRole ? `
                                                 <div style="font-size: ${isSingle ? '18pt' : isDense ? '6.5pt' : '8.5pt'}; font-weight: 800; color: ${pdfTheme === 'ADVAYA' ? '#e2e8f0' : '#2563eb'}; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.9; margin-bottom: 1.5mm;">
                                                     ${escapeHtml(reg.playerType || '-')}
-                                                    ${exportCategorizedPDF ? `<span style="font-size: 0.85em; opacity: 0.7; margin-left: 2mm; font-weight: 600;">(${escapeHtml(currentCat)})</span>` : ''}
+                                                    ${exportCategorizedPDF ? `<span style="font-size: 0.85em; opacity: 0.7; margin-left: 2mm; font-weight: 600;">(${escapeHtml(currentGroup)})</span>` : ''}
                                                 </div>
                                             ` : ''}
 
@@ -406,7 +436,7 @@ export const generateRegistrationStylePDF = async ({
                                                 ${selectedFields.includes('status') ? `
                                                     <div style="width: calc(50% - ${isSingle ? '4mm' : '1.5mm'}); min-width: 0; box-sizing: border-box; position: relative; z-index: 10;">
                                                         <p style="margin: 0; font-size: ${isSingle ? '10pt' : '6pt'}; font-weight: 800; color: ${pdfTheme === 'ADVAYA' ? 'rgba(255,255,255,0.45)' : '#64748b'}; text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.2;">Status</p>
-                                                        <p style="margin: 0.5mm 0 0 0; font-size: ${isSingle ? '18pt' : isDense ? '7pt' : '9pt'}; font-weight: 900; color: ${reg.status === 'APPROVED' ? '#10b981' : reg.status === 'REJECTED' ? '#ef4444' : '#f59e0b'}; line-height: 1.25; word-wrap: break-word;">${escapeHtml(reg.status || '-')}</p>
+                                                        <p style="margin: 0.5mm 0 0 0; font-size: ${isSingle ? '18pt' : isDense ? '7pt' : '9pt'}; font-weight: 900; color: ${reg.status === 'APPROVED' || reg.status === 'SOLD' ? '#10b981' : reg.status === 'REJECTED' || reg.status === 'UNSOLD' ? '#ef4444' : '#f59e0b'}; line-height: 1.25; word-wrap: break-word;">${escapeHtml(reg.status || '-')}</p>
                                                     </div>
                                                 ` : ''}
                                             </div>
@@ -418,7 +448,7 @@ export const generateRegistrationStylePDF = async ({
                                             ${extraFieldsToDisplay.map((field) => `
                                                 <div style="width: calc(33.333% - ${isSingle ? '6mm' : '3mm'}); min-width: 0; box-sizing: border-box; position: relative; z-index: 10; display: flex; flex-direction: column;">
                                                     <p style="margin: 0; font-size: ${isSingle ? '9.5pt' : hasManyExtras && isDense ? '5.2pt' : '6pt'}; font-weight: 800; color: ${pdfTheme === 'ADVAYA' ? 'rgba(255,255,255,0.45)' : '#64748b'}; text-transform: uppercase; letter-spacing: 0.4px; line-height: 1.15;">${escapeHtml(field.label)}</p>
-                                                    <p style="margin: 0.5mm 0 0 0; font-size: ${isSingle ? '15pt' : isDense ? (hasManyExtras ? '6.5pt' : '7.2pt') : '8.5pt'}; font-weight: 700; color: ${pdfTheme === 'ADVAYA' ? '#fbbf24' : '#1e293b'}; line-height: 1.25; word-wrap: break-word;">${escapeHtml(field.value || '-')}</p>
+                                                    <p style="margin: 0.5mm 0 0 0; font-size: ${isSingle ? '15pt' : isDense ? (hasManyExtras ? '6.5pt' : '7.2pt') : '8.5pt'}; font-weight: 700; color: ${pdfTheme === 'ADVAYA' ? '#fbbf24' : '#1e293b'}; line-height: 1.25; word-wrap: break-word;">${escapeHtml(field.value !== undefined && field.value !== null && String(field.value) !== '' ? field.value : '-')}</p>
                                                 </div>
                                             `).join('')}
                                         </div>
@@ -430,7 +460,7 @@ export const generateRegistrationStylePDF = async ({
                             return `
                                 ${showHeader ? `
                                     <div style="grid-column: 1 / -1; padding: 2mm 4mm; background: ${pdfTheme === 'ADVAYA' ? '#fbbf24' : '#3b82f6'}; color: ${pdfTheme === 'ADVAYA' ? '#000000' : '#ffffff'}; border-radius: 1.5mm; font-size: 9pt; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; margin-top: 1mm; margin-bottom: 2mm; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                                        Category: ${escapeHtml(currentCat)}
+                                        ${groupByField === 'team' ? 'Team' : 'Category'}: ${escapeHtml(currentGroup)}
                                     </div>
                                 ` : ''}
                                 ${itemHtml}

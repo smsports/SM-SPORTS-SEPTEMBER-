@@ -2,8 +2,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuction } from '../hooks/useAuction';
-import { AuctionSetup, UserRole } from '../types';
-import { Play, Calendar, History, Trophy, Users, BookOpen, CheckCircle, Scale, CreditCard, ShieldCheck, FileText, Zap, Star, Monitor, MessageSquare, Smartphone, Layout, Youtube, ChevronRight, UserPlus, Sun, Moon } from 'lucide-react';
+import { AuctionSetup, LiveStreamSettings, UserRole } from '../types';
+import { Play, Calendar, History, Trophy, Users, BookOpen, CheckCircle, Scale, CreditCard, ShieldCheck, FileText, Zap, Star, Monitor, MessageSquare, Smartphone, Layout, Youtube, ChevronRight, UserPlus, Sun, Moon, Radio, Tv } from 'lucide-react';
 import { db } from '../firebase';
 
 import { useTheme } from '../contexts/ThemeContext';
@@ -69,6 +69,7 @@ const LandingPage: React.FC = () => {
   const [pastAuctions, setPastAuctions] = useState<AuctionSetup[]>([]);
   const [loading, setLoading] = useState(true);
   const [greeting, setGreeting] = useState('');
+  const [liveSettings, setLiveSettings] = useState<LiveStreamSettings | null>(null);
 
   const isDark = theme === 'dark';
 
@@ -115,8 +116,22 @@ const LandingPage: React.FC = () => {
           setPastAuctions(past);
           setLoading(false);
       }, (error: any) => { setLoading(false); });
-      return () => unsubscribe();
+
+      const unsubLive = db.collection('appConfig').doc('liveStreams').onSnapshot((doc) => {
+          if (doc.exists) {
+              setLiveSettings(doc.data() as LiveStreamSettings);
+          }
+      }, () => {});
+
+      return () => {
+          unsubscribe();
+          unsubLive();
+      };
   }, []);
+
+  const liveStreamsList = (liveSettings?.streams || []).filter(s => s.status === 'LIVE');
+  const upcomingStreamsList = (liveSettings?.streams || []).filter(s => s.status === 'UPCOMING');
+  const featuredLiveStream = liveStreamsList.find(s => s.isFeatured) || liveStreamsList[0] || null;
 
   const getStatusBadge = (status: string) => {
       const s = (status || '').toUpperCase();
@@ -166,6 +181,18 @@ const LandingPage: React.FC = () => {
             
             <ThemeToggle />
 
+            <Link
+              to="/live"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-wider text-white bg-gradient-to-r from-blue-600 via-cyan-500 to-amber-500 shadow-lg shadow-cyan-500/20 hover:brightness-110 transition-all whitespace-nowrap shrink-0"
+            >
+              {liveStreamsList.length > 0 ? (
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              ) : (
+                <Tv className="w-3.5 h-3.5" />
+              )}
+              <span>Watch Live</span>
+            </Link>
+
             {isLoggedIn ? (
               <Link to={dashboardLink} className="btn-golden font-black py-2.5 px-8 rounded-2xl text-[11px] uppercase tracking-[0.2em] active:scale-95">Dashboard</Link>
             ) : (
@@ -197,6 +224,10 @@ const LandingPage: React.FC = () => {
             <Link to={isLoggedIn ? "/admin/new" : "/auth?tab=admin&mode=register"} className={`btn-golden flex items-center justify-center font-black py-6 px-12 rounded-[2rem] group text-xs uppercase tracking-widest active:scale-95`}>
                 <Play className="w-4 h-4 mr-3 fill-current group-hover:scale-125 transition-transform" /> Create Auction
             </Link>
+            <Link to="/live" className="flex items-center justify-center gap-3 font-black py-6 px-10 rounded-[2rem] text-xs uppercase tracking-widest text-white bg-gradient-to-r from-blue-600 via-cyan-500 to-amber-500 shadow-[0_0_30px_rgba(6,182,212,0.35)] hover:brightness-110 active:scale-95 transition-all whitespace-nowrap">
+                {liveStreamsList.length > 0 ? <Radio className="w-4 h-4 animate-pulse" /> : <Tv className="w-4 h-4" />}
+                <span>{liveStreamsList.length > 0 ? 'Watch Live Stream' : 'Live Stream Center'}</span>
+            </Link>
             <button onClick={() => scrollToSection('pricing')} className={`btn-golden flex items-center justify-center border-2 font-black py-6 px-12 rounded-[2rem] text-xs uppercase tracking-widest active:scale-95`}>
                 View Plans
             </button>
@@ -207,11 +238,39 @@ const LandingPage: React.FC = () => {
       {/* Auction Center */}
       <section className={`py-24 border-t relative transition-colors ${isDark ? 'bg-secondary/30 border-accent/10' : 'bg-white border-gray-100'}`}>
         <div className="container mx-auto px-6">
-          <div className={`reveal-element flex items-center justify-between mb-16 border-l-8 pl-10 ${isDark ? 'border-accent' : 'border-accent'}`}>
+          <div className={`reveal-element flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-10 border-l-8 pl-10 ${isDark ? 'border-accent' : 'border-accent'}`}>
             <div>
               <h2 className={`text-4xl font-black uppercase tracking-tighter ${isDark ? 'text-white' : 'text-gray-900'}`}>Match Center</h2>
               <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-2 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>Active and Finished Tournaments</p>
             </div>
+            <Link
+              to="/live"
+              className={`inline-flex items-center justify-between gap-4 px-5 py-3.5 rounded-2xl border transition-all group self-start sm:self-auto ${
+                isDark ? 'bg-[#0D1322] border-cyan-500/30 hover:border-cyan-400' : 'bg-slate-900 border-slate-800 text-white'
+              }`}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 via-cyan-500 to-amber-500 flex items-center justify-center text-white shrink-0">
+                  {liveStreamsList.length > 0 ? <Radio className="w-5 h-5" /> : <Tv className="w-5 h-5" />}
+                </div>
+                <div className="min-w-0 text-left">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-cyan-400 flex items-center gap-1.5">
+                    {liveStreamsList.length > 0 ? (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        <span>Streaming Live Now</span>
+                      </>
+                    ) : (
+                      <span>Live Stream Hub • {upcomingStreamsList.length} Upcoming</span>
+                    )}
+                  </div>
+                  <div className="text-sm font-bold text-white truncate max-w-[260px]">
+                    {featuredLiveStream?.title || liveSettings?.noLiveFallbackTitle || 'Watch Live Streams & CricHeroes Stats'}
+                  </div>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-cyan-400 group-hover:translate-x-1 transition-transform shrink-0" />
+            </Link>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
             <div className="flex flex-col gap-6">

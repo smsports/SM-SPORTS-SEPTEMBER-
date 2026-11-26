@@ -9,7 +9,7 @@ import TeamPhotoPdfExportModal from './TeamPhotoPdfExportModal';
 import AuctionAwardsModal from './AuctionAwardsModal';
 import TeamStrategyCalculator from './TeamStrategyCalculator';
 import { resolveTeamSquad, findPlayerRegistration, getPlayerFieldValue } from '../utils';
-import * as XLSX from 'xlsx';
+import { downloadStyledRegistrationExcel, StyledExcelColumn } from '../utils/styledExcelExport';
 
 interface Props {
     team: Team;
@@ -31,27 +31,48 @@ const TeamPostAuctionView: React.FC<Props> = ({ team }) => {
     const isOwnerCaptain = team.isOwnerCaptain !== false && !team.captainName && !!ownerName;
     const captainName = team.captainName || (isOwnerCaptain ? ownerName : '');
 
-    const handleDownload = () => {
+    const handleDownload = async () => {
         const customFields = state.registrationConfig?.customFields || [];
+        const columns: StyledExcelColumn[] = [
+            { key: 'playerNumber', header: 'Player #', align: 'center', minWidth: 11 },
+            { key: 'name', header: 'Player Name', align: 'left', minWidth: 22 },
+            { key: 'category', header: 'Category', align: 'center', minWidth: 14 },
+            { key: 'role', header: 'Role', align: 'left', minWidth: 16 },
+            { key: 'soldPrice', header: 'Sold Price', align: 'right', minWidth: 13 },
+            { key: 'teamName', header: 'Team Name', align: 'left', minWidth: 18 },
+            { key: 'jerseyName', header: 'Jersey Name', align: 'left', minWidth: 18 },
+            { key: 'jerseyNumber', header: 'Jersey No.', align: 'center', minWidth: 12 },
+            { key: 'jerseySize', header: 'Jersey Size', align: 'center', minWidth: 12 },
+            { key: 'mobile', header: 'Mobile Number', align: 'center', minWidth: 15 },
+            { key: 'dob', header: 'DOB', align: 'center', minWidth: 13 },
+            { key: 'gender', header: 'Gender', align: 'center', minWidth: 11 },
+            ...customFields.map(cf => ({
+                key: `cf_${cf.id}`,
+                header: cf.label,
+                align: 'left' as const,
+                minWidth: 16
+            }))
+        ];
+
         const rows = squadPlayers.map((p, idx) => {
             const reg = findPlayerRegistration(p, state.registrations);
             const isPlayerCaptain = (captainName && p.name.trim().toLowerCase() === captainName.trim().toLowerCase()) || p.isCaptain;
             const row: Record<string, any> = {
-                'Player #': getPlayerFieldValue(p, reg, 'playerNumber', idx + 1),
-                'Player Name': isPlayerCaptain ? `${p.name} (C)` : p.name,
-                'Category': p.category || '',
-                'Role': p.role || p.speciality || '',
-                'Sold Price': Number(p.soldPrice || p.basePrice || 0),
-                'Team Name': team.name,
-                'Jersey Name': getPlayerFieldValue(p, reg, 'jerseyName', ''),
-                'Jersey Number': getPlayerFieldValue(p, reg, 'jerseyNumber', ''),
-                'Jersey Size': getPlayerFieldValue(p, reg, 'jerseySize', ''),
-                'Mobile Number': getPlayerFieldValue(p, reg, 'mobile', ''),
-                'DOB': getPlayerFieldValue(p, reg, 'dob', ''),
-                'Gender': getPlayerFieldValue(p, reg, 'gender', ''),
+                playerNumber: getPlayerFieldValue(p, reg, 'playerNumber', idx + 1),
+                name: isPlayerCaptain ? `${p.name} (C)` : p.name,
+                category: p.category || '-',
+                role: p.role || p.speciality || '-',
+                soldPrice: Number(p.soldPrice || p.basePrice || 0),
+                teamName: team.name,
+                jerseyName: getPlayerFieldValue(p, reg, 'jerseyName', '-'),
+                jerseyNumber: getPlayerFieldValue(p, reg, 'jerseyNumber', '-'),
+                jerseySize: getPlayerFieldValue(p, reg, 'jerseySize', '-'),
+                mobile: getPlayerFieldValue(p, reg, 'mobile', '-'),
+                dob: getPlayerFieldValue(p, reg, 'dob', '-'),
+                gender: getPlayerFieldValue(p, reg, 'gender', '-'),
             };
             customFields.forEach(cf => {
-                row[cf.label] = getPlayerFieldValue(p, reg, cf.id, '');
+                row[`cf_${cf.id}`] = getPlayerFieldValue(p, reg, cf.id, '-');
             });
             return row;
         });
@@ -61,10 +82,13 @@ const TeamPostAuctionView: React.FC<Props> = ({ team }) => {
             return;
         }
 
-        const ws = XLSX.utils.json_to_sheet(rows);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, team.name.replace(/[\[\]\*\?\/\\:]/g, '').trim().substring(0, 31) || 'Squad');
-        XLSX.writeFile(wb, `${team.name.replace(/\s+/g, '_')}_Squad_With_Jersey.xlsx`);
+        await downloadStyledRegistrationExcel({
+            fileName: `${team.name.replace(/\s+/g, '_')}_Squad_With_Jersey.xlsx`,
+            sheetName: team.name,
+            columns,
+            rows,
+            includeSlNo: true
+        });
     };
 
     // Calculate totals based on actual soldPrice in squad list

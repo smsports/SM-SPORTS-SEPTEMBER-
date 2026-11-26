@@ -7,7 +7,7 @@ import TradingPanel from '../components/TradingPanel';
 import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign, Cast, Lock, Unlock, Monitor, ChevronDown, Shuffle, Search, User, Palette, Trophy, Gavel, Wallet, Eye, EyeOff, Clock, Zap, Undo2, RefreshCw, LayoutList, ArrowRightLeft, Music, Upload, Volume2, Square, Trash2, Timer } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
-import { uploadAudioOrFallback } from '../utils';
+import { uploadAudioOrFallback, safeUpdateAuctionDoc } from '../utils';
 import { previewAudioSound, stopCustomAudio, mergeCustomAudioConfig } from '../utils/draftAudio';
 
 const LiveAdminPanel: React.FC = () => {
@@ -222,10 +222,10 @@ const LiveAdminPanel: React.FC = () => {
       if (!activeAuctionId) return;
       const clamped = Math.max(0, Math.min(60, Math.round(seconds)));
       setLivePopupSec(String(clamped));
-      await db.collection('auctions').doc(activeAuctionId).update({
+      await safeUpdateAuctionDoc(activeAuctionId, {
           soldPopupDurationSeconds: clamped,
           'draftBoardState.soldPopupDurationSeconds': clamped
-      }).catch(console.error);
+      }, db).catch(console.error);
   };
 
   const handleUploadLiveAudio = async (soundKey: 'sold' | 'timeup' | 'unsold', file: File) => {
@@ -247,7 +247,7 @@ const LiveAdminPanel: React.FC = () => {
               updateData[`draftBoardState.customAudio.${urlField}`] = '';
               updateData[`draftBoardState.customAudio.${nameField}`] = '';
           }
-          await db.collection('auctions').doc(activeAuctionId).update(updateData);
+          await safeUpdateAuctionDoc(activeAuctionId, updateData, db);
           setAudioStatusMsg({ type: 'success', text: `Saved ${soundKey.toUpperCase()} audio: ${file.name} (default sound removed)` });
       } catch (err: any) {
           setAudioStatusMsg({ type: 'error', text: err?.message || 'Audio upload failed.' });
@@ -260,12 +260,12 @@ const LiveAdminPanel: React.FC = () => {
       if (!activeAuctionId) return;
       const urlField = soundKey === 'sold' ? 'soldMusicUrl' : soundKey === 'timeup' ? 'timeUpMusicUrl' : 'unsoldMusicUrl';
       const nameField = soundKey === 'sold' ? 'soldMusicName' : soundKey === 'timeup' ? 'timeUpMusicName' : 'unsoldMusicName';
-      await db.collection('auctions').doc(activeAuctionId).update({
+      await safeUpdateAuctionDoc(activeAuctionId, {
           [`customAudio.${urlField}`]: '',
           [`customAudio.${nameField}`]: '',
           [`draftBoardState.customAudio.${urlField}`]: '',
           [`draftBoardState.customAudio.${nameField}`]: ''
-      }).catch(console.error);
+      }, db).catch(console.error);
       setAudioStatusMsg({ type: 'success', text: `Reset ${soundKey.toUpperCase()} sound to default.` });
   };
 

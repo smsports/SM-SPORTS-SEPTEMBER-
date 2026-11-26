@@ -3,7 +3,7 @@ import React, { createContext, useState, useEffect, useContext, useMemo } from '
 import { AuctionContextType, AuctionState, UserProfile, Team, Player, RegisteredPlayer, AuctionStatus, BiddingStatus, AdminViewOverride, BidIncrementSlab, UserRole, SponsorConfig, AuctionLog, TradeRecord, SpinWheelState } from '../types';
 import { db, auth } from '../firebase';
 import firebase from 'firebase/compat/app';
-import { calculateMaxBid, getEffectiveBasePrice, safeSaveAuctionDocument, compactTeamPlayerEntry, compactTeamPlayersList, safeBuildTeamUpdatePayload, getUtf8ByteSize } from '../utils';
+import { calculateMaxBid, getEffectiveBasePrice, safeSaveAuctionDocument, safeUpdateAuctionDoc, FORBIDDEN_BLOATED_AUCTION_FIELDS, compactMediaRef, compactTeamPlayerEntry, compactTeamPlayersList, safeBuildTeamUpdatePayload, getUtf8ByteSize, isFirestoreSizeOverflowError } from '../utils';
 
 // Initial State
 const initialState: AuctionState = {
@@ -302,12 +302,12 @@ useEffect(() => {
     // If no players left in pool AND no player currently active on the bidding floor
     if (available.length === 0 && state.players.length > 0 && !state.currentPlayerId) {
         console.log("🏁 SM SPORTS: All players processed. Auto-completing auction...");
-        db.collection('auctions').doc(activeAuctionId).update({ status: AuctionStatus.Finished })
+        safeUpdateAuctionDoc(activeAuctionId, { status: AuctionStatus.Finished }, db)
             .catch(e => console.error("Auto end error:", e));
     }
 }, [state.players, state.status, activeAuctionId, state.currentPlayerId]);
 
-// 2. Bulky Field Cleanup (AGGRESSIVE PRUNING)
+// 2. Bulky Field & Size Cleanup (AGGRESSIVE PRUNING)
 useEffect(() => {
     if (!activeAuctionId || !userProfile || (userProfile.role !== UserRole.ADMIN && userProfile.role !== UserRole.SUPER_ADMIN)) return;
 
@@ -319,51 +319,19 @@ useEffect(() => {
             const data = doc.data();
             if (!data) return;
 
-            const bulkyFields = ['players', 'teams', 'auctionLog', 'unsoldPlayers', 'registrations'];
-            let needsCleanup = false;
-            bulkyFields.forEach(f => { if (data[f] !== undefined) needsCleanup = true; });
+            const hasForbiddenField = FORBIDDEN_BLOATED_AUCTION_FIELDS.some(f => data[f] !== undefined) || data['unsoldPlayers'] !== undefined;
+            const currentBytes = getUtf8ByteSize(data);
 
-            // If we find any bulky field, use a transaction to REWRITE the entire document with only safe fields.
-            // This is necessary because if a document is already over the 1MB limit, standard updates might fail.
-            // A transaction.set() replaces the whole document, reducing its size immediately.
-            if (needsCleanup) {
-                console.log("🚀 SM SPORTS: Bulky data detected in main document. Initiating emergency size reduction...");
-                await db.runTransaction(async (transaction) => {
-                    const freshDoc = await transaction.get(auctionRef);
-                    const freshData = freshDoc.data() || {};
-                    
-                    // Whitelist only safe, non-bulky fields
-                    const cleanData: any = {};
-                    const safeFields = [
-                        'title', 'status', 'currentPlayerId', 'currentBid', 'highestBidderId', 
-                        'timer', 'bidIncrement', 'slabs', 'registrationConfig', 'logoUrl',
-                        'tournamentName', 'fullTournamentName', 'season', 'date', 'matchesDate',
-                        'sport', 'venue', 'eventVenue', 'purseValue', 'basePrice', 'playersPerTeam',
-                        'totalTeams', 'dateTBD', 'unlimitedPurse', 'autoReserveFunds', 'isPaid',
-                        'planId', 'autoDeleteAt', 'isLifetime', 'hideScoringSection', 'createdBy',
-                        'sponsorConfig', 'projectorLayout', 'obsLayout', 'adminViewOverride',
-                        'biddingStatus', 'playerSelectionMode', 'auctionLogoUrl', 'spinWheelState'
-                    ];
-
-                    safeFields.forEach(field => {
-                        if (freshData[field] !== undefined) {
-                            cleanData[field] = freshData[field];
-                        }
-                    });
-
-                    // Ensure highestBidder object is gone
-                    if (cleanData.highestBidder) delete cleanData.highestBidder;
-
-                    transaction.set(auctionRef, cleanData);
-                    console.log("✅ SM SPORTS: Auction document size reduced successfully.");
-                });
+            if (hasForbiddenField || currentBytes > 760_000) {
+                console.log(`🚀 SM SPORTS: Bloated auction doc detected (${(currentBytes / 1024).toFixed(1)} KB). Initiating safe pruning...`);
+                await safeSaveAuctionDocument(activeAuctionId, {}, db);
             }
         } catch (e) {
             console.error("Critical Cleanup Error:", e);
         }
     };
     
-    const timer = setTimeout(performAggressiveCleanup, 2000);
+    const timer = setTimeout(performAggressiveCleanup, 1500);
     return () => clearTimeout(timer);
 }, [activeAuctionId, userProfile]);
 
@@ -470,11 +438,11 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
         // Don't await log write to keep UI responsive
         db.collection('auctions').doc(activeAuctionId).collection('auctionLogs').add(log).catch(e => console.error("Log error", e));
 
-        await db.collection('auctions').doc(activeAuctionId).update({
+        await safeUpdateAuctionDoc(activeAuctionId, {
             currentBid: amount, 
             highestBidderId: team.id, 
             timer: 10
-        });
+        }, db);
     };
 
     const sellPlayer = async (teamId?: string | number, customPrice?: number) => {
@@ -503,42 +471,55 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
             }
         }
 
-        await db.runTransaction(async (transaction) => {
-            const auctionRef = db.collection('auctions').doc(activeAuctionId);
-            const playerRef = auctionRef.collection('players').doc(String(player.id));
-            const teamRef = auctionRef.collection('teams').doc(String(finalTeam.id));
-            const teamDoc = await transaction.get(teamRef);
-            if (!teamDoc.exists) throw new Error("Target team document does not exist");
-            const teamData = teamDoc.data() as Team;
-            const currentPlayers = teamData.players || [];
-            const currentBudget = teamData.budget || 0;
-            transaction.update(playerRef, { status: 'SOLD', soldPrice: finalPrice, soldTo: finalTeam.name });
-            
-            // OPTIMIZATION: Store only essential data in the team's player list to save space
-            const minimalPlayerData = compactTeamPlayerEntry({ 
-                id: player.id, 
-                name: player.name, 
-                role: player.role,
-                category: player.category,
-                basePrice: player.basePrice,
-                soldPrice: finalPrice, 
-                soldTo: finalTeam.name,
-                status: 'SOLD',
-                jerseyNumber: player.jerseyNumber,
-                jerseyName: player.jerseyName
+        const runSellTransaction = async () => {
+            await db.runTransaction(async (transaction) => {
+                const auctionRef = db.collection('auctions').doc(activeAuctionId);
+                const playerRef = auctionRef.collection('players').doc(String(player.id));
+                const teamRef = auctionRef.collection('teams').doc(String(finalTeam.id));
+                const teamDoc = await transaction.get(teamRef);
+                if (!teamDoc.exists) throw new Error("Target team document does not exist");
+                const teamData = teamDoc.data() as Team;
+                const currentPlayers = teamData.players || [];
+                const currentBudget = teamData.budget || 0;
+                transaction.update(playerRef, { status: 'SOLD', soldPrice: finalPrice, soldTo: finalTeam.name });
+                
+                // OPTIMIZATION: Store only essential data in the team's player list to save space
+                const minimalPlayerData = compactTeamPlayerEntry({ 
+                    id: player.id, 
+                    name: player.name, 
+                    role: player.role,
+                    category: player.category,
+                    basePrice: player.basePrice,
+                    soldPrice: finalPrice, 
+                    soldTo: finalTeam.name,
+                    status: 'SOLD',
+                    jerseyNumber: player.jerseyNumber,
+                    jerseyName: player.jerseyName
+                });
+                const updatedPlayers = compactTeamPlayersList([...currentPlayers, minimalPlayerData]);
+                const newBudget = currentBudget - finalPrice;
+                transaction.update(teamRef, { budget: newBudget, players: updatedPlayers });
+                const log = { message: `${player.name} SOLD to ${finalTeam.name} for ${finalPrice}`, timestamp: Date.now(), type: 'SOLD' as const };
+                const logRef = auctionRef.collection('auctionLogs').doc();
+                transaction.set(logRef, log);
+                transaction.update(auctionRef, { 
+                    status: AuctionStatus.Sold, 
+                    currentBid: finalPrice, 
+                    highestBidderId: finalTeam.id 
+                });
             });
-            const updatedPlayers = compactTeamPlayersList([...currentPlayers, minimalPlayerData]);
-            const newBudget = currentBudget - finalPrice;
-            transaction.update(teamRef, { budget: newBudget, players: updatedPlayers });
-            const log = { message: `${player.name} SOLD to ${finalTeam.name} for ${finalPrice}`, timestamp: Date.now(), type: 'SOLD' as const };
-            const logRef = auctionRef.collection('auctionLogs').doc();
-            transaction.set(logRef, log);
-            transaction.update(auctionRef, { 
-                status: AuctionStatus.Sold, 
-                currentBid: finalPrice, 
-                highestBidderId: finalTeam.id 
-            });
-        });
+        };
+
+        try {
+            await runSellTransaction();
+        } catch (err: any) {
+            if (isFirestoreSizeOverflowError(err)) {
+                await safeSaveAuctionDocument(activeAuctionId, {}, db);
+                await runSellTransaction();
+            } else {
+                throw err;
+            }
+        }
     };
 
     const passPlayer = async () => {
@@ -573,7 +554,7 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
         }
 
         const log = { message: `${player.name} UNSOLD`, timestamp: Date.now(), type: 'UNSOLD' as const };
-        await db.collection('auctions').doc(activeAuctionId).update({ status: AuctionStatus.Unsold });
+        await safeUpdateAuctionDoc(activeAuctionId, { status: AuctionStatus.Unsold }, db);
         await addLog(log);
     };
 
@@ -597,31 +578,31 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
         if (!nextPlayerId) return false;
         const player = state.players.find(p => String(p.id) === String(nextPlayerId));
         const startLog = { message: `Bidding started for ${player?.name}`, timestamp: Date.now(), type: 'SYSTEM' as const };
-        await db.collection('auctions').doc(activeAuctionId).update({
+        await safeUpdateAuctionDoc(activeAuctionId, {
             currentPlayerId: nextPlayerId, currentBid: 0, highestBidderId: null, status: AuctionStatus.InProgress, timer: 10
-        });
+        }, db);
         await addLog(startLog);
         return true;
     };
 
     const undoPlayerSelection = async () => {
         if (!activeAuctionId) return;
-        await db.collection('auctions').doc(activeAuctionId).update({ currentPlayerId: null, currentBid: 0, highestBidderId: null, status: AuctionStatus.NotStarted });
+        await safeUpdateAuctionDoc(activeAuctionId, { currentPlayerId: null, currentBid: 0, highestBidderId: null, status: AuctionStatus.NotStarted }, db);
     };
 
     const resetCurrentPlayer = async () => {
         if (!activeAuctionId || !state.currentPlayerId) return;
-        await db.collection('auctions').doc(activeAuctionId).update({ 
+        await safeUpdateAuctionDoc(activeAuctionId, { 
             currentBid: 0, 
             highestBidderId: null, 
             timer: 10, 
             status: AuctionStatus.InProgress 
-        });
+        }, db);
     };
 
     const endAuction = async () => {
         if (!activeAuctionId) return;
-        await db.collection('auctions').doc(activeAuctionId).update({ status: AuctionStatus.Finished, currentPlayerId: null });
+        await safeUpdateAuctionDoc(activeAuctionId, { status: AuctionStatus.Finished, currentPlayerId: null }, db);
     };
 
     const resetAuction = async () => {
@@ -695,41 +676,41 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
 
     const updateBiddingStatus = async (status: BiddingStatus) => {
         if (!activeAuctionId) return;
-        await db.collection('auctions').doc(activeAuctionId).update({ biddingStatus: status });
+        await safeUpdateAuctionDoc(activeAuctionId, { biddingStatus: status }, db);
     };
 
     const updateSponsorConfig = async (config: SponsorConfig) => {
         if (!activeAuctionId) return;
-        await db.collection('auctions').doc(activeAuctionId).update({ sponsorConfig: config });
+        await safeUpdateAuctionDoc(activeAuctionId, { sponsorConfig: config }, db);
     };
 
     const toggleSelectionMode = async () => {
         if (!activeAuctionId) return;
         const newMode = state.playerSelectionMode === 'MANUAL' ? 'AUTO' : 'MANUAL';
-        await db.collection('auctions').doc(activeAuctionId).update({ playerSelectionMode: newMode });
+        await safeUpdateAuctionDoc(activeAuctionId, { playerSelectionMode: newMode }, db);
     };
 
     const updateTheme = async (type: 'PROJECTOR' | 'OBS', layout: string) => {
         if (!activeAuctionId) return;
         const field = type === 'PROJECTOR' ? 'projectorLayout' : 'obsLayout';
-        await db.collection('auctions').doc(activeAuctionId).update({ [field]: layout });
+        await safeUpdateAuctionDoc(activeAuctionId, { [field]: layout }, db);
     };
 
     const setAdminView = async (view: AdminViewOverride | null) => {
         if (!activeAuctionId) return;
-        await db.collection('auctions').doc(activeAuctionId).update({ adminViewOverride: view });
+        await safeUpdateAuctionDoc(activeAuctionId, { adminViewOverride: view }, db);
     };
 
     const updateSpinWheelState = async (wheelState: SpinWheelState | null) => {
         if (!activeAuctionId) return;
         try {
             if (!wheelState) {
-                await db.collection('auctions').doc(activeAuctionId).update({ spinWheelState: null });
+                await safeUpdateAuctionDoc(activeAuctionId, { spinWheelState: null }, db);
                 return;
             }
-            // Sanitize all undefined fields so Firestore updateDoc never errors out
+            // Sanitize all undefined fields and compact Base64 logos so Firestore never hits 1 MiB limit
             const clean = JSON.parse(JSON.stringify(wheelState));
-            await db.collection('auctions').doc(activeAuctionId).update({ spinWheelState: clean });
+            await safeUpdateAuctionDoc(activeAuctionId, { spinWheelState: clean }, db);
         } catch (e) {
             console.error("AuctionContext updateSpinWheelState Error:", e);
         }
@@ -738,7 +719,7 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
     const updateAuctionType = async (type: 'BIDDING' | 'DRAFT_BOARD') => {
         if (!activeAuctionId) return;
         try {
-            await db.collection('auctions').doc(activeAuctionId).update({ auctionType: type });
+            await safeUpdateAuctionDoc(activeAuctionId, { auctionType: type }, db);
             setState(prev => ({ ...prev, auctionType: type }));
         } catch (e) {
             console.error("AuctionContext updateAuctionType Error:", e);
@@ -880,53 +861,142 @@ const addLog = async (log: Omit<AuctionLog, 'id'>) => {
                 }
             }
         }
-        await db.runTransaction(async (t) => {
-            const playerRef = auctionRef.collection('players').doc(playerId);
-            const playerDoc = await t.get(playerRef);
-            const playerData = playerDoc.data() as Player;
-            if (playerData.status === 'SOLD' && playerData.soldTo) {
-                const prevTeam = state.teams.find(tm => tm.name === playerData.soldTo);
-                if (prevTeam) {
-                    const prevTeamRef = auctionRef.collection('teams').doc(String(prevTeam.id));
-                    const prevTeamDoc = await t.get(prevTeamRef);
-                    if (prevTeamDoc.exists) {
-                        const ptData = prevTeamDoc.data() as Team;
-                        const refund = playerData.soldPrice || 0;
-                        t.update(prevTeamRef, {
-                            budget: (ptData.budget || 0) + refund,
-                            players: compactTeamPlayersList((ptData.players || []).filter(p => String(p.id) !== playerId))
-                        });
+        const runCorrectTransaction = async () => {
+            await db.runTransaction(async (t) => {
+                const playerRef = auctionRef.collection('players').doc(playerId);
+                const playerDoc = await t.get(playerRef);
+                if (!playerDoc.exists) return;
+                const playerData = playerDoc.data() as Player;
+                const auctionDoc = await t.get(auctionRef);
+
+                const playerNormName = String(playerData.name || '').trim().toLowerCase();
+                const matchesMovedPlayer = (item: any) => {
+                    if (!item) return false;
+                    if (String(item.id) === String(playerId)) return true;
+                    if (playerData.registrationId && item.registrationId && String(item.registrationId) === String(playerData.registrationId)) return true;
+                    const itemNorm = String(item.name || '').trim().toLowerCase();
+                    return Boolean(playerNormName && itemNorm === playerNormName);
+                };
+
+                const prevOwnerTeam = state.teams.find(tm =>
+                    (playerData.soldToId && String(tm.id) === String(playerData.soldToId)) ||
+                    (playerData.teamId && String(tm.id) === String(playerData.teamId)) ||
+                    (playerData.soldTo && (tm.name === playerData.soldTo || String(tm.id) === String(playerData.soldTo)))
+                );
+
+                // Identify every team doc we need to read BEFORE performing any writes in this transaction
+                const teamsToCheck = state.teams.filter(tm =>
+                    String(tm.id) === String(newTeamId || '') ||
+                    (prevOwnerTeam && String(tm.id) === String(prevOwnerTeam.id)) ||
+                    (tm.players || []).some(matchesMovedPlayer)
+                );
+
+                const teamDocSnapshots = new Map<string, Team>();
+                for (const tm of teamsToCheck) {
+                    const tSnap = await t.get(auctionRef.collection('teams').doc(String(tm.id)));
+                    if (tSnap.exists) {
+                        teamDocSnapshots.set(String(tm.id), { id: tSnap.id, ...tSnap.data() } as Team);
                     }
                 }
-            }
-            if (newTeamId) {
-                const newTeamRef = auctionRef.collection('teams').doc(newTeamId);
-                const newTeamDoc = await t.get(newTeamRef);
-                const newTeamData = newTeamDoc.data() as Team;
-                
-                // OPTIMIZATION: Store only essential data
-                const minimalPlayerData = compactTeamPlayerEntry({ 
-                    id: playerData.id, 
-                    name: playerData.name, 
-                    role: playerData.role,
-                    category: playerData.category,
-                    basePrice: playerData.basePrice,
-                    soldPrice: newPrice, 
-                    soldTo: newTeamData.name,
-                    status: 'SOLD',
-                    jerseyNumber: playerData.jerseyNumber,
-                    jerseyName: playerData.jerseyName
+
+                let newTeamData: Team | undefined;
+                if (newTeamId && !teamDocSnapshots.has(String(newTeamId))) {
+                    const newTeamSnap = await t.get(auctionRef.collection('teams').doc(String(newTeamId)));
+                    if (newTeamSnap.exists) {
+                        newTeamData = { id: newTeamSnap.id, ...newTeamSnap.data() } as Team;
+                        teamDocSnapshots.set(String(newTeamId), newTeamData);
+                    }
+                } else if (newTeamId) {
+                    newTeamData = teamDocSnapshots.get(String(newTeamId));
+                }
+
+                // 1. Scrub player from ALL previous / duplicate teams and refund previous owner if changing or unassigning
+                const refundAmount = playerData.status === 'SOLD' ? (Number(playerData.soldPrice) || 0) : 0;
+                teamDocSnapshots.forEach((tData, tIdStr) => {
+                    if (newTeamId && tIdStr === String(newTeamId)) return; // Handle target team below
+                    const hasPlayer = (tData.players || []).some(matchesMovedPlayer);
+                    const isPrevOwner = prevOwnerTeam && String(prevOwnerTeam.id) === tIdStr;
+                    if (hasPlayer || isPrevOwner) {
+                        const updatedPlayers = compactTeamPlayersList((tData.players || []).filter(p => !matchesMovedPlayer(p)));
+                        const updatedBudget = isPrevOwner ? (tData.budget || 0) + refundAmount : (tData.budget || 0);
+                        t.update(auctionRef.collection('teams').doc(tIdStr), {
+                            budget: updatedBudget,
+                            players: updatedPlayers
+                        });
+                    }
                 });
-                
-                t.update(newTeamRef, {
-                    budget: (newTeamData.budget || 0) - newPrice,
-                    players: compactTeamPlayersList([...(newTeamData.players || []), minimalPlayerData])
-                });
-                t.update(playerRef, { status: 'SOLD', soldPrice: newPrice, soldTo: newTeamData.name });
+
+                // 2. Update target team (or delete assignment fields if unassigning)
+                if (newTeamId && newTeamData) {
+                    const isSameTeam = prevOwnerTeam && String(prevOwnerTeam.id) === String(newTeamId);
+                    const baseBudget = (newTeamData.budget || 0) + (isSameTeam ? refundAmount : 0);
+                    const filteredTargetSquad = (newTeamData.players || []).filter(p => !matchesMovedPlayer(p));
+                    const minimalPlayerData = compactTeamPlayerEntry({
+                        id: playerData.id || playerId,
+                        name: playerData.name,
+                        role: playerData.role,
+                        category: playerData.category,
+                        basePrice: playerData.basePrice,
+                        soldPrice: newPrice,
+                        soldTo: newTeamData.name,
+                        soldToId: String(newTeamData.id),
+                        teamId: String(newTeamData.id),
+                        status: 'SOLD',
+                        registrationId: playerData.registrationId,
+                        mobile: playerData.mobile,
+                        jerseyNumber: playerData.jerseyNumber,
+                        jerseyName: playerData.jerseyName,
+                        jerseySize: playerData.jerseySize
+                    });
+
+                    t.update(auctionRef.collection('teams').doc(String(newTeamId)), {
+                        budget: baseBudget - newPrice,
+                        players: compactTeamPlayersList([...filteredTargetSquad, minimalPlayerData])
+                    });
+                    t.update(playerRef, {
+                        status: 'SOLD',
+                        soldPrice: newPrice,
+                        soldTo: newTeamData.name,
+                        soldToId: String(newTeamData.id),
+                        teamId: String(newTeamData.id),
+                        updatedAt: Date.now()
+                    });
+                } else {
+                    t.update(playerRef, {
+                        status: firebase.firestore.FieldValue.delete(),
+                        soldPrice: firebase.firestore.FieldValue.delete(),
+                        soldTo: firebase.firestore.FieldValue.delete(),
+                        soldToId: firebase.firestore.FieldValue.delete(),
+                        teamId: firebase.firestore.FieldValue.delete(),
+                        updatedAt: Date.now()
+                    });
+                }
+
+                // 3. Keep Draft Board history consistent & compact if player existed in draftBoardState.history
+                const auctionData = auctionDoc.data() as any;
+                const draftHistory = auctionData?.draftBoardState?.history;
+                if (Array.isArray(draftHistory) && draftHistory.some((h: any) => String(h.playerId) === String(playerId))) {
+                    const updatedHistory = (newTeamId && newTeamData
+                        ? draftHistory.map((h: any) => String(h.playerId) === String(playerId)
+                            ? { ...h, teamId: String(newTeamData!.id), teamName: newTeamData!.name, teamLogo: compactMediaRef(newTeamData!.logoUrl) || compactMediaRef(h.teamLogo) || '', playerPhoto: compactMediaRef(h.playerPhoto) }
+                            : { ...h, teamLogo: compactMediaRef(h.teamLogo), playerPhoto: compactMediaRef(h.playerPhoto) })
+                        : draftHistory.filter((h: any) => String(h.playerId) !== String(playerId))
+                            .map((h: any) => ({ ...h, teamLogo: compactMediaRef(h.teamLogo), playerPhoto: compactMediaRef(h.playerPhoto) })));
+                    t.update(auctionRef, { 'draftBoardState.history': updatedHistory });
+                }
+            });
+        };
+
+        try {
+            await runCorrectTransaction();
+        } catch (err: any) {
+            if (isFirestoreSizeOverflowError(err)) {
+                await safeSaveAuctionDocument(activeAuctionId, {}, db);
+                await runCorrectTransaction();
             } else {
-                t.update(playerRef, { status: firebase.firestore.FieldValue.delete(), soldPrice: firebase.firestore.FieldValue.delete(), soldTo: firebase.firestore.FieldValue.delete() });
+                throw err;
             }
-        });
+        }
     };
 
     const repairAuctionDocument = async () => {

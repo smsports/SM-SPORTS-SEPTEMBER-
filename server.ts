@@ -841,6 +841,134 @@ app.post(['/api/reconcile-payment', '/reconcile-payment'], async (req: Request, 
     }
 });
 
+/**
+ * 5. CRICHEROES TOURNAMENT / SCOREBOARD METADATA FETCHER
+ * Fetches OpenGraph & Next.js __NEXT_DATA__ metadata from official CricHeroes URLs
+ * without browser CORS errors and reports whether iframe embedding is permitted.
+ */
+app.get('/api/cricheroes-info', async (req: Request, res: Response) => {
+    try {
+        const rawUrl = String(req.query.url || '').trim();
+        if (!rawUrl) {
+            return res.status(400).json({ ok: false, error: 'Missing url query parameter' });
+        }
+
+        let targetUrl: URL;
+        try {
+            targetUrl = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
+        } catch {
+            return res.status(400).json({ ok: false, error: 'Invalid URL format' });
+        }
+
+        const allowedHosts = ['cricheroes.com', 'www.cricheroes.com', 'cricheroes.in', 'www.cricheroes.in'];
+        if (!['http:', 'https:'].includes(targetUrl.protocol) || !allowedHosts.includes(targetUrl.hostname.toLowerCase())) {
+            return res.status(400).json({ ok: false, error: 'Only official cricheroes.com / cricheroes.in links are supported' });
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+        const upstream = await fetch(targetUrl.toString(), {
+            method: 'GET',
+            redirect: 'follow',
+            signal: controller.signal,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9'
+            }
+        });
+        clearTimeout(timeoutId);
+
+        const xFrame = (upstream.headers.get('x-frame-options') || '').toLowerCase();
+        const csp = (upstream.headers.get('content-security-policy') || '').toLowerCase();
+        const iframeBlocked =
+            xFrame.includes('deny') ||
+            xFrame.includes('sameorigin') ||
+            (csp.includes('frame-ancestors') && !csp.includes('frame-ancestors *'));
+
+        if (!upstream.ok) {
+            return res.json({
+                ok: false,
+                status: upstream.status,
+                iframeBlocked: true,
+                url: targetUrl.toString(),
+                error: `CricHeroes returned HTTP ${upstream.status}`
+            });
+        }
+
+        const html = await upstream.text();
+
+        const extractMeta = (pattern: RegExp): string => {
+            const match = html.match(pattern);
+            return match?.[1]
+                ? match[1]
+                    .replace(/&amp;/g, '&')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&#39;/g, "'")
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .trim()
+                : '';
+        };
+
+        const title =
+            extractMeta(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
+            extractMeta(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i) ||
+            extractMeta(/<title[^>]*>([^<]+)<\/title>/i);
+
+        const description =
+            extractMeta(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i) ||
+            extractMeta(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i) ||
+            extractMeta(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i);
+
+        const imageUrl =
+            extractMeta(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+            extractMeta(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+
+        let nextDataSummary: any = null;
+        const nextMatch = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+        if (nextMatch?.[1]) {
+            try {
+                const parsedNext = JSON.parse(nextMatch[1]);
+                const pageProps = parsedNext?.props?.pageProps || {};
+                const rawJson = JSON.stringify(pageProps);
+                // Keep response compact & inspect top-level tournament/match keys
+                if (rawJson.length <= 250000) {
+                    nextDataSummary = {
+                        tournamentDetail: pageProps.tournamentDetail || pageProps.tournament || pageProps.tournamentInfo || null,
+                        matches: Array.isArray(pageProps.matches) ? pageProps.matches.slice(0, 20) :
+                                 Array.isArray(pageProps.matchList) ? pageProps.matchList.slice(0, 20) : null,
+                        pointsTable: Array.isArray(pageProps.pointsTable) ? pageProps.pointsTable.slice(0, 30) :
+                                     Array.isArray(pageProps.pointTable) ? pageProps.pointTable.slice(0, 30) : null,
+                        leaderboard: pageProps.leaderboard || pageProps.topPerformers || pageProps.stats || null,
+                        teams: Array.isArray(pageProps.teams) ? pageProps.teams.slice(0, 30) : null,
+                        scorecard: pageProps.scorecard || pageProps.matchDetail || null
+                    };
+                }
+            } catch {
+                // ignore malformed JSON
+            }
+        }
+
+        return res.json({
+            ok: true,
+            url: targetUrl.toString(),
+            iframeBlocked,
+            title,
+            description,
+            imageUrl,
+            parsed: nextDataSummary
+        });
+    } catch (err: any) {
+        return res.json({
+            ok: false,
+            iframeBlocked: true,
+            error: err?.name === 'AbortError' ? 'CricHeroes request timed out' : (err?.message || 'Unable to reach CricHeroes')
+        });
+    }
+});
+
 // -------------------------------------------------------------
 // VITE DEV SERVER / STATIC ASSETS
 // -------------------------------------------------------------

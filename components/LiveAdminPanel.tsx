@@ -6,7 +6,7 @@ import TeamStatusCard from '../components/TeamStatusCard';
 import { SpinningWheelModal } from './SpinningWheelModal';
 import { Play, Check, X, ArrowLeft, Loader2, RotateCcw, AlertOctagon, DollarSign, Cast, Lock, Unlock, Monitor, ChevronDown, Shuffle, Search, User, Palette, Trophy, Gavel, Wallet, Eye, EyeOff, Clock, Zap, Undo2, RefreshCw, LayoutList, ShieldAlert, CreditCard, AlertTriangle, CheckCircle, Users, Copy, ExternalLink, Trash2, Shield } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { calculateMaxBid, getEffectiveBasePrice } from '../utils';
+import { calculateMaxBid, getEffectiveBasePrice, safeUpdateAuctionDoc } from '../utils';
 import { db } from '../firebase';
 
 const LiveAdminPanel: React.FC = () => {
@@ -111,9 +111,9 @@ const LiveAdminPanel: React.FC = () => {
     setSavingCuratorPass(true);
     try {
       const trimmed = nextPass.trim();
-      await db.collection('auctions').doc(activeAuctionId).update({
+      await safeUpdateAuctionDoc(activeAuctionId, {
         curatorPassword: trimmed
-      });
+      }, db);
       setCuratorPassInput(trimmed);
       showNotification(trimmed ? 'Curator password updated!' : 'Curator password removed (open access).', 'success');
     } catch (e: any) {
@@ -1178,10 +1178,10 @@ const LiveAdminPanel: React.FC = () => {
                 if (!activeAuctionId) return;
                 const nextHide = !(state.hidePlayerNumbers || state.draftBoardState?.hidePlayerNumbers);
                 try {
-                  await db.collection('auctions').doc(activeAuctionId).update({
+                  await safeUpdateAuctionDoc(activeAuctionId, {
                     hidePlayerNumbers: nextHide,
                     'draftBoardState.hidePlayerNumbers': nextHide
-                  });
+                  }, db);
                   showNotification(nextHide ? 'Player numbers hidden everywhere.' : 'Player numbers visible everywhere.', 'success');
                 } catch (e: any) {
                   showNotification(e?.message || 'Failed to update player numbers setting.');

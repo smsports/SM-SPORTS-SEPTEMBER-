@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { DraftBoardState, Team, Player, DraftPickHistory, AuctionCategory, ObsDraftDisplayMode, CustomAudioConfig, PendingDraftPickRequest } from '../../types';
 import { db } from '../../firebase';
-import { uploadAudioOrFallback, safeBuildTeamUpdatePayload, getTeamCategoryQuotaSummary } from '../../utils';
+import { uploadAudioOrFallback, safeBuildTeamUpdatePayload, getTeamCategoryQuotaSummary, safeUpdateAuctionDoc, compactMediaRef } from '../../utils';
 import { previewAudioSound, stopCustomAudio, mergeCustomAudioConfig } from '../../utils/draftAudio';
 import { 
     Play, Pause, FastForward, Undo2, RotateCcw, AlertTriangle, 
@@ -86,7 +86,7 @@ export const DraftAdminControls: React.FC<Props> = ({
         if (onUpdateAuctionFields) {
             await onUpdateAuctionFields(fields);
         } else {
-            await db.collection('auctions').doc(auctionId).update(fields);
+            await safeUpdateAuctionDoc(auctionId, fields, db);
         }
     };
 
@@ -134,10 +134,10 @@ export const DraftAdminControls: React.FC<Props> = ({
         setCuratorPassNotice(null);
         try {
             const trimmed = passwordToSave.trim();
-            await db.collection('auctions').doc(auctionId).update({
+            await safeUpdateAuctionDoc(auctionId, {
                 curatorPassword: trimmed,
                 updatedAt: Date.now()
-            });
+            }, db);
             setCuratorPassInput(trimmed);
             setCuratorPassNotice({
                 type: 'success',
@@ -259,7 +259,7 @@ export const DraftAdminControls: React.FC<Props> = ({
             const prevTurnIndex = Math.max(0, draftState.currentTurnIndex - 1);
 
             const cleanHistory = JSON.parse(JSON.stringify(updatedHistory));
-            await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+            await safeUpdateAuctionDoc(auctionId, {
                 'draftBoardState.history': cleanHistory,
                 'draftBoardState.currentTurnIndex': prevTurnIndex,
                 'draftBoardState.currentTeamId': lastPick.teamId || null,
@@ -267,7 +267,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                 'draftBoardState.timerTimeRemaining': draftState.turnTimerSeconds || 45,
                 'draftBoardState.isTimerRunning': false,
                 'draftBoardState.updatedAt': Date.now()
-            })));
+            }, db);
         } catch (err: any) {
             const isPerm = err?.code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission');
             if (isPerm && isCurator && onCuratorRelayAction) {
@@ -329,7 +329,7 @@ export const DraftAdminControls: React.FC<Props> = ({
             const remainingHistory = (draftState.history || []).filter(h => h.round !== currentRound);
             const firstTeamId = draftState.roundOrder && draftState.roundOrder.length > 0 ? draftState.roundOrder[0] : (teams[0]?.id || null);
 
-            await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+            await safeUpdateAuctionDoc(auctionId, {
                 'draftBoardState.history': JSON.parse(JSON.stringify(remainingHistory)),
                 'draftBoardState.currentTurnIndex': 0,
                 'draftBoardState.currentTeamId': firstTeamId || null,
@@ -337,7 +337,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                 'draftBoardState.timerTimeRemaining': draftState.turnTimerSeconds || 45,
                 'draftBoardState.isTimerRunning': false,
                 'draftBoardState.updatedAt': Date.now()
-            })));
+            }, db);
         } catch (err: any) {
             const isPerm = err?.code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission');
             if (isPerm && isCurator && onCuratorRelayAction) {
@@ -394,7 +394,7 @@ export const DraftAdminControls: React.FC<Props> = ({
 
             // Reset draft state to Round 1
             const firstTeamId = teams[0]?.id || null;
-            await db.collection('auctions').doc(auctionId).update(JSON.parse(JSON.stringify({
+            await safeUpdateAuctionDoc(auctionId, {
                 'draftBoardState.currentRound': 1,
                 'draftBoardState.currentTurnIndex': 0,
                 'draftBoardState.currentTeamId': firstTeamId || null,
@@ -404,7 +404,7 @@ export const DraftAdminControls: React.FC<Props> = ({
                 'draftBoardState.isTimerRunning': false,
                 'draftBoardState.history': [],
                 'draftBoardState.updatedAt': Date.now()
-            })));
+            }, db);
         } catch (err: any) {
             const isPerm = err?.code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission');
             if (isPerm && isCurator && onCuratorRelayAction) {
@@ -659,17 +659,17 @@ export const DraftAdminControls: React.FC<Props> = ({
                     status: 'UNSOLD'
                 }).catch(() => {});
             }
-            await updateAuctionDoc(JSON.parse(JSON.stringify({
+            await updateAuctionDoc({
                 'draftBoardState.lastUnsoldEvent': {
                     playerId: selectedP?.id || '',
                     playerName: selectedP?.name || 'Lot Passed (Unsold)',
-                    playerPhoto: selectedP?.photoUrl || '',
+                    playerPhoto: compactMediaRef(selectedP?.photoUrl),
                     role: selectedP?.role || '',
                     category: selectedP?.category || '',
                     timestamp: Date.now()
                 },
                 'draftBoardState.updatedAt': Date.now()
-            })));
+            });
             setAudioFeedback({ type: 'success', text: `Broadcast UNSOLD & played Unsold Music${selectedP ? ` for ${selectedP.name}` : ''}.` });
         } catch (err: any) {
             setAudioFeedback({ type: 'error', text: err?.message || 'Failed to trigger Unsold event.' });

@@ -7,12 +7,24 @@ export interface StyledExcelColumn {
     minWidth?: number;
 }
 
+export interface StyledExcelSheetSpec {
+    sheetName: string;
+    columns: StyledExcelColumn[];
+    rows: Record<string, any>[];
+    includeSlNo?: boolean;
+}
+
 export interface StyledExcelOptions {
     fileName: string;
     sheetName?: string;
     columns: StyledExcelColumn[];
     rows: Record<string, any>[];
     includeSlNo?: boolean;
+}
+
+export interface MultiSheetStyledExcelOptions {
+    fileName: string;
+    sheets: StyledExcelSheetSpec[];
 }
 
 const ALL_THIN_BORDERS: Partial<ExcelJS.Borders> = {
@@ -41,35 +53,38 @@ const BODY_FONT: Partial<ExcelJS.Font> = {
     color: { argb: 'FF111827' },
 };
 
-const sanitizeSheetName = (name: string): string => {
-    const cleaned = (name || 'Sheet1').replace(/[\[\]\*\?\/\\:]/g, '').trim();
-    return (cleaned || 'Sheet1').substring(0, 31);
+const sanitizeSheetName = (name: string, existingNames: Set<string>): string => {
+    const cleaned = (name || 'Sheet1').replace(/[\[\]\*\?\/\\:]/g, '').trim() || 'Sheet1';
+    let candidate = cleaned.substring(0, 31);
+    let suffix = 1;
+    while (existingNames.has(candidate.toLowerCase())) {
+        const suffixStr = `_${suffix++}`;
+        candidate = `${cleaned.substring(0, 31 - suffixStr.length)}${suffixStr}`;
+    }
+    existingNames.add(candidate.toLowerCase());
+    return candidate;
 };
 
-export const downloadStyledRegistrationExcel = async ({
-    fileName,
-    sheetName = 'Player Registrations',
-    columns,
-    rows,
-    includeSlNo = true,
-}: StyledExcelOptions): Promise<void> => {
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'SM Sports';
-    workbook.created = new Date();
-
-    const worksheet = workbook.addWorksheet(sanitizeSheetName(sheetName), {
+const appendStyledWorksheet = (
+    workbook: ExcelJS.Workbook,
+    spec: StyledExcelSheetSpec,
+    existingNames: Set<string>
+) => {
+    const safeName = sanitizeSheetName(spec.sheetName, existingNames);
+    const worksheet = workbook.addWorksheet(safeName, {
         views: [{ state: 'frozen', ySplit: 1 }],
     });
 
+    const includeSlNo = spec.includeSlNo !== false;
     const finalColumns: StyledExcelColumn[] = includeSlNo
-        ? [{ key: '__slNo', header: 'SL No.', align: 'center', minWidth: 9 }, ...columns]
-        : [...columns];
+        ? [{ key: '__slNo', header: 'SL No.', align: 'center', minWidth: 9 }, ...spec.columns]
+        : [...spec.columns];
 
     const colWidths: number[] = finalColumns.map((col) =>
         Math.max(col.minWidth || 12, col.header.length + 5)
     );
 
-    // 1. Add Header Row
+    // 1. Heading Row (Bold + Yellow Cell + All Borders)
     const headerRow = worksheet.addRow(finalColumns.map((c) => c.header));
     headerRow.height = 26;
 
@@ -84,8 +99,8 @@ export const downloadStyledRegistrationExcel = async ({
         };
     });
 
-    // 2. Add Data Rows
-    rows.forEach((rowData, rowIndex) => {
+    // 2. Data Rows (All Thin Borders + Organized Alignment)
+    spec.rows.forEach((rowData, rowIndex) => {
         const values = finalColumns.map((col, colIdx) => {
             if (col.key === '__slNo') {
                 return rowIndex + 1;
@@ -105,7 +120,6 @@ export const downloadStyledRegistrationExcel = async ({
 
         const dataRow = worksheet.addRow(values);
 
-        // Adjust row height cleanly if multi-line or wrapped content exists
         const maxLines = values.reduce((max, val, cIdx) => {
             const text = String(val ?? '');
             const lineBreaks = text.split('\n').length;
@@ -126,21 +140,22 @@ export const downloadStyledRegistrationExcel = async ({
         });
     });
 
-    // 3. Apply Auto-Calculated Column Widths
+    // 3. Auto-Calculated Column Widths
     worksheet.columns = finalColumns.map((col, idx) => ({
         key: col.key,
         width: colWidths[idx],
     }));
 
-    // 4. Enable Excel AutoFilter across the header row
+    // 4. Enable Excel AutoFilter
     if (finalColumns.length > 0) {
         worksheet.autoFilter = {
             from: { row: 1, column: 1 },
             to: { row: 1, column: finalColumns.length },
         };
     }
+};
 
-    // 5. Write Buffer and Trigger Browser Download
+const triggerWorkbookDownload = async (workbook: ExcelJS.Workbook, fileName: string) => {
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -153,4 +168,35 @@ export const downloadStyledRegistrationExcel = async ({
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+export const downloadStyledRegistrationExcel = async ({
+    fileName,
+    sheetName = 'Player Registrations',
+    columns,
+    rows,
+    includeSlNo = true,
+}: StyledExcelOptions): Promise<void> => {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'SM Sports';
+    workbook.created = new Date();
+
+    const existingNames = new Set<string>();
+    appendStyledWorksheet(workbook, { sheetName, columns, rows, includeSlNo }, existingNames);
+    await triggerWorkbookDownload(workbook, fileName);
+};
+
+export const downloadMultiSheetStyledExcel = async ({
+    fileName,
+    sheets,
+}: MultiSheetStyledExcelOptions): Promise<void> => {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'SM Sports';
+    workbook.created = new Date();
+
+    const existingNames = new Set<string>();
+    sheets.forEach((sheet) => {
+        appendStyledWorksheet(workbook, sheet, existingNames);
+    });
+    await triggerWorkbookDownload(workbook, fileName);
 };
