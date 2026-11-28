@@ -70,6 +70,9 @@ const SuperAdminDashboard: React.FC = () => {
     const [retentionDays, setRetentionDays] = useState(30);
     const [globalAssets, setGlobalAssets] = useState<ScoringAsset[]>([]);
     const [broadcasts, setBroadcasts] = useState<any[]>([]);
+    const [assetLinksJson, setAssetLinksJson] = useState<string>('[]');
+    const [assetLinksStatus, setAssetLinksStatus] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+    const [assetLinksSaving, setAssetLinksSaving] = useState(false);
 
     useEffect(() => {
         setLoading(true);
@@ -90,10 +93,15 @@ const SuperAdminDashboard: React.FC = () => {
         const u4 = db.collection('systemPopups').orderBy('createdAt', 'desc').onSnapshot(snap => setPopups(snap.docs.map(d => ({ id: d.id, ...d.data() } as SystemPopup))), (err) => console.error("Popups listener failed:", err));
         const u5 = db.collection('globalAssets').onSnapshot(snap => setGlobalAssets(snap.docs.map(d => ({ id: d.id, ...d.data() } as ScoringAsset))), (err) => console.error("Assets listener failed:", err));
         const u6 = db.collection('systemBroadcasts').onSnapshot(snap => setBroadcasts(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => console.error("Broadcasts listener failed:", err));
+        const u7 = db.collection('appConfig').doc('pwaAssetLinks').onSnapshot(doc => {
+            if (doc.exists && typeof doc.data()?.assetLinksJson === 'string') {
+                setAssetLinksJson(doc.data()!.assetLinksJson);
+            }
+        }, () => {});
 
         return () => {
             unsubscribe();
-            u1(); u2(); u3(); u4(); u5(); u6();
+            u1(); u2(); u3(); u4(); u5(); u6(); u7();
         };
     }, []);
 
@@ -561,6 +569,105 @@ const SuperAdminDashboard: React.FC = () => {
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                        <div className="bg-zinc-900/30 p-10 rounded-[3rem] border border-white/5 space-y-6">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                <div className="flex items-center gap-5">
+                                    <ShieldCheck className="w-10 h-10 text-emerald-400 shrink-0" />
+                                    <div>
+                                        <h2 className="text-2xl font-black uppercase tracking-tighter">Android App Asset Links</h2>
+                                        <p className="text-zinc-400 text-xs mt-1">
+                                            Served live at <code className="text-emerald-300">/.well-known/assetlinks.json</code> to hide the browser address bar inside your Android TWA app.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0">
+                                    <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest inline-flex items-center gap-2 transition-all">
+                                        <Upload className="w-4 h-4" />
+                                        Upload assetlinks.json
+                                        <input
+                                            type="file"
+                                            accept=".json,application/json"
+                                            className="hidden"
+                                            onChange={async (e) => {
+                                                const file = e.target.files?.[0];
+                                                if (!file) return;
+                                                const text = await file.text();
+                                                setAssetLinksJson(text);
+                                                setAssetLinksStatus(null);
+                                            }}
+                                        />
+                                    </label>
+                                    <a
+                                        href="/.well-known/assetlinks.json"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-200 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest inline-flex items-center gap-1.5"
+                                    >
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                        Verify URL
+                                    </a>
+                                </div>
+                            </div>
+
+                            <textarea
+                                value={assetLinksJson}
+                                onChange={(e) => {
+                                    setAssetLinksJson(e.target.value);
+                                    setAssetLinksStatus(null);
+                                }}
+                                rows={10}
+                                spellCheck={false}
+                                placeholder={'[\n  {\n    "relation": ["delegate_permission/common.handle_all_urls"],\n    "target": {\n      "namespace": "android_app",\n      "package_name": "com.example.app",\n      "sha256_cert_fingerprints": ["..."]\n    }\n  }\n]'}
+                                className="w-full bg-black border border-white/10 rounded-2xl p-5 text-xs font-mono text-emerald-200 outline-none focus:border-emerald-500"
+                            />
+
+                            {assetLinksStatus && (
+                                <div
+                                    className={`px-4 py-3 rounded-xl text-xs font-semibold ${
+                                        assetLinksStatus.type === 'ok'
+                                            ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
+                                            : 'bg-red-500/15 border border-red-500/30 text-red-300'
+                                    }`}
+                                >
+                                    {assetLinksStatus.text}
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                disabled={assetLinksSaving}
+                                onClick={async () => {
+                                    setAssetLinksSaving(true);
+                                    setAssetLinksStatus(null);
+                                    try {
+                                        const parsed = JSON.parse(assetLinksJson);
+                                        if (!Array.isArray(parsed)) {
+                                            throw new Error('assetlinks.json must be a JSON array starting with [ ... ]');
+                                        }
+                                        const formatted = JSON.stringify(parsed, null, 2);
+                                        await db.collection('appConfig').doc('pwaAssetLinks').set(
+                                            { assetLinksJson: formatted, updatedAt: Date.now() },
+                                            { merge: true }
+                                        );
+                                        setAssetLinksJson(formatted);
+                                        setAssetLinksStatus({
+                                            type: 'ok',
+                                            text: 'Saved! Live immediately at /.well-known/assetlinks.json.',
+                                        });
+                                    } catch (err: any) {
+                                        setAssetLinksStatus({
+                                            type: 'err',
+                                            text: err?.message || 'Invalid JSON format.',
+                                        });
+                                    } finally {
+                                        setAssetLinksSaving(false);
+                                    }
+                                }}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50"
+                            >
+                                {assetLinksSaving ? 'SAVING...' : 'SAVE ASSET LINKS'}
+                            </button>
                         </div>
                     </div>
                 )}

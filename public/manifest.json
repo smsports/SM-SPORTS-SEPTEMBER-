@@ -2,6 +2,7 @@
   "id": "/",
   "name": "SM SPORTS",
   "short_name": "SM SPORTS",
+  "description": "SM SPORTS — Live cricket auction platform, team bidding rooms, player registration, and match live streaming.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

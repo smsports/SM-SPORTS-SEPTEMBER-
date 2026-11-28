@@ -1091,6 +1091,65 @@ app.get('/api/youtube-channel-videos', async (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
+// PWA MANIFEST & ANDROID DIGITAL ASSET LINKS
+// -------------------------------------------------------------
+app.get('/manifest.json', (_req: Request, res: Response) => {
+    const prodPath = path.resolve(__dirname, 'dist', 'manifest.json');
+    const devPath = path.resolve(__dirname, 'public', 'manifest.json');
+    const filePath = process.env.NODE_ENV === 'production' && fs.existsSync(prodPath) ? prodPath : devPath;
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'manifest.json not found' });
+    }
+    res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    return res.sendFile(filePath);
+});
+
+app.get('/.well-known/assetlinks.json', async (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+
+    // 1. Check Firestore appConfig/pwaAssetLinks via REST API (instant updates from Super Admin)
+    try {
+        const fbConfig = getFirebaseConfig();
+        if (fbConfig?.projectId && fbConfig?.apiKey) {
+            const url = `https://firestore.googleapis.com/v1/projects/${fbConfig.projectId}/databases/(default)/documents/appConfig/pwaAssetLinks?key=${fbConfig.apiKey}`;
+            const resp = await fetch(url);
+            if (resp.ok) {
+                const json = await resp.json();
+                if (json?.fields) {
+                    const data = parseFirestoreFields(json.fields);
+                    if (typeof data.assetLinksJson === 'string' && data.assetLinksJson.trim()) {
+                        const parsed = JSON.parse(data.assetLinksJson);
+                        if (Array.isArray(parsed)) {
+                            return res.status(200).json(parsed);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[AssetLinks] Firestore REST lookup notice:', e);
+    }
+
+    // 2. Fallback to public/.well-known/assetlinks.json or dist/.well-known/assetlinks.json
+    const prodPath = path.resolve(__dirname, 'dist', '.well-known', 'assetlinks.json');
+    const devPath = path.resolve(__dirname, 'public', '.well-known', 'assetlinks.json');
+    const filePath = process.env.NODE_ENV === 'production' && fs.existsSync(prodPath) ? prodPath : devPath;
+
+    if (fs.existsSync(filePath)) {
+        try {
+            const raw = fs.readFileSync(filePath, 'utf8');
+            return res.status(200).send(raw);
+        } catch {
+            // fallback below
+        }
+    }
+
+    return res.status(200).json([]);
+});
+
+// -------------------------------------------------------------
 // VITE DEV SERVER / STATIC ASSETS
 // -------------------------------------------------------------
 async function startServer() {
@@ -1103,7 +1162,7 @@ async function startServer() {
         app.use(vite.middlewares);
     } else {
         const distPath = path.resolve(__dirname, 'dist');
-        app.use(express.static(distPath));
+        app.use(express.static(distPath, { dotfiles: 'allow' }));
         app.get('*', (_req, res) => {
             res.sendFile(path.resolve(distPath, 'index.html'));
         });
