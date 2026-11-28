@@ -8,6 +8,7 @@ import { db } from '../firebase';
 
 import { useTheme } from '../contexts/ThemeContext';
 import ThemeToggle from '../components/ThemeToggle';
+import PWAInstallButton from '../components/PWAInstallButton';
 
 const CricketBallIcon = ({ className }: { className?: string }) => (
     <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -218,6 +219,8 @@ const LandingPage: React.FC = () => {
             <button onClick={() => scrollToSection('legal')} className={`hover:text-accent transition-colors text-[11px] font-black uppercase tracking-widest hidden md:block ${isDark ? 'text-zinc-500' : 'text-gray-500'}`}>Rules</button>
             
             <ThemeToggle />
+
+            <PWAInstallButton />
 
             <Link
               to="/live"

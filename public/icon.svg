@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="42%" r="65%">
+      <stop offset="0%" stop-color="#172542" />
+      <stop offset="100%" stop-color="#0b1220" />
+    </radialGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDE68A" />
+      <stop offset="45%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#D97706" />
+    </linearGradient>
+    <linearGradient id="tealGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5EEAD4" />
+      <stop offset="100%" stop-color="#0EA5E9" />
+    </linearGradient>
+  </defs>
+
+  <!-- Full-bleed background for maskable safe-zone compliance -->
+  <rect width="512" height="512" fill="url(#bgGlow)" />
+
+  <!-- Subtle outer accent ring inside safe zone (80% radius = 204px) -->
+  <circle cx="256" cy="256" r="184" fill="#0f172a" stroke="url(#goldGrad)" stroke-width="10" />
+  <circle cx="256" cy="256" r="168" fill="none" stroke="url(#tealGrad)" stroke-width="2.5" opacity="0.45" />
+
+  <!-- Stylized cricket ball / crest icon -->
+  <circle cx="256" cy="182" r="36" fill="url(#goldGrad)" />
+  <path d="M236 156 C248 172, 248 192, 236 208" fill="none" stroke="#0b1220" stroke-width="3.5" stroke-linecap="round" />
+  <path d="M276 156 C264 172, 264 192, 276 208" fill="none" stroke="#0b1220" stroke-width="3.5" stroke-linecap="round" />
+
+  <!-- Bold SM monogram -->
+  <text
+    x="256"
+    y="300"
+    text-anchor="middle"
+    font-family="Outfit, Inter, system-ui, -apple-system, sans-serif"
+    font-weight="900"
+    font-size="112"
+    letter-spacing="-3"
+    fill="#FFFFFF"
+  >SM</text>
+
+  <!-- SPORTS label -->
+  <text
+    x="256"
+    y="346"
+    text-anchor="middle"
+    font-family="Outfit, Inter, system-ui, -apple-system, sans-serif"
+    font-weight="800"
+    font-size="30"
+    letter-spacing="8"
+    fill="url(#tealGrad)"
+  >SPORTS</text>
+</svg>

@@ -20,6 +20,7 @@ import MatchOverlay from './screens/MatchOverlay';
 import PlatformGuide from './screens/PlatformGuide';
 import LiveStreamCenter from './screens/LiveStreamCenter';
 import SupportWidget from './components/SupportWidget';
+import OfflineIndicator from './components/OfflineIndicator';
 import RecollectionManager from './screens/RecollectionManager';
 import RecollectionPublicForm from './screens/RecollectionPublicForm';
 import { useAuction } from './hooks/useAuction';
@@ -194,6 +195,7 @@ const AppContent: React.FC = () => {
       </Routes>
       
       {showSupport && <SupportWidget />}
+      {!isObsView && <OfflineIndicator />}
     </ErrorBoundary>
   );
 }
