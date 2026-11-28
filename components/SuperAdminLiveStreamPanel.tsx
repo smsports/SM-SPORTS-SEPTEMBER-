@@ -6,7 +6,6 @@ import {
   Edit,
   ExternalLink,
   Film,
-  Link2,
   Lock,
   Palette,
   Play,
@@ -49,8 +48,6 @@ interface StreamDraft {
   streamVisibility: StreamVisibility;
   status: LiveStreamStatus;
   scheduledAt: string;
-  cricHeroesUrl: string;
-  cricHeroesMatchUrl: string;
   linkedMatchId: string;
   playerGradientPreset: PlayerGradientPreset;
   isFeatured: boolean;
@@ -65,8 +62,6 @@ const emptyDraft = (): StreamDraft => ({
   streamVisibility: 'PUBLIC',
   status: 'LIVE',
   scheduledAt: '',
-  cricHeroesUrl: '',
-  cricHeroesMatchUrl: '',
   linkedMatchId: '',
   playerGradientPreset: 'JIO_GOLD',
   isFeatured: true,
@@ -112,7 +107,6 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
     noLiveFallbackTitle: DEFAULT_FALLBACK_TITLE,
     noLiveFallbackSubtitle: DEFAULT_FALLBACK_SUBTITLE,
     youtubeChannelUrl: '',
-    youtubeChannelCricHeroesUrl: '',
     autoSyncChannel: true,
     streams: [],
     updatedAt: 0,
@@ -120,7 +114,6 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
   const [fallbackTitle, setFallbackTitle] = useState(DEFAULT_FALLBACK_TITLE);
   const [fallbackSubtitle, setFallbackSubtitle] = useState(DEFAULT_FALLBACK_SUBTITLE);
   const [channelUrl, setChannelUrl] = useState('');
-  const [channelCricHeroesUrl, setChannelCricHeroesUrl] = useState('');
   const [autoSyncChannel, setAutoSyncChannel] = useState(true);
   const [syncingChannel, setSyncingChannel] = useState(false);
   const [channelSyncResult, setChannelSyncResult] = useState<ChannelSyncResponse | null>(null);
@@ -165,14 +158,12 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
           const loadedTitle = data.noLiveFallbackTitle || DEFAULT_FALLBACK_TITLE;
           const loadedSub = data.noLiveFallbackSubtitle || DEFAULT_FALLBACK_SUBTITLE;
           const loadedChannelUrl = data.youtubeChannelUrl || '';
-          const loadedChannelCric = data.youtubeChannelCricHeroesUrl || '';
           const loadedAutoSync = data.autoSyncChannel !== false;
 
           setSettings({
             noLiveFallbackTitle: loadedTitle,
             noLiveFallbackSubtitle: loadedSub,
             youtubeChannelUrl: loadedChannelUrl,
-            youtubeChannelCricHeroesUrl: loadedChannelCric,
             autoSyncChannel: loadedAutoSync,
             streams: Array.isArray(data.streams) ? data.streams : [],
             updatedAt: data.updatedAt || Date.now(),
@@ -180,7 +171,6 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
           setFallbackTitle(loadedTitle);
           setFallbackSubtitle(loadedSub);
           setChannelUrl(loadedChannelUrl);
-          setChannelCricHeroesUrl(loadedChannelCric);
           setAutoSyncChannel(loadedAutoSync);
 
           if (loadedChannelUrl && loadedChannelUrl !== initialSyncedUrl) {
@@ -242,7 +232,6 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
     const next: LiveStreamSettings = {
       ...settings,
       youtubeChannelUrl: channelUrl.trim(),
-      youtubeChannelCricHeroesUrl: channelCricHeroesUrl.trim(),
       autoSyncChannel,
       updatedAt: Date.now(),
     };
@@ -279,7 +268,6 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
       streamVisibility: 'PUBLIC',
       status: v.status,
       scheduledAt: v.scheduledAt || '',
-      cricHeroesUrl: channelCricHeroesUrl.trim() || '',
       isFeatured: v.status === 'LIVE',
     });
     setIsEditing(true);
@@ -314,8 +302,6 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
       streamVisibility: draft.streamVisibility,
       status: draft.status,
       scheduledAt: draft.scheduledAt.trim(),
-      cricHeroesUrl: draft.cricHeroesUrl.trim(),
-      cricHeroesMatchUrl: draft.cricHeroesMatchUrl.trim(),
       linkedMatchId: draft.linkedMatchId,
       playerGradientPreset: draft.playerGradientPreset,
       isFeatured: draft.isFeatured,
@@ -362,8 +348,6 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
       streamVisibility: s.streamVisibility || 'PUBLIC',
       status: s.status || 'LIVE',
       scheduledAt: s.scheduledAt || '',
-      cricHeroesUrl: s.cricHeroesUrl || '',
-      cricHeroesMatchUrl: s.cricHeroesMatchUrl || '',
       linkedMatchId: s.linkedMatchId || '',
       playerGradientPreset: s.playerGradientPreset || 'JIO_GOLD',
       isFeatured: Boolean(s.isFeatured),
@@ -418,7 +402,7 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
             Live Stream OTT Control
           </h2>
           <p className="text-xs text-zinc-400 mt-1">
-            Manage ongoing YouTube streams (public, unlisted, or private links), upcoming fixtures, offline title, and CricHeroes tournament scoreboards.
+            Manage ongoing YouTube streams (public, unlisted, or private links), YouTube channel auto-sync, upcoming fixtures, and offline title.
           </p>
         </div>
 
@@ -494,31 +478,17 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
-              YouTube Channel URL (@handle or /channel/UC...)
-            </label>
-            <input
-              type="text"
-              value={channelUrl}
-              onChange={(e) => setChannelUrl(e.target.value)}
-              placeholder="https://www.youtube.com/@YourChannelName"
-              className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm font-semibold text-white outline-none focus:border-red-500"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
-              Default CricHeroes Tournament Link for Channel Streams (Optional)
-            </label>
-            <input
-              type="url"
-              value={channelCricHeroesUrl}
-              onChange={(e) => setChannelCricHeroesUrl(e.target.value)}
-              placeholder="https://cricheroes.com/tournament/123456/Tournament-Name"
-              className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-amber-400"
-            />
-          </div>
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
+            YouTube Channel URL (@handle or /channel/UC...)
+          </label>
+          <input
+            type="text"
+            value={channelUrl}
+            onChange={(e) => setChannelUrl(e.target.value)}
+            placeholder="https://www.youtube.com/@YourChannelName"
+            className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm font-semibold text-white outline-none focus:border-red-500"
+          />
         </div>
 
         {channelSyncResult && (
@@ -578,7 +548,7 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
                           onClick={() => handleCustomizeChannelVideo(v)}
                           className="w-full py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-cyan-500/20 border border-white/10 hover:border-cyan-400/40 text-[11px] font-bold text-cyan-300 transition-colors"
                         >
-                          Customize / Attach CricHeroes
+                          Customize Broadcast
                         </button>
                       </div>
                     ))}
@@ -791,40 +761,14 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
             </div>
           </div>
 
-          {/* CricHeroes Tournament & Scoreboard Links */}
+          {/* Scoreboard & Broadcast Theme Controls */}
           <div className="p-5 rounded-2xl bg-black/50 border border-white/10 space-y-4">
             <div className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
               <Trophy className="w-4 h-4 text-amber-400" />
-              CricHeroes Tournament & Scoreboard Integration
+              Live Match Scoreboard &amp; Theme (Optional)
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
-                  CricHeroes Tournament Link
-                </label>
-                <input
-                  type="url"
-                  value={draft.cricHeroesUrl}
-                  onChange={(e) => setDraft({ ...draft, cricHeroesUrl: e.target.value })}
-                  placeholder="https://cricheroes.com/tournament/123456/Tournament-Name"
-                  className="w-full bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-amber-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
-                  CricHeroes Active Match Scorecard Link (Optional)
-                </label>
-                <input
-                  type="url"
-                  value={draft.cricHeroesMatchUrl}
-                  onChange={(e) => setDraft({ ...draft, cricHeroesMatchUrl: e.target.value })}
-                  placeholder="https://cricheroes.com/scorecard/..."
-                  className="w-full bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-amber-400"
-                />
-              </div>
-
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
                   Link SM SPORTS Live Scoring Match (Optional)
@@ -834,7 +778,7 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
                   onChange={(e) => setDraft({ ...draft, linkedMatchId: e.target.value })}
                   className="w-full bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-cyan-500"
                 >
-                  <option value="">None (Use CricHeroes / Quick Score)</option>
+                  <option value="">None (Use Quick Score / Video Only)</option>
                   {matches.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.teamAName} vs {m.teamBName} ({m.status})
@@ -991,7 +935,7 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
           <div className="rounded-3xl border border-dashed border-white/10 bg-zinc-900/20 p-12 text-center space-y-3">
             <Tv className="w-10 h-10 text-zinc-700 mx-auto" />
             <p className="text-sm font-semibold text-zinc-400">
-              No streams added yet. Click &quot;Add Live Stream&quot; to publish a live, upcoming, or private YouTube stream with a CricHeroes scoreboard.
+              No streams added yet. Click &quot;Add Live Stream&quot; to publish a live, upcoming, or private YouTube stream, or configure YouTube Channel Auto-Sync above.
             </p>
           </div>
         ) : (
@@ -1051,25 +995,14 @@ const SuperAdminLiveStreamPanel: React.FC = () => {
                       <h4 className="text-base font-black text-white truncate">
                         {stream.title}
                       </h4>
-                      <div className="flex flex-wrap items-center gap-4 text-[11px] text-zinc-400">
-                        {stream.scheduledAt && (
+                      {stream.scheduledAt && (
+                        <div className="flex flex-wrap items-center gap-4 text-[11px] text-zinc-400">
                           <span className="inline-flex items-center gap-1">
                             <Calendar className="w-3.5 h-3.5" />
                             {stream.scheduledAt}
                           </span>
-                        )}
-                        {stream.cricHeroesUrl && (
-                          <a
-                            href={stream.cricHeroesUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-amber-400 hover:underline"
-                          >
-                            <Link2 className="w-3.5 h-3.5" />
-                            CricHeroes Attached
-                          </a>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 

@@ -303,7 +303,7 @@ const LandingPage: React.FC = () => {
                     )}
                   </div>
                   <div className="text-sm font-bold text-white truncate max-w-[260px]">
-                    {featuredLiveStream?.title || liveSettings?.noLiveFallbackTitle || 'Watch Live Streams & CricHeroes Stats'}
+                    {featuredLiveStream?.title || liveSettings?.noLiveFallbackTitle || 'Watch Live Streams & Match Updates'}
                   </div>
                 </div>
               </div>

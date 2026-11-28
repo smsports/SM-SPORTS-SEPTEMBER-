@@ -747,7 +747,6 @@ export interface Tournament {
 export type LiveStreamStatus = 'LIVE' | 'UPCOMING' | 'ENDED';
 export type StreamVisibility = 'PUBLIC' | 'UNLISTED' | 'PRIVATE';
 export type PlayerGradientPreset = 'JIO_GOLD' | 'CYBER_NEON' | 'CRIMSON_FIRE' | 'EMERALD_PULSE';
-export type CricHeroesSectionId = 'SCORECARD' | 'LIVE_FEED' | 'POINTS_TABLE' | 'MATCHES' | 'LEADERBOARD' | 'TEAMS' | 'STATS';
 
 export interface LiveScoreSnapshot {
     teamAName?: string;
@@ -771,8 +770,6 @@ export interface LiveStreamItem {
     streamVisibility: StreamVisibility;
     status: LiveStreamStatus;
     scheduledAt?: string;
-    cricHeroesUrl?: string;
-    cricHeroesMatchUrl?: string;
     linkedMatchId?: string;
     playerGradientPreset?: PlayerGradientPreset;
     scoreSnapshot?: LiveScoreSnapshot;
@@ -788,7 +785,6 @@ export interface LiveStreamSettings {
     noLiveFallbackTitle: string;
     noLiveFallbackSubtitle?: string;
     youtubeChannelUrl?: string;
-    youtubeChannelCricHeroesUrl?: string;
     autoSyncChannel?: boolean;
     streams: LiveStreamItem[];
     updatedAt: number;
